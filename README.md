@@ -64,25 +64,37 @@ uv sync
 cp .env.example .env
 
 # Edit .env and add your API keys:
-# - GROQ_API_KEY      → https://console.groq.com/keys
 # - GEMINI_API_KEY    → https://aistudio.google.com/apikey
 # - SERPER_API_KEY    → https://serper.dev/
 ```
 
-### 3. Run the crew
+### 3. Run the interactive Web UI (Recommended) 🖥️
 
 ```bash
-# Option A: Using crewAI CLI (JSON-first mode)
-crewai run
+uv run streamlit run app.py
+```
+This launches a modern browser UI where you can:
+- Type or choose preset research topics
+- Watch live multi-agent terminal logs in real-time
+- View rendered blog posts with reading metrics
+- Download generated articles as Markdown (`.md`)
 
-# Option B: Using Python directly
-python crew.py --topic "Latest trends in AI agents"
+---
 
-# Option C: Interactive mode (prompts for topic)
-python crew.py
+### 4. Run via Command Line
+
+```bash
+# Option A: Interactive CLI mode (prompts for topic)
+uv run python crew.py
+
+# Option B: Direct CLI topic argument
+uv run python crew.py --topic "Latest trends in AI agents"
+
+# Option C: Using crewAI CLI (JSON-first mode)
+uv run crewai run
 ```
 
-### 4. View the output
+### 5. View the output
 
 The final blog post is saved to `report.md` in the project root.
 
