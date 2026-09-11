@@ -22,3 +22,9 @@ only-include = ["agents", "crew.jsonc", "tools", "knowledge", "skills"]
 type = "crew"
 definition = "crew.jsonc"
 project_id = "a2ff9f2e-4c04-4f6b-af36-9a21aa57f3f7"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-mock>=3.15.1",
+]
