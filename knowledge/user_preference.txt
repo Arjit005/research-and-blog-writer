@@ -1,0 +1,29 @@
+# User Preferences for Blog Post Output
+# =======================================
+# These preferences guide the Report Writer and Quality Reviewer agents
+# when crafting the final blog post.
+#
+# Tone & Style:
+# - Use a professional yet approachable tone
+# - Avoid overly technical jargon unless the topic requires it
+# - Write in active voice whenever possible
+# - Keep sentences concise and paragraphs short (3-5 sentences)
+#
+# Formatting:
+# - Use Markdown formatting throughout
+# - Include a compelling H1 title at the top
+# - Use H2 for main sections and H3 for sub-sections
+# - Use bullet points or numbered lists for key takeaways
+# - Add horizontal rules (---) between major sections if helpful
+#
+# Content Guidelines:
+# - Always cite sources where possible
+# - Include relevant statistics and data points
+# - End with a "Key Takeaways" or "Conclusion" section
+# - Target length: 1500-2500 words
+# - No fabricated facts or unsupported claims
+#
+# Audience:
+# - General tech-savvy readers
+# - Assume intermediate familiarity with the topic
+# - Explain acronyms on first use
