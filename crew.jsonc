@@ -1,0 +1,96 @@
+{
+  // =================================================================
+  // Research & Blog Writer Crew — JSON-first configuration
+  //
+  // This file defines the complete crew: which agents run, what tasks
+  // they execute, and in what order.  crewAI reads this file when you
+  // run `crewai run`.
+  //
+  // Pipeline:  Research → Analyse → Write → Quality Review
+  // =================================================================
+
+  // Display name for this crew (shown in logs and the crewAI dashboard)
+  "name": "Research_and_Blog_writer",
+
+  // ---------------------------------------------------------------
+  // AGENTS — each name must match a file in agents/<name>.jsonc
+  // ---------------------------------------------------------------
+  "agents": ["research", "content_analyst", "report_writer", "quality_reviewer"],
+
+  // ---------------------------------------------------------------
+  // TASKS — executed in order (sequential process)
+  // Each task's output is passed as context to the next task.
+  // ---------------------------------------------------------------
+  "tasks": [
+    {
+      // --- Task 1: Research the topic ---
+      "name": "research_the_given_topic_task",
+
+      // {topic} is a runtime placeholder — crewai run prompts for it
+      "description": "Research the topic '{topic}' thoroughly using reliable online sources. Find relevant, accurate, and up-to-date information. Focus on collecting key facts, statistics, expert opinions, and useful source URLs that can be passed to the next agent for analysis.",
+
+      "expected_output": "A structured research report containing key findings, important facts, relevant statistics, source URLs, and a summary of the most important discoveries. Organised clearly for easy analysis.",
+
+      // Which agent handles this task (must be in the agents list above)
+      "agent": "research"
+    },
+
+    {
+      // --- Task 2: Analyse the research ---
+      "name": "analyze_the_research_provided_task",
+
+      "description": "Analyze the research provided by the Researcher on '{topic}'. Identify the most important findings, verify critical information, remove irrelevant or duplicate information, and organise the findings into clear thematic sections for the blog post.",
+
+      "expected_output": "A clear and organised analysis containing the most important verified findings grouped by theme, key insights, relevant evidence, source references, and any inconsistencies or gaps that should be noted.",
+
+      "agent": "content_analyst"
+    },
+
+    {
+      // --- Task 3: Write the blog post ---
+      "name": "create_a_wellstructured_blog_post_task",
+
+      "description": "Create a well-structured, engaging blog post based on the analysis of '{topic}'. Use an attention-grabbing introduction, clear section headings, concise explanations with supporting evidence, bullet points for lists, and a compelling conclusion. Do not add unsupported information.",
+
+      "expected_output": "A polished, accurate, and engaging blog post (1500-2500 words) in Markdown format with a compelling title, clear sections, proper headings, and source references.",
+
+      "agent": "report_writer"
+    },
+
+    {
+      // --- Task 4: Quality review ---
+      "name": "review_the_final_report_task",
+
+      "description": "Review the blog post about '{topic}' for factual accuracy, contradictions, missing important information, grammar, clarity, and readability. Verify key claims using reliable sources. Correct any errors without adding unsupported information. Produce the final, publication-ready version.",
+
+      "expected_output": "The final, quality-checked blog post in Markdown format — accurate, well-structured, and ready to publish. All errors corrected and inconsistencies resolved.",
+
+      "agent": "quality_reviewer",
+
+      // Save the final output to a file
+      "output_file": "report.md"
+    }
+  ],
+
+  // ---------------------------------------------------------------
+  // EXECUTION SETTINGS
+  // ---------------------------------------------------------------
+
+  // "sequential" — tasks run in order, each receiving prior outputs
+  // "hierarchical" — a manager agent delegates (requires manager_llm)
+  "process": "sequential",
+
+  // Show detailed execution progress in the console
+  "verbose": true,
+
+  // Memory disabled — requires an embedder (e.g. OpenAI API key).
+  // Enable with "memory": true once an embedder is configured.
+  "memory": false,
+
+  // ---------------------------------------------------------------
+  // RUNTIME INPUTS
+  // Placeholders like {topic} in agent/task text are filled from here.
+  // `crewai run` prompts for any placeholders missing from this object.
+  // ---------------------------------------------------------------
+  "inputs": {}
+}

@@ -1,0 +1,42 @@
+# ==============================================================
+# .gitignore — Research & Blog Writer
+# ==============================================================
+
+# --- Environment & Secrets ---
+.env                    # API keys — NEVER commit this
+.env.local
+
+# --- Python ---
+__pycache__/            # Compiled Python bytecode
+*.py[cod]               # .pyc, .pyo, .pyd files
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+
+# --- IDE & Editors ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- OS files ---
+.DS_Store               # macOS
+Thumbs.db               # Windows
+Desktop.ini
+
+# --- crewAI output ---
+report.md               # Generated blog post (regenerated on each run)
+crew.log                # Execution logs
+
+# --- Misc ---
+*.bak
+*.tmp
