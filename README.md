@@ -98,6 +98,9 @@ uv run crewai run
 
 The final blog post is saved to `report.md` in the project root.
 
+## 💡 Examples
+Check out the [`examples/`](examples) folder to see unedited, high-quality sample blog posts generated autonomously by this crew!
+
 ## 🔧 Configuration
 
 ### Changing LLM models
@@ -125,6 +128,12 @@ in `crew.py`. Supported formats:
 2. Extend `crewai.tools.BaseTool` and implement `_run()`
 3. Add it to the agent's `tools` list in `crew.py` or reference it as
    `"custom:my_tool"` in the agent's JSONC file
+
+### Enable Tracing (Optional)
+To enable detailed step-by-step visibility for complex LLM systems debugging, you can enable crewAI tracing by setting this environment variable:
+```bash
+export CREWAI_TRACING_ENABLED=true
+```
 
 ## 📋 Requirements
 
