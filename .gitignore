@@ -37,6 +37,11 @@ Desktop.ini
 report.md               # Generated blog post (regenerated on each run)
 crew.log                # Execution logs
 
+# --- Database ---
+*.db
+*.db-wal
+*.db-shm
+
 # --- Misc ---
 *.bak
 *.tmp
