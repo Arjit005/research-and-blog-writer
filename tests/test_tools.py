@@ -4,18 +4,20 @@ from unittest.mock import patch, MagicMock
 
 # Import the custom tools
 from tools.search_tool import SearchTool
-from tools.scrape_tool import ScrapeTool
+from tools.scrape_tool import ScrapeTool, is_safe_url
 from tools.file_tool import SaveReportTool
 
 @pytest.fixture
-def mock_serper():
+def mock_serper(monkeypatch):
+    monkeypatch.setenv("SERPER_API_KEY", "test_serper_key")
     with patch("tools.search_tool.SerperDevTool") as mock:
         yield mock
 
 @pytest.fixture
 def mock_scrape():
-    with patch("tools.scrape_tool.ScrapeWebsiteTool") as mock:
-        yield mock
+    with patch("tools.scrape_tool.is_safe_url", return_value=(True, "")):
+        with patch("tools.scrape_tool.ScrapeWebsiteTool") as mock:
+            yield mock
 
 def test_search_tool_valid_query(mock_serper):
     """Test that SearchTool calls SerperDevTool correctly with a query."""
@@ -30,6 +32,13 @@ def test_search_tool_valid_query(mock_serper):
     # Assertions
     instance._run.assert_called_once_with(search_query="AI Agents")
     assert result == "Mocked search results: AI Agents"
+
+def test_search_tool_missing_api_key(monkeypatch):
+    """Test that SearchTool gracefully reports missing SERPER_API_KEY."""
+    monkeypatch.delenv("SERPER_API_KEY", raising=False)
+    tool = SearchTool()
+    result = tool._run(query="AI Agents")
+    assert "Search unavailable: SERPER_API_KEY is missing" in result
 
 def test_search_tool_empty_query():
     """Test that SearchTool handles an empty query safely."""
@@ -56,6 +65,29 @@ def test_scrape_tool_empty_url():
     tool = ScrapeTool()
     result = tool._run(url="")
     assert result == "Error: No URL provided."
+
+def test_ssrf_blocks_private_and_metadata_ips():
+    """Test SSRF validation against loopback, private networks, and cloud metadata."""
+    # Localhost
+    safe, msg = is_safe_url("http://localhost:8501")
+    assert not safe
+
+    # Loopback IP
+    safe, msg = is_safe_url("http://127.0.0.1:8000/secret")
+    assert not safe
+
+    # AWS/GCP/Azure link-local metadata IP
+    safe, msg = is_safe_url("http://169.254.169.254/latest/meta-data/")
+    assert not safe
+    assert "restricted internal IP" in msg or "forbidden" in msg
+
+    # Non-HTTP protocol
+    safe, msg = is_safe_url("file:///etc/passwd")
+    assert not safe
+    assert "Unsupported scheme" in msg
+
+    safe, msg = is_safe_url("ftp://ftp.example.com")
+    assert not safe
 
 def test_save_report_tool(tmp_path, monkeypatch):
     """Test that SaveReportTool writes to the correct file path."""
