@@ -42,14 +42,15 @@ Give it a topic — it delivers a **fully researched, fact-checked, publication-
 
 ## 🎯 Key Features
 
-- 🔍 **Autonomous Research** — Agents search the web, scrape sources, and cross-reference findings
-- 📝 **Quality-Checked Output** — 4-stage pipeline ensures accuracy, structure, and readability
-- 🖥️ **Interactive Web UI** — Streamlit app with real-time agent logs, article previews, and download
+- 🔍 **Autonomous Multi-Agent Research** — 4-stage sequential crew searches the web, cross-references sources, synthesizes data, and quality-checks articles
+- 🌐 **Fail-Safe Dual Search Engine** — Primary Google Search via Serper.dev with automatic seamless fallback to DuckDuckGo (`ddgs`), preventing pipeline crashes on missing or exhausted API keys
+- 📊 **Token & Cost Observability** — Real-time tracking of prompt tokens, completion tokens, and dollar cost estimation per multi-agent run
+- 🖥️ **Interactive Web Studio** — Streamlit app with live agent execution logs, token telemetry, article previews, and markdown exports
 - 💬 **AI Editorial Copilot** — Chat with Gemini to refine, summarize, or transform your article (LinkedIn posts, Twitter threads, executive summaries)
-- 💾 **Persistent Article History** — SQLite database stores all generated articles and chat conversations
-- 🎛️ **Customizable** — Adjust tone, audience, length, and even swap LLM providers
-- 🧪 **Tested** — Unit tests verify crew structure and agent configuration
-- 🔌 **Dual Config** — Use JSON-first (`crew.jsonc`) or code-first (`crew.py`) crew definitions
+- 💾 **Persistent Article History** — SQLite database stores all generated articles, metadata, and editorial chat conversations
+- 🎛️ **Customizable Steering** — Adjust tone, target audience, depth, and easily swap LLM providers via LiteLLM
+- 🧪 **Fully Tested** — Automated unit test suite with `pytest` validating agent definitions, task configurations, and custom tools
+- 🔌 **Dual Configuration** — Use JSON-first (`crew.jsonc`) or code-first (`crew.py`) crew definitions
 
 ---
 

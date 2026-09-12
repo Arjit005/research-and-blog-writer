@@ -327,6 +327,20 @@ with main_tab1:
                     generation_time_sec=elapsed,
                 )
 
+                # Capture token analytics if available
+                token_metrics = getattr(result, "token_usage", None)
+                if token_metrics:
+                    p_tok = getattr(token_metrics, "prompt_tokens", 0)
+                    c_tok = getattr(token_metrics, "completion_tokens", 0)
+                    tot_tok = getattr(token_metrics, "total_tokens", 0)
+                    est_cost = (p_tok * 0.000000075) + (c_tok * 0.00000030)
+                    st.session_state.token_metrics = {
+                        "prompt": p_tok,
+                        "completion": c_tok,
+                        "total": tot_tok,
+                        "cost": est_cost
+                    }
+
                 # Update session state
                 st.session_state.current_report = report_content
                 st.session_state.current_article_id = article_id
@@ -346,10 +360,18 @@ with main_tab1:
         word_count = len(report_content.split())
         est_read = max(1, round(word_count / 200))
 
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Total Word Count", f"{word_count:,} words")
-        m2.metric("Estimated Read Time", f"~{est_read} min")
-        m3.metric("Review Status", "Quality Verified ✅")
+        if "token_metrics" in st.session_state and st.session_state.token_metrics:
+            tm = st.session_state.token_metrics
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Total Word Count", f"{word_count:,} words")
+            m2.metric("Estimated Read Time", f"~{est_read} min")
+            m3.metric("Tokens Consumed", f"{tm['total']:,}")
+            m4.metric("Estimated Run Cost", f"${tm['cost']:.5f} USD")
+        else:
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Total Word Count", f"{word_count:,} words")
+            m2.metric("Estimated Read Time", f"~{est_read} min")
+            m3.metric("Review Status", "Quality Verified ✅")
 
         res_tab1, res_tab2 = st.tabs(["📖 Formatted Article Preview", "📝 Raw Markdown Source"])
         with res_tab1:

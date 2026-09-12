@@ -416,6 +416,21 @@ def main():
     print("=" * 60)
     print(result)
 
+    # Display token usage and cost analytics if available
+    token_usage = getattr(result, "token_usage", None)
+    if token_usage:
+        p_tok = getattr(token_usage, "prompt_tokens", 0)
+        c_tok = getattr(token_usage, "completion_tokens", 0)
+        tot_tok = getattr(token_usage, "total_tokens", 0)
+        est_cost = (p_tok * 0.000000075) + (c_tok * 0.00000030)
+        print("\n" + "=" * 60)
+        print("📊 Multi-Agent Execution Metrics:")
+        print(f"   • Prompt Tokens:     {p_tok:,}")
+        print(f"   • Completion Tokens: {c_tok:,}")
+        print(f"   • Total Tokens:      {tot_tok:,}")
+        print(f"   • Estimated Cost:    ${est_cost:.6f} USD")
+        print("=" * 60)
+
     # Confirm the output file was written
     if os.path.exists("report.md"):
         print(f"\n📄 Report saved to: {os.path.abspath('report.md')}")

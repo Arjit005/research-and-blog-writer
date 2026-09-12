@@ -36,12 +36,36 @@ class SearchTool(BaseTool):
     args_schema: Type[BaseModel] = SearchInput
 
     def _run(self, query: str = "", **kwargs: Any) -> str:
-        """Execute a web search and return the results."""
+        """Execute a web search and return the results with automatic failover."""
+        import os
         search_query = query or kwargs.get("search_query", "") or kwargs.get("query", "")
         if not search_query:
             return "Error: No search query provided."
-        serper = SerperDevTool()
+
+        # 1. Try SerperDevTool if API key is provided
+        if os.getenv("SERPER_API_KEY"):
+            try:
+                serper = SerperDevTool()
+                res = str(serper._run(search_query=search_query))
+                if res and "unauthorized" not in res.lower() and "invalid api key" not in res.lower():
+                    return res
+            except Exception as e:
+                print(f"[WARNING] SerperDev search failed: {e}. Switching to DuckDuckGo fallback...")
+
+        # 2. Resilient Fallback: DuckDuckGo Search (No API Key Required)
         try:
-            return str(serper._run(search_query=search_query))
-        except Exception as e:
-            return f"Search error: {e}"
+            from ddgs import DDGS
+            results = list(DDGS().text(search_query, max_results=5))
+            if results:
+                formatted = []
+                for item in results:
+                    title = item.get("title", "No Title")
+                    link = item.get("href", "")
+                    body = item.get("body", "")
+                    formatted.append(f"Title: {title}\nURL: {link}\nSnippet: {body}")
+                return "\n\n---\n\n".join(formatted)
+        except Exception as ddg_err:
+            print(f"[WARNING] DuckDuckGo fallback failed: {ddg_err}")
+
+        return f"Search notice: No live web results could be retrieved for '{search_query}'."
+
