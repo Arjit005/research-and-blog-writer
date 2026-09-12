@@ -9,6 +9,7 @@ Requirements:
     - The ``crewai[tools]`` extra installed (included in pyproject.toml)
 """
 
+import os
 from typing import Any, Optional, Type
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
@@ -39,15 +40,15 @@ class SearchTool(BaseTool):
         """Execute a web search and return the results with automatic failover."""
         import os
         search_query = query or kwargs.get("search_query", "") or kwargs.get("query", "")
-        if not search_query:
+        if not search_query or not search_query.strip():
             return "Error: No search query provided."
 
         # 1. Try SerperDevTool if API key is provided
         if os.getenv("SERPER_API_KEY"):
             try:
                 serper = SerperDevTool()
-                res = str(serper._run(search_query=search_query))
-                if res and "unauthorized" not in res.lower() and "invalid api key" not in res.lower():
+                res = str(serper._run(search_query=search_query.strip()))
+                if res and "unauthorized" not in res.lower() and "invalid api key" not in res.lower() and res.strip():
                     return res
             except Exception as e:
                 print(f"[WARNING] SerperDev search failed: {e}. Switching to DuckDuckGo fallback...")
@@ -55,7 +56,7 @@ class SearchTool(BaseTool):
         # 2. Resilient Fallback: DuckDuckGo Search (No API Key Required)
         try:
             from ddgs import DDGS
-            results = list(DDGS().text(search_query, max_results=5))
+            results = list(DDGS().text(search_query.strip(), max_results=5))
             if results:
                 formatted = []
                 for item in results:
@@ -67,5 +68,5 @@ class SearchTool(BaseTool):
         except Exception as ddg_err:
             print(f"[WARNING] DuckDuckGo fallback failed: {ddg_err}")
 
-        return f"Search notice: No live web results could be retrieved for '{search_query}'."
+        return f"Notice: No web search results could be retrieved for '{search_query}'. Proceed using prior task context."
 

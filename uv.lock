@@ -3609,6 +3609,7 @@ dependencies = [
     { name = "crewai", extra = ["google-genai", "litellm", "tools"] },
     { name = "ddgs" },
     { name = "duckduckgo-search" },
+    { name = "python-dotenv" },
     { name = "streamlit" },
 ]
 
@@ -3623,6 +3624,7 @@ requires-dist = [
     { name = "crewai", extras = ["google-genai", "litellm", "tools"], specifier = ">=1.15.21,<2.0.0" },
     { name = "ddgs", specifier = ">=9.16.0" },
     { name = "duckduckgo-search", specifier = ">=8.1.1" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "streamlit", specifier = ">=1.63.0" },
 ]
 

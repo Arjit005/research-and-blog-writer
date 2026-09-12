@@ -173,6 +173,8 @@ with st.sidebar:
     stat_c1, stat_c2 = st.columns(2)
     stat_c1.metric("Articles", stats["total_articles"])
     stat_c2.metric("Total Words", f"{stats['total_words']:,}")
+    if stats.get("total_tokens", 0) > 0:
+        st.caption(f"⚡ Tokens Processed: **{stats['total_tokens']:,}**")
 
     # --- Article History ---
     st.markdown("---")
@@ -293,13 +295,45 @@ with main_tab1:
             p3.markdown('<div class="agent-card">✍️ <b>3. Blog Writer</b><br><small>Drafts article & narrative</small></div>', unsafe_allow_html=True)
             p4.markdown('<div class="agent-card">✨ <b>4. Quality Reviewer</b><br><small>Polishes & persists</small></div>', unsafe_allow_html=True)
 
+            progress_bar = st.progress(0.0)
+            status_indicator = st.empty()
+            status_indicator.info("🚀 Initializing multi-agent squad...")
             log_box = st.empty()
-            log_box.info("Initializing multi-agent squad and preparing tasks...")
 
-            # Output capture
-            old_stdout = sys.stdout
-            capture = StreamlitOutputCapture(log_box)
-            sys.stdout = capture
+            logs_history = ["▶️ Pipeline initialized. Starting autonomous execution..."]
+            log_box.code("\n".join(logs_history), language="plaintext")
+
+            task_stages = [
+                "1/4: Web Research (Serper)",
+                "2/4: Content Analysis",
+                "3/4: Drafting Blog",
+                "4/4: Quality Review & Polish",
+            ]
+            completed_stages = [0]
+
+            def on_task_finish(task_output):
+                completed_stages[0] += 1
+                curr = min(completed_stages[0], 4)
+                progress_bar.progress(curr / 4.0)
+                stage_label = task_stages[curr - 1] if curr <= len(task_stages) else "Finalizing"
+                status_indicator.success(f"✅ Finished: {stage_label}")
+                logs_history.append(f"🏁 Stage {curr}/4 complete: {stage_label}")
+                log_box.code("\n".join(logs_history[-15:]), language="plaintext")
+
+            def on_step(step_output):
+                try:
+                    if hasattr(step_output, "thought") and step_output.thought:
+                        logs_history.append(f"💭 {step_output.thought.strip()[:180]}")
+                    elif isinstance(step_output, tuple) and len(step_output) > 0:
+                        action = step_output[0]
+                        tool = getattr(action, "tool", "tool")
+                        tool_input = getattr(action, "tool_input", "")
+                        logs_history.append(f"🔧 Tool: {tool} ({str(tool_input)[:80]})")
+                    elif hasattr(step_output, "text") and step_output.text:
+                        logs_history.append(f"📝 {step_output.text.strip()[:180]}")
+                    log_box.code("\n".join(logs_history[-15:]), language="plaintext")
+                except Exception:
+                    pass
 
             try:
                 from crew import ResearchAndBlogWriter
@@ -308,14 +342,24 @@ with main_tab1:
                 effective_topic = f"{topic_input} (Target Audience: {audience}, Tone: {tone}, Length: {length})"
 
                 start_time = time.time()
-                with st.spinner("AI agents are conducting research, cross-referencing sources, and drafting the article..."):
+                with st.spinner("AI agents are researching, analyzing sources, and drafting the article..."):
                     crew_instance = ResearchAndBlogWriter()
-                    result = crew_instance.crew().kickoff(inputs={"topic": effective_topic})
+                    result = crew_instance.crew(
+                        step_callback=on_step,
+                        task_callback=on_task_finish,
+                    ).kickoff(inputs={"topic": effective_topic})
 
                 elapsed = round(time.time() - start_time, 2)
+                progress_bar.progress(1.0)
                 st.success(f"🎉 Research and article generated successfully in {elapsed} seconds!")
 
                 report_content = str(result.raw)
+
+                # Extract token usage if available
+                tokens_used = 0
+                token_usage = getattr(result, "token_usage", None)
+                if token_usage:
+                    tokens_used = getattr(token_usage, "total_tokens", 0)
 
                 # Save to database
                 article_id = db.save_article(
@@ -325,6 +369,7 @@ with main_tab1:
                     audience=audience,
                     target_length=length,
                     generation_time_sec=elapsed,
+                    tokens_used=tokens_used,
                 )
 
                 # Capture token analytics if available
@@ -344,12 +389,11 @@ with main_tab1:
                 # Update session state
                 st.session_state.current_report = report_content
                 st.session_state.current_article_id = article_id
+                st.session_state.last_tokens_used = tokens_used
                 st.session_state.chat_history = []
 
             except Exception as e:
                 st.error(f"Error during agent execution: {e}")
-            finally:
-                sys.stdout = old_stdout
 
     # Show active/latest generated article if available
     if st.session_state.current_report:
@@ -359,19 +403,23 @@ with main_tab1:
         report_content = st.session_state.current_report
         word_count = len(report_content.split())
         est_read = max(1, round(word_count / 200))
+        tokens_val = getattr(st.session_state, "last_tokens_used", 0)
 
         if "token_metrics" in st.session_state and st.session_state.token_metrics:
             tm = st.session_state.token_metrics
+            m1, m2, m3, m4, m5 = st.columns(5)
+            m1.metric("Total Words", f"{word_count:,}")
+            m2.metric("Est. Read Time", f"~{est_read} min")
+            m3.metric("Review Status", "Quality Verified ✅")
+            m4.metric("Tokens Consumed", f"{tm['total']:,}")
+            m5.metric("Estimated Cost", f"${tm['cost']:.5f} USD")
+        else:
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Total Word Count", f"{word_count:,} words")
             m2.metric("Estimated Read Time", f"~{est_read} min")
-            m3.metric("Tokens Consumed", f"{tm['total']:,}")
-            m4.metric("Estimated Run Cost", f"${tm['cost']:.5f} USD")
-        else:
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Total Word Count", f"{word_count:,} words")
-            m2.metric("Estimated Read Time", f"~{est_read} min")
             m3.metric("Review Status", "Quality Verified ✅")
+            m4.metric("Tokens Consumed", f"{tokens_val:,}" if tokens_val else "Observed ✅")
+
 
         res_tab1, res_tab2 = st.tabs(["📖 Formatted Article Preview", "📝 Raw Markdown Source"])
         with res_tab1:

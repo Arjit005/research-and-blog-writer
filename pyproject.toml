@@ -9,6 +9,7 @@ dependencies = [
     "ddgs>=9.16.0",
     "duckduckgo-search>=8.1.1",
     "streamlit>=1.63.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [build-system]
@@ -17,7 +18,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 # Include these directories/files in the built package
-only-include = ["agents", "crew.jsonc", "tools", "knowledge", "skills"]
+only-include = ["agents", "crew.jsonc", "tools", "knowledge"]
 
 [tool.crewai]
 # Tells crewAI CLI this is a crew project using JSON-first config
