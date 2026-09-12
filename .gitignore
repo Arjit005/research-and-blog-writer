@@ -34,13 +34,16 @@ Thumbs.db               # Windows
 Desktop.ini
 
 # --- crewAI output ---
-report.md               # Generated blog post (regenerated on each run)
+report.md
 crew.log                # Execution logs
 
 # --- Database ---
 *.db
 *.db-wal
 *.db-shm
+
+# --- Claude Code ---
+.claude/
 
 # --- Misc ---
 *.bak
