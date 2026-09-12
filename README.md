@@ -56,41 +56,34 @@ Give it a topic — it delivers a **fully researched, fact-checked, publication-
 ## 📁 Project Structure
 
 ```
-research_and_blog_writer/
-├── crew.py                  # 🧠 Main crew definition (4 agents + 4 tasks)
-├── crew.jsonc               # 📋 JSON-first crew config (used by `crewai run`)
-├── app.py                   # 🖥️ Streamlit web UI + AI chat copilot
-├── database.py              # 💾 SQLite database layer (articles + chat history)
-├── pyproject.toml           # 📦 Project metadata & dependencies
-├── .env.example             # 🔑 Template for API keys
-│
-├── agents/                  # 🤖 Agent definitions (one JSONC per agent)
+research-and-blog-writer/
+├── agents/                  # Declarative agent specifications (.jsonc)
 │   ├── research.jsonc
 │   ├── content_analyst.jsonc
 │   ├── report_writer.jsonc
 │   └── quality_reviewer.jsonc
-│
-├── tools/                   # 🔧 Custom CrewAI tool implementations
-│   ├── __init__.py
-│   ├── search_tool.py       # Web search via Serper.dev API
-│   ├── scrape_tool.py       # Webpage content scraping
-│   └── file_tool.py         # Saves final report to disk
-│
-├── knowledge/               # 📚 Knowledge files for agent context
-│   └── user_preference.txt  # Output style & formatting preferences
-│
-├── examples/                # 📄 Sample generated articles
+├── examples/                # Sample generated report
 │   ├── README.md
 │   └── sample_ai_agents_report.md
-│
-├── tests/                   # 🧪 Unit tests
+├── knowledge/               # Editorial guidelines & preferences
+│   └── user_preference.txt
+├── tests/                   # Automated unit tests
 │   ├── test_crew.py
 │   └── test_tools.py
-│
-├── skills/                  # 🔌 Custom skills (extensible)
-│   └── .gitkeep
-│
-└── report.md                # 📝 Generated output (auto-created on run)
+├── tools/                   # Custom CrewAI tools
+│   ├── __init__.py
+│   ├── search_tool.py       # Google search via Serper.dev
+│   ├── scrape_tool.py       # Web page scraper
+│   └── file_tool.py         # Markdown output writer
+├── app.py                   # Streamlit web UI + Editorial Copilot
+├── crew.py                  # Main CrewAI definition & CLI runner
+├── crew.jsonc               # Declarative crew configuration
+├── database.py              # SQLite storage layer (articles & chats)
+├── pyproject.toml           # Project dependencies and configuration
+├── requirements.txt         # Pip dependency requirements
+├── setup.bat                # Windows setup script
+├── .env.example             # API key template
+└── report.md                # Output report (generated on run)
 ```
 
 ---
@@ -106,11 +99,16 @@ research_and_blog_writer/
 ### 1. Clone & Install
 
 ```bash
-git clone https://github.com/<your-username>/research_and_blog_writer.git
-cd research_and_blog_writer
+git clone https://github.com/Arjit005/research-and-blog-writer.git
+cd research-and-blog-writer
 
-# Install dependencies
+# Install dependencies (uv recommended)
 uv sync
+
+# Or with pip:
+# python -m venv .venv
+# .venv\Scripts\activate  (or source .venv/bin/activate)
+# pip install -r requirements.txt
 ```
 
 ### 2. Configure API Keys
@@ -154,94 +152,37 @@ uv run crewai run
 
 The final blog post is saved to `report.md`.
 
----
+### 5. Or Run with Docker 🐳
 
-## 🤖 How CrewAI Powers This
-
-This project uses **[CrewAI](https://www.crewai.com/)** to orchestrate multiple AI agents working together as a team. Here's what makes it special:
-
-### Multi-Agent Architecture
-
-Instead of a single LLM prompt, CrewAI lets you define **specialized agents** that collaborate on a task — just like a real content team:
-
-```python
-from crewai import Agent, Crew, Process, Task
-from crewai.project import CrewBase, agent, crew, task
-
-@CrewBase
-class ResearchAndBlogWriter:
-
-    @agent
-    def research(self) -> Agent:
-        return Agent(
-            role="Senior Researcher",
-            goal="Search the internet for comprehensive, accurate information",
-            backstory="You are a seasoned research specialist...",
-            llm="gemini/gemini-2.5-flash",
-            tools=[SearchTool()],
-        )
-
-    @task
-    def research_task(self) -> Task:
-        return Task(
-            description="Research the topic '{topic}' thoroughly...",
-            agent=self.research(),
-        )
-
-    @crew
-    def crew(self) -> Crew:
-        return Crew(
-            agents=self.agents,
-            tasks=self.tasks,
-            process=Process.sequential,  # Each agent hands off to the next
-        )
+```bash
+docker build -t research-blog-writer .
+docker run -p 8501:8501 --env-file .env research-blog-writer
 ```
-
-### Why CrewAI?
-
-| Feature | Benefit |
-|---|---|
-| **Agent Specialization** | Each agent has a focused role, backstory, and tools — produces better output than a single mega-prompt |
-| **Sequential Pipeline** | Output flows through Research → Analysis → Writing → Review, just like a newsroom |
-| **Tool Integration** | Agents can search the web, scrape pages, and save files autonomously |
-| **Flexible Config** | Define crews in Python (code-first) or JSON (declarative) — this project supports both |
-| **LLM Agnostic** | Swap between Gemini, GPT-4, Llama, Ollama, or any provider with one line |
 
 ---
 
-## 🔧 Configuration
+## 🔧 Customization
 
-### Changing LLM Models
-
-Edit the `llm` field in `crew.py` or any agent's JSONC file (`agents/*.jsonc`):
+### Changing the LLM Model
+By default, all agents use `gemini/gemini-2.5-flash`. You can swap to another model provider supported by LiteLLM in `crew.py` (or `agents/*.jsonc`):
 
 ```python
-# Google Gemini (default)
-llm="gemini/gemini-2.5-flash"
+# Default: Google Gemini
+llm = "gemini/gemini-2.5-flash"
 
-# OpenAI
-llm="openai/gpt-4o"
-
-# Groq (Llama)
-llm="groq/meta-llama/llama-4-maverick-17b-128e-instruct"
-
-# Local Ollama
-llm={"model": "llama3", "provider": "ollama", "base_url": "http://localhost:11434"}
+# Alternative: OpenAI or Groq
+# llm = "openai/gpt-4o"
+# llm = "groq/meta-llama/llama-4-maverick-17b-128e-instruct"
 ```
 
-### Adding Custom Tools
-
-1. Create a new file in `tools/` (e.g., `tools/my_tool.py`)
-2. Extend `crewai.tools.BaseTool` and implement `_run()`
-3. Add it to the agent's `tools` list in `crew.py`
-
-### Customizing Output Style
-
-Edit `knowledge/user_preference.txt` to change tone, formatting, word count, and audience guidelines.
+### Style & Editorial Preferences
+Edit [`knowledge/user_preference.txt`](knowledge/user_preference.txt) to customize the tone, target length, section structure, and formatting guidelines.
 
 ---
 
 ## 🧪 Running Tests
+
+Run the automated pytest suite:
 
 ```bash
 uv run pytest tests/ -v
@@ -251,40 +192,11 @@ uv run pytest tests/ -v
 
 ## 💡 Example Output
 
-Check the [`examples/`](examples/) folder for a real, unedited sample article generated by this crew:
-
-> **[AI Agents in 2025: From Automation to Strategic Revolution](examples/sample_ai_agents_report.md)**
-> — A comprehensive industry report with live citations, data points, and structured analysis.
-
----
-
-## 📋 Environment Variables
-
-| Variable | Required | Description |
-|---|---|---|
-| `GEMINI_API_KEY` | ✅ | Google Gemini API key ([get one here](https://aistudio.google.com/apikey)) |
-| `SERPER_API_KEY` | ✅ | Serper.dev API key for web search ([get one here](https://serper.dev/)) |
-| `GROQ_API_KEY` | ❌ | Only needed if you switch agents to Groq/Llama models |
-| `OPENAI_API_KEY` | ❌ | Only needed if you switch agents to OpenAI models |
-
----
-
-## 🛣️ Roadmap
-
-- [ ] Add support for image generation in blog posts
-- [ ] Implement hierarchical crew process with a manager agent
-- [ ] Add more output formats (PDF, HTML, Newsletter)
-- [ ] Enable memory with embedding-based retrieval
-- [ ] Add multi-language support
+A real, unedited sample report generated autonomously by this crew is available in [`examples/`](examples/):
+- **[`sample_ai_agents_report.md`](examples/sample_ai_agents_report.md)**: An industry report with verified citations, data points, and structured takeaways.
 
 ---
 
 ## 📄 License
 
-MIT — see [LICENSE](LICENSE) for details.
-
----
-
-<p align="center">
-  Built with ❤️ using <a href="https://www.crewai.com/">CrewAI</a> • <a href="https://ai.google.dev/">Google Gemini</a> • <a href="https://streamlit.io/">Streamlit</a>
-</p>
+This project is licensed under the [MIT License](LICENSE).

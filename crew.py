@@ -33,6 +33,9 @@ if sys.platform == "win32":
 
 from crewai import Agent, Crew, Process, Task
 from crewai.project import CrewBase, agent, crew, task
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ---------------------------------------------------------------------------
 # Custom tools — imported so agents can use them
@@ -131,6 +134,7 @@ class ResearchAndBlogWriter:
             verbose=False,
             allow_delegation=False,
             planning=False,
+            max_rpm=10,
         )
 
     @agent
@@ -165,6 +169,7 @@ class ResearchAndBlogWriter:
             verbose=False,
             allow_delegation=False,
             planning=False,
+            max_rpm=10,
         )
 
     @agent
@@ -200,6 +205,7 @@ class ResearchAndBlogWriter:
             verbose=False,
             allow_delegation=False,
             planning=False,
+            max_rpm=10,
         )
 
     # ------------------------------------------------------------------
@@ -344,7 +350,7 @@ class ResearchAndBlogWriter:
     # ------------------------------------------------------------------
 
     @crew
-    def crew(self) -> Crew:
+    def crew(self, step_callback=None, task_callback=None) -> Crew:
         """Build and return the complete crew.
 
         - Process: sequential — tasks run in order, each receiving the
@@ -352,23 +358,19 @@ class ResearchAndBlogWriter:
         - Memory: enabled — agents can recall context across tasks.
         - Verbose: enabled — shows execution progress in the console.
         """
-        return Crew(
-            # Agents are auto-collected from @agent-decorated methods
-            agents=self.agents,
+        crew_kwargs = {
+            "agents": self.agents,
+            "tasks": self.tasks,
+            "process": Process.sequential,
+            "verbose": True,
+            "memory": False,
+        }
+        if step_callback:
+            crew_kwargs["step_callback"] = step_callback
+        if task_callback:
+            crew_kwargs["task_callback"] = task_callback
 
-            # Tasks are auto-collected from @task-decorated methods
-            tasks=self.tasks,
-
-            # Sequential: each task runs after the previous one completes
-            process=Process.sequential,
-
-            # Show detailed logs of each step in the console
-            verbose=True,
-
-            # Memory disabled — requires an embedder (e.g. OpenAI API key).
-            # Enable with memory=True once an embedder is configured.
-            memory=False,
-        )
+        return Crew(**crew_kwargs)
 
 
 # ---------------------------------------------------------------------------

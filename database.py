@@ -44,6 +44,7 @@ def init_db():
                 audience    TEXT DEFAULT 'Software Engineers & Developers',
                 target_length TEXT DEFAULT 'Standard Blog (1,500 - 2,000 words)',
                 generation_time_sec REAL DEFAULT 0,
+                tokens_used INTEGER DEFAULT 0,
                 created_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
                 updated_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
             );
@@ -61,19 +62,28 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_articles_created ON articles(created_at DESC);
         """)
 
+        # Migration: ensure tokens_used column exists for existing databases
+        cursor = conn.execute("PRAGMA table_info(articles)")
+        existing_cols = [row["name"] for row in cursor.fetchall()]
+        if "tokens_used" not in existing_cols:
+            try:
+                conn.execute("ALTER TABLE articles ADD COLUMN tokens_used INTEGER DEFAULT 0")
+            except Exception:
+                pass
+
 
 # ---------------------------------------------------------------------------
 # Articles CRUD
 # ---------------------------------------------------------------------------
 
-def save_article(topic, content, tone="", audience="", target_length="", generation_time_sec=0):
+def save_article(topic, content, tone="", audience="", target_length="", generation_time_sec=0, tokens_used=0):
     """Save a newly generated article. Returns the new article ID."""
     word_count = len(content.split())
     with get_connection() as conn:
         cursor = conn.execute(
-            """INSERT INTO articles (topic, content, word_count, tone, audience, target_length, generation_time_sec)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (topic, content, word_count, tone, audience, target_length, generation_time_sec),
+            """INSERT INTO articles (topic, content, word_count, tone, audience, target_length, generation_time_sec, tokens_used)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (topic, content, word_count, tone, audience, target_length, generation_time_sec, tokens_used),
         )
         return cursor.lastrowid
 
@@ -150,6 +160,7 @@ def get_stats():
                 COUNT(*)                     AS total_articles,
                 COALESCE(SUM(word_count), 0) AS total_words,
                 COALESCE(AVG(word_count), 0) AS avg_words,
+                COALESCE(SUM(tokens_used), 0) AS total_tokens,
                 (SELECT COUNT(*) FROM chat_history) AS total_chats
             FROM articles
         """).fetchone()

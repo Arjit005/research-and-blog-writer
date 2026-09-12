@@ -9,6 +9,7 @@ Requirements:
     - The ``crewai[tools]`` extra installed (included in pyproject.toml)
 """
 
+import os
 from typing import Any, Optional, Type
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
@@ -38,10 +39,17 @@ class SearchTool(BaseTool):
     def _run(self, query: str = "", **kwargs: Any) -> str:
         """Execute a web search and return the results."""
         search_query = query or kwargs.get("search_query", "") or kwargs.get("query", "")
-        if not search_query:
+        if not search_query or not search_query.strip():
             return "Error: No search query provided."
-        serper = SerperDevTool()
+
+        if not os.getenv("SERPER_API_KEY"):
+            return "Search unavailable: SERPER_API_KEY is missing from environment. Proceed using prior task context."
+
         try:
-            return str(serper._run(search_query=search_query))
+            serper = SerperDevTool()
+            results = str(serper._run(search_query=search_query.strip()))
+            if not results.strip():
+                return f"Notice: No web search results found for query '{search_query}'. Try alternate keywords."
+            return results
         except Exception as e:
-            return f"Search error: {e}"
+            return f"Notice: Search request failed for '{search_query}' ({e}). Proceed with other available context."
