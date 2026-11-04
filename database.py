@@ -181,6 +181,18 @@ def init_db():
                     updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
                 );
             """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS article_revisions (
+                    id           INT AUTO_INCREMENT PRIMARY KEY,
+                    article_id   INT NOT NULL,
+                    revision_num INT NOT NULL,
+                    content      MEDIUMTEXT NOT NULL,
+                    summary      VARCHAR(255) DEFAULT 'Copilot edit',
+                    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_rev_art (article_id),
+                    UNIQUE KEY uk_art_rev (article_id, revision_num)
+                );
+            """)
         else:
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS articles (
@@ -253,10 +265,22 @@ def init_db():
                     FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS article_revisions (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    article_id   INTEGER NOT NULL,
+                    revision_num INTEGER NOT NULL,
+                    content      TEXT NOT NULL,
+                    summary      TEXT DEFAULT 'Copilot edit',
+                    created_at   TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+                    FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE,
+                    UNIQUE(article_id, revision_num)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_chat_article ON chat_history(article_id);
                 CREATE INDEX IF NOT EXISTS idx_articles_created ON articles(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_telemetry_created ON telemetry_runs(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_user_mem ON user_memory(user_key);
+                CREATE INDEX IF NOT EXISTS idx_rev_art ON article_revisions(article_id);
             """)
 
 
@@ -292,6 +316,10 @@ def get_articles(limit=50):
         return [dict(r) for r in rows]
 
 
+# Alias for backward compatibility
+get_all_articles = get_articles
+
+
 def get_article(article_id):
     """Fetch a single article by ID, or None if not found."""
     with get_connection() as (conn, is_tidb):
@@ -315,6 +343,114 @@ def update_article_content(article_id, new_content):
         else:
             sql = "UPDATE articles SET content = ?, word_count = ?, updated_at = datetime('now', 'localtime') WHERE id = ?"
         _exec(conn, is_tidb, sql, (new_content, word_count, article_id))
+
+
+# ---------------------------------------------------------------------------
+# Revisions CRUD & Atomic Transactions
+# ---------------------------------------------------------------------------
+
+def get_article_revisions(article_id: int) -> List[Dict[str, Any]]:
+    """Fetch all stored revisions for an article ordered from latest to oldest."""
+    with get_connection() as (conn, is_tidb):
+        cursor = _exec(
+            conn, is_tidb,
+            """SELECT id, article_id, revision_num, content, summary, created_at
+               FROM article_revisions WHERE article_id = ? ORDER BY revision_num DESC""",
+            (article_id,),
+        )
+        rows = cursor.fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_single_revision(revision_id: int) -> Optional[Dict[str, Any]]:
+    """Fetch a specific revision by ID."""
+    with get_connection() as (conn, is_tidb):
+        cursor = _exec(
+            conn, is_tidb,
+            """SELECT id, article_id, revision_num, content, summary, created_at
+               FROM article_revisions WHERE id = ?""",
+            (revision_id,),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def apply_article_edit_transaction(article_id: int, new_content: str, summary: str = "Copilot revision") -> int:
+    """Atomic transaction: snapshots current article content into article_revisions, then updates articles.content.
+
+    Returns the new revision number.
+    If either operation fails, the transaction rolls back cleanly.
+    """
+    with get_connection() as (conn, is_tidb):
+        # 1. Fetch current article content
+        cursor = _exec(conn, is_tidb, "SELECT content FROM articles WHERE id = ?", (article_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise ValueError(f"Article {article_id} not found.")
+
+        current_content = row["content"] if is_tidb else row[0]
+
+        # 2. Get next revision number
+        cursor = _exec(conn, is_tidb, "SELECT COALESCE(MAX(revision_num), 0) + 1 AS next_rev FROM article_revisions WHERE article_id = ?", (article_id,))
+        rev_row = cursor.fetchone()
+        next_rev = (rev_row["next_rev"] if is_tidb else rev_row[0]) or 1
+
+        # 3. Snapshot current content as revision N
+        _exec(
+            conn, is_tidb,
+            "INSERT INTO article_revisions (article_id, revision_num, content, summary) VALUES (?, ?, ?, ?)",
+            (article_id, next_rev, current_content, summary),
+        )
+
+        # 4. Update articles with new content
+        word_count = len(new_content.split())
+        if is_tidb:
+            sql = "UPDATE articles SET content = ?, word_count = ?, updated_at = NOW() WHERE id = ?"
+        else:
+            sql = "UPDATE articles SET content = ?, word_count = ?, updated_at = datetime('now', 'localtime') WHERE id = ?"
+        _exec(conn, is_tidb, sql, (new_content, word_count, article_id))
+
+        return next_rev
+
+
+def rollback_article_revision_transaction(article_id: int, target_revision_id: int) -> bool:
+    """Atomic rollback: snapshots current content as 'Before rollback to N', then restores target revision content."""
+    with get_connection() as (conn, is_tidb):
+        # 1. Fetch target revision
+        cursor = _exec(conn, is_tidb, "SELECT revision_num, content FROM article_revisions WHERE id = ? AND article_id = ?", (target_revision_id, article_id))
+        target_row = cursor.fetchone()
+        if not target_row:
+            return False
+
+        target_rev_num = target_row["revision_num"] if is_tidb else target_row[0]
+        target_content = target_row["content"] if is_tidb else target_row[1]
+
+        # 2. Fetch current article content
+        cursor = _exec(conn, is_tidb, "SELECT content FROM articles WHERE id = ?", (article_id,))
+        curr_row = cursor.fetchone()
+        current_content = curr_row["content"] if is_tidb else curr_row[0]
+
+        # 3. Get next revision number for current content snapshot
+        cursor = _exec(conn, is_tidb, "SELECT COALESCE(MAX(revision_num), 0) + 1 AS next_rev FROM article_revisions WHERE article_id = ?", (article_id,))
+        rev_row = cursor.fetchone()
+        next_rev = (rev_row["next_rev"] if is_tidb else rev_row[0]) or 1
+
+        # 4. Snapshot current content before rollback
+        _exec(
+            conn, is_tidb,
+            "INSERT INTO article_revisions (article_id, revision_num, content, summary) VALUES (?, ?, ?, ?)",
+            (article_id, next_rev, current_content, f"Before rollback to revision {target_rev_num}"),
+        )
+
+        # 5. Restore target content to article
+        word_count = len(target_content.split())
+        if is_tidb:
+            sql = "UPDATE articles SET content = ?, word_count = ?, updated_at = NOW() WHERE id = ?"
+        else:
+            sql = "UPDATE articles SET content = ?, word_count = ?, updated_at = datetime('now', 'localtime') WHERE id = ?"
+        _exec(conn, is_tidb, sql, (target_content, word_count, article_id))
+
+        return True
 
 
 def delete_article(article_id):

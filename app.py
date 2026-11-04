@@ -1,160 +1,103 @@
-from security.guardrails import validate_user_input, mask_pii_and_secrets, verify_citations
-from llmops.telemetry import TelemetryTracker, calculate_readability
-from llm_fallback import get_fallback_llm
+from __future__ import annotations
+
 import io
 import os
 import sys
 import time
+import queue
+import threading
 from datetime import datetime
 from dotenv import load_dotenv
-from litellm import completion
 import streamlit as st
 
 import database as db
+from security.guardrails import validate_user_input, mask_pii_and_secrets, verify_citations
+from llmops.telemetry import TelemetryTracker
+from llm_fallback import get_fallback_llm
+
+# UI & Core Modules
+from ui import (
+    render_article_markdown,
+    init_stepper_state,
+    reduce_stepper_event,
+    render_stepper_html,
+    calculate_clean_metrics,
+    apply_accessible_theme,
+    get_article_filename,
+    generate_standalone_html,
+)
+from core import PipelineRunner, generate_inline_diff_html
 
 # Load environment variables
 load_dotenv()
 
 # Streamlit Page Configuration
 st.set_page_config(
-    page_title="AI Research Studio & Blog Copilot",
+    page_title="AI Research Studio & Visual Blog Studio",
     page_icon="✍️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom Styling
-st.markdown("""
-<style>
-    /* Gradient Main Title */
-    .main-title {
-        font-size: 2.3rem;
-        font-weight: 800;
-        margin-bottom: 0.1rem;
-        background: linear-gradient(135deg, #2563eb 0%, #7c3aed 50%, #db2777 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-    }
-    .subtitle {
-        color: #4b5563;
-        font-size: 1.05rem;
-        margin-bottom: 1.2rem;
-    }
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 6px;
-        padding: 8px 16px;
-        font-weight: 600;
-    }
-    .agent-card {
-        background: #f9fafb;
-        border: 1px solid #e5e7eb;
-        border-radius: 8px;
-        padding: 12px;
-        text-align: center;
-    }
-    .metric-card {
-        background: #f8fafc;
-        border: 1px solid #e2e8f0;
-        border-radius: 8px;
-        padding: 14px;
-        text-align: center;
-    }
-    .history-item {
-        padding: 10px 14px;
-        border: 1px solid #e5e7eb;
-        border-radius: 8px;
-        margin-bottom: 8px;
-        background: #f9fafb;
-    }
-    .history-item:hover {
-        border-color: #7c3aed;
-        background: #f5f3ff;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-
-class StreamlitOutputCapture:
-    """Safely captures standard output and updates a Streamlit code container in real-time."""
-    def __init__(self, placeholder):
-        self.placeholder = placeholder
-        self.content = ""
-
-    def write(self, string):
-        try:
-            sys.__stdout__.write(string)
-        except Exception:
-            pass
-        self.content += string
-        try:
-            # Keep recent 4000 characters to prevent browser slowdown
-            tail_content = self.content[-4000:]
-            self.placeholder.code(tail_content, language="plaintext")
-        except Exception:
-            # Catch NoSessionContext or UI update exceptions from background threads
-            pass
-
-    def flush(self):
-        try:
-            sys.__stdout__.flush()
-        except Exception:
-            pass
-
+# Apply accessible theme tokens (WCAG AA compliant contrast)
+apply_accessible_theme()
 
 # --- Session State Initialization ---
 if "current_article_id" not in st.session_state:
     st.session_state.current_article_id = None
 
+if "current_topic" not in st.session_state:
+    st.session_state.current_topic = ""
+
+if "run_in_progress" not in st.session_state:
+    st.session_state.run_in_progress = False
+
 if "current_report" not in st.session_state:
-    # Load the most recent article from DB on first visit
-    articles = db.get_all_articles()
+    articles = db.get_articles(limit=1)
     if articles:
         latest = articles[0]
         st.session_state.current_report = latest["content"]
         st.session_state.current_article_id = latest["id"]
+        st.session_state.current_topic = latest["topic"]
     elif os.path.exists("report.md"):
         try:
             with open("report.md", "r", encoding="utf-8") as f:
                 content = f.read()
             st.session_state.current_report = content
-            # Migrate existing report.md into the database
             article_id = db.save_article(
                 topic="Imported from report.md",
                 content=content,
             )
             st.session_state.current_article_id = article_id
+            st.session_state.current_topic = "Imported from report.md"
         except Exception:
             st.session_state.current_report = None
     else:
         st.session_state.current_report = None
 
 if "chat_history" not in st.session_state:
-    # Load chat history from DB if an article is selected
     if st.session_state.current_article_id:
         st.session_state.chat_history = db.get_chat_history(st.session_state.current_article_id)
     else:
         st.session_state.chat_history = []
 
 
-# --- Sidebar ---
+# ==============================================================================
+# SIDEBAR CONTROLS
+# ==============================================================================
 with st.sidebar:
-    st.image("https://img.icons8.com/isometric/100/artificial-intelligence.png", width=60)
-    st.markdown("### 🎛️ Control Panel")
+    st.markdown("## ⚙️ Studio Settings")
 
-    # API Keys Configuration
-    openrouter_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPEN_ROUTER_API_KEY", "")
+    openrouter_key = os.getenv("OPENROUTER_API_KEY", "") or os.getenv("OPEN_ROUTER_API_KEY", "")
     gemini_key = os.getenv("GEMINI_API_KEY", "")
     serper_key = os.getenv("SERPER_API_KEY", "")
-
     has_any_llm = bool(openrouter_key or gemini_key)
 
-    with st.expander("🔑 API Keys & Settings", expanded=not has_any_llm):
+    # 1. API Keys & Models
+    with st.expander("🔑 API Keys & LLM Routing", expanded=not has_any_llm):
         user_openrouter = st.text_input("OpenRouter API Key (Supports Free Fallbacks)", value=openrouter_key, type="password")
-        user_gemini = st.text_input("Gemini API Key (Optional)", value=gemini_key, type="password")
-        user_serper = st.text_input("Serper.dev API Key (Optional)", value=serper_key, type="password", help="DuckDuckGo is used by default for free searching.")
+        user_gemini = st.text_input("Gemini API Key (Optional Direct)", value=gemini_key, type="password")
+        user_serper = st.text_input("Serper.dev API Key (Optional)", value=serper_key, type="password", help="DuckDuckGo is used by default for 100% free searching.")
 
         if user_openrouter:
             os.environ["OPENROUTER_API_KEY"] = user_openrouter
@@ -167,9 +110,9 @@ with st.sidebar:
         c1, c2 = st.columns(2)
         with c1:
             if os.getenv("OPENROUTER_API_KEY") or os.getenv("OPEN_ROUTER_API_KEY"):
-                st.success("OpenRouter Fallback Ready", icon="🔄")
+                st.success("OpenRouter (Active)", icon="🔄")
             elif os.getenv("GEMINI_API_KEY"):
-                st.success("Gemini Ready", icon="✅")
+                st.success("Gemini (Active)", icon="✅")
             else:
                 st.error("LLM Key Missing", icon="❌")
         with c2:
@@ -178,84 +121,98 @@ with st.sidebar:
             else:
                 st.info("DuckDuckGo (Free)", icon="🦆")
 
-        # TiDB Cloud Configuration
-        st.markdown("---")
-        st.caption("☁️ **Database Engine:**")
+    # 2. TiDB Cloud Database
+    with st.expander("☁️ TiDB Cloud Serverless", expanded=False):
         backend = db.get_active_backend()
         if backend == "tidb":
-            st.success(f"TiDB Cloud ({os.getenv('TIDB_DATABASE', 'research_studio')})", icon="☁️")
+            st.success(f"TiDB Cloud: {os.getenv('TIDB_DATABASE', 'research_studio')}", icon="☁️")
         else:
             st.info("SQLite Local (Auto-Fallback)", icon="💾")
 
-        with st.expander("⚙️ TiDB Cloud Configuration", expanded=False):
-            tidb_h = st.text_input("TiDB Host", value=os.getenv("TIDB_HOST", ""), placeholder="gateway01.ap-southeast-1.prod.aws.tidbcloud.com")
-            tidb_u = st.text_input("TiDB User", value=os.getenv("TIDB_USER", ""), placeholder="xxxxxx.root")
-            tidb_p = st.text_input("TiDB Password", value=os.getenv("TIDB_PASSWORD", ""), type="password")
-            tidb_d = st.text_input("TiDB Database", value=os.getenv("TIDB_DATABASE", "research_studio"))
-            if tidb_h and tidb_u:
-                os.environ["TIDB_HOST"] = tidb_h
-                os.environ["TIDB_USER"] = tidb_u
-                if tidb_p:
-                    os.environ["TIDB_PASSWORD"] = tidb_p
-                if tidb_d:
-                    os.environ["TIDB_DATABASE"] = tidb_d
+        tidb_h = st.text_input("TiDB Host", value=os.getenv("TIDB_HOST", "gateway01.ap-northeast-1.prod.aws.tidbcloud.com"))
+        tidb_u = st.text_input("TiDB User", value=os.getenv("TIDB_USER", ""), placeholder="xxxxxx.root")
+        tidb_p = st.text_input("TiDB Password", value=os.getenv("TIDB_PASSWORD", ""), type="password")
+        tidb_d = st.text_input("TiDB Database", value=os.getenv("TIDB_DATABASE", "research_studio"))
+        if tidb_h and tidb_u:
+            os.environ["TIDB_HOST"] = tidb_h
+            os.environ["TIDB_USER"] = tidb_u
+            if tidb_p:
+                os.environ["TIDB_PASSWORD"] = tidb_p
+            if tidb_d:
+                os.environ["TIDB_DATABASE"] = tidb_d
 
-        # --- Long-Term Memory & Persistent Preferences ---
-        st.markdown("---")
-        with st.expander("🧠 Persistent Memory & Author Style", expanded=False):
-            st.caption("Custom preferences saved to TiDB/SQLite across sessions:")
-            existing_mems = db.get_user_memories()
+    # 3. Persistent Author Preferences (Long-Term Memory)
+    with st.expander("🧠 Persistent Author Style", expanded=False):
+        st.caption("Preferences stored in TiDB/SQLite across sessions:")
+        existing_mems = db.get_user_memories()
 
-            p_tone = st.text_input("Preferred Tone", value=existing_mems.get("preferred_tone", "Professional & Authoritative"))
-            p_audience = st.text_input("Target Audience", value=existing_mems.get("target_audience", "Software Engineers & Developers"))
-            p_prohibited = st.text_input("Prohibited Fluff", value=existing_mems.get("prohibited_words", "delve, tapestry, game-changer, revolutionizing"))
-            diagram_options = ["flowchart TD", "sequenceDiagram", "stateDiagram-v2"]
-            curr_diag = existing_mems.get("preferred_diagram", "flowchart TD")
-            diag_idx = diagram_options.index(curr_diag) if curr_diag in diagram_options else 0
-            p_diagram = st.selectbox("Preferred Diagram Type", diagram_options, index=diag_idx)
+        p_tone = st.text_input("Preferred Tone", value=existing_mems.get("preferred_tone", "Professional & Authoritative"))
+        p_audience = st.text_input("Target Audience", value=existing_mems.get("target_audience", "Software Engineers & Developers"))
+        p_prohibited = st.text_input("Prohibited Fluff", value=existing_mems.get("prohibited_words", "delve, tapestry, game-changer, revolutionizing"))
+        diagram_options = ["flowchart TD", "sequenceDiagram", "stateDiagram-v2"]
+        curr_diag = existing_mems.get("preferred_diagram", "flowchart TD")
+        diag_idx = diagram_options.index(curr_diag) if curr_diag in diagram_options else 0
+        p_diagram = st.selectbox("Preferred Diagram", diagram_options, index=diag_idx)
 
-            if st.button("💾 Save Preferences to Memory", use_container_width=True):
-                db.set_user_memory("preferred_tone", p_tone)
-                db.set_user_memory("target_audience", p_audience)
-                db.set_user_memory("prohibited_words", p_prohibited)
-                db.set_user_memory("preferred_diagram", p_diagram)
-                st.success("Memory Updated in TiDB/SQLite!", icon="🧠")
+        if st.button("💾 Save Preferences to Memory", use_container_width=True):
+            db.set_user_memory("preferred_tone", p_tone)
+            db.set_user_memory("target_audience", p_audience)
+            db.set_user_memory("prohibited_words", p_prohibited)
+            db.set_user_memory("preferred_diagram", p_diagram)
+            st.success("Memory Updated!", icon="🧠")
 
-    # --- Database Stats ---
+    # 4. Revisions & Rollback History
+    if st.session_state.current_article_id:
+        revisions = db.get_article_revisions(st.session_state.current_article_id)
+        if revisions:
+            with st.expander("📜 Revision History & Undo", expanded=False):
+                st.caption(f"Found {len(revisions)} saved revision snapshot(s):")
+                rev_options = {f"Rev {r['revision_num']}: {r['summary']} ({r['created_at'][:16]})": r["id"] for r in revisions}
+                selected_label = st.selectbox("Select Revision to Restore", list(rev_options.keys()))
+                if selected_label and st.button("↺ Restore Selected Revision", use_container_width=True):
+                    rev_id_to_restore = rev_options[selected_label]
+                    success = db.rollback_article_revision_transaction(st.session_state.current_article_id, rev_id_to_restore)
+                    if success:
+                        restored = db.get_article(st.session_state.current_article_id)
+                        st.session_state.current_report = restored["content"]
+                        st.success("Article safely restored! (Prior version snapshotted)", icon="✅")
+                        st.rerun()
+
+    # 5. Database Stats
     st.markdown("---")
     stats = db.get_stats()
     st.markdown("### 📊 Studio Stats")
     stat_c1, stat_c2 = st.columns(2)
-    stat_c1.metric("Articles", stats["total_articles"])
-    stat_c2.metric("Total Words", f"{stats['total_words']:,}")
+    stat_c1.metric("Articles", stats.get("total_articles", 0))
+    stat_c2.metric("Total Words", f"{stats.get('total_words', 0):,}")
     if stats.get("total_tokens", 0) > 0:
         st.caption(f"⚡ Tokens Processed: **{stats['total_tokens']:,}**")
 
-    # --- Article History ---
+    # 6. Article History
     st.markdown("---")
     st.markdown("### 📚 Article History")
-    all_articles = db.get_all_articles()
+    all_articles = db.get_articles(limit=25)
 
     if all_articles:
         for article in all_articles:
             col_title, col_del = st.columns([4, 1])
-            # Truncate topic for display
-            display_topic = article["topic"][:40] + ("..." if len(article["topic"]) > 40 else "")
-            created = article["created_at"][:16] if article["created_at"] else ""
+            display_topic = article["topic"][:36] + ("..." if len(article["topic"]) > 36 else "")
+            created = article["created_at"][:16] if article.get("created_at") else ""
 
             with col_title:
                 if st.button(f"📄 {display_topic}", key=f"load_{article['id']}", use_container_width=True):
                     st.session_state.current_article_id = article["id"]
                     st.session_state.current_report = article["content"]
+                    st.session_state.current_topic = article["topic"]
                     st.session_state.chat_history = db.get_chat_history(article["id"])
                     st.rerun()
             with col_del:
                 if st.button("🗑️", key=f"del_{article['id']}"):
                     db.delete_article(article["id"])
-                    # If we deleted the active article, reset state
                     if st.session_state.current_article_id == article["id"]:
                         st.session_state.current_article_id = None
                         st.session_state.current_report = None
+                        st.session_state.current_topic = ""
                         st.session_state.chat_history = []
                     st.rerun()
 
@@ -264,139 +221,87 @@ with st.sidebar:
         st.caption("No articles yet. Generate one to get started!")
 
     st.markdown("---")
-    st.markdown("### 👥 Agent Squad Architecture")
-    st.markdown("""
-    - 🔍 **Senior Researcher**: Live DuckDuckGo web queries
-    - 📊 **Content Analyst**: Claim verification & synthesis
-    - ✍️ **Blog Writer**: Structured narrative drafting
-    - ✨ **Quality Reviewer**: Fact-checking & citations
-    """)
+    st.caption("⚡ Powered by **CrewAI**, **OpenRouter**, **TiDB Cloud**, & **Streamlit**")
 
-    st.markdown("---")
-    st.caption("⚡ Powered by **crewAI**, **Gemini 2.5 Flash**, & **Streamlit**")
-
-
-# --- Main App Header ---
-st.markdown('<div class="main-title">AI Research Studio & Blog Copilot</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Autonomous 4-Agent Research Squad + Interactive Post-Generation AI Editorial Copilot</div>', unsafe_allow_html=True)
-
-# Main Navigation Tabs: 1. Generate New Blog, 2. Studio & Copilot Chat
-main_tab1, main_tab2, main_tab3 = st.tabs(["🚀 Autonomous Research & Generation", "💬 Interactive Copilot & Chat", "🛡️ LLMOps & Security Governance"])
 
 # ==============================================================================
-# TAB 1: AUTONOMOUS GENERATION
+# MAIN PAGE HEADER
+# ==============================================================================
+st.markdown('<div class="main-title">AI Research Studio & Visual Blog Studio</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">Autonomous 4-Agent Research Squad • Native Mermaid Diagrams • TiDB Cloud Persistence • Enterprise Security</div>', unsafe_allow_html=True)
+
+main_tab1, main_tab2, main_tab3 = st.tabs([
+    "🚀 Autonomous Research & Generation",
+    "💬 Interactive Copilot & Editor",
+    "🛡️ LLMOps & Security Governance"
+])
+
+
+# ==============================================================================
+# TAB 1: AUTONOMOUS RESEARCH & GENERATION
 # ==============================================================================
 with main_tab1:
-    st.markdown("#### 1. Define Topic & Steering Guidelines")
+    col_input, col_config = st.columns([3, 2])
 
-    # Quick Suggestion Chips
-    st.markdown("<small style='color:#6b7280; font-weight:600;'>⚡ Trending Topic Presets:</small>", unsafe_allow_html=True)
-    chip_cols = st.columns(4)
-    selected_suggestion = None
-    if chip_cols[0].button("🤖 AI Agents in 2026", use_container_width=True):
-        selected_suggestion = "AI Agents in 2026: Architectures, Production Benchmarks, and Autonomous Workflows"
-    if chip_cols[1].button("⚡ Quantum Breakthroughs", use_container_width=True):
-        selected_suggestion = "Quantum Computing Breakthroughs in 2026: Practical Applications and Hardware Milestones"
-    if chip_cols[2].button("🌱 Green Hydrogen Tech", use_container_width=True):
-        selected_suggestion = "The Global Transition to Green Hydrogen: Technology, Infrastructure, and Economics"
-    if chip_cols[3].button("🚀 Local Edge LLMs", use_container_width=True):
-        selected_suggestion = "Running High-Performance Local LLMs on Edge Devices: Optimization and Frameworks"
+    with col_input:
+        st.markdown("#### 1. Research Topic & Focus")
+        preset_options = [
+            "— Choose a preset topic or write your own below —",
+            "vLLM PagedAttention & Continuous Batching: Architecture, Memory Management, and Benchmarks",
+            "AI Agent Protocols in 2026: MCP vs LangGraph vs CrewAI under the Hood",
+            "DeepSeek-R1 Architecture: Multi-Head Latent Attention (MLA), DeepSeekMoE, and Training Recipe",
+            "Distributed SQL on TiDB Cloud: Raft Consensus, Pebble Storage Engine, and HTAP Workloads",
+        ]
+        selected_preset = st.selectbox("Popular Deep-Tech Topics", preset_options)
 
-    topic_default = selected_suggestion if selected_suggestion else ""
-    topic_input = st.text_input(
-        "Enter your research topic:",
-        value=topic_default,
-        placeholder="e.g., Autonomous AI Coding Agents vs Traditional Developer Workflows: A 2026 Analysis"
-    )
+        default_topic_text = selected_preset if selected_preset != preset_options[0] else ""
+        topic_input = st.text_area(
+            "Enter Topic for Deep Investigation",
+            value=default_topic_text,
+            placeholder="e.g. Speculative Decoding in LLM Serving: Algorithmic Mechanics, Verification Overheads, and Latency Benchmarks",
+            height=100
+        )
 
-    # Advanced Steering Options
-    with st.expander("🎛️ Customize Audience, Tone & Depth", expanded=False):
-        col_opt1, col_opt2, col_opt3 = st.columns(3)
-        with col_opt1:
-            tone = st.selectbox(
-                "Tone & Style",
-                ["Professional & Authoritative", "Engaging & Conversational", "Technical & Deep-Dive", "Executive Brief"],
-                index=0
-            )
-        with col_opt2:
-            audience = st.selectbox(
-                "Target Audience",
-                ["Software Engineers & Developers", "Executives & Product Leaders", "General Tech Enthusiasts", "Academics & Researchers"],
-                index=0
-            )
-        with col_opt3:
-            length = st.selectbox(
-                "Target Length",
-                ["Standard Blog (1,500 - 2,000 words)", "Comprehensive Guide (2,000 - 3,000 words)", "Concise Brief (800 - 1,200 words)"],
-                index=0
-            )
+    with col_config:
+        st.markdown("#### 2. Narrative Steering")
+        tone = st.selectbox("Editorial Tone", [
+            "Professional & Authoritative",
+            "Deep Technical & Rigorous (Peer-Review Standard)",
+            "Engaging & Conversational Technologist",
+            "Executive Architectural Briefing",
+        ])
+        audience = st.selectbox("Target Audience", [
+            "Staff & Principal Software Engineers",
+            "AI Researchers & Systems Architects",
+            "Technical Founders & Engineering Directors",
+            "Full-Stack Developers & DevOps",
+        ])
+        length = st.selectbox("Article Target Scope", [
+            "Deep Dive (2,000 - 3,500 words with 2+ Mermaid Diagrams)",
+            "Comprehensive Blog (1,500 - 2,200 words with 1 Mermaid Diagram)",
+            "Executive Technical Summary (1,000 - 1,500 words)",
+        ])
 
-    # Launch Action
-    launch_btn = st.button("🚀 Launch Autonomous Multi-Agent Crew", type="primary", use_container_width=True)
+    generate_btn = st.button("🚀 Launch Autonomous Research Squad", type="primary", use_container_width=True, disabled=st.session_state.run_in_progress)
 
-    if launch_btn:
-        is_safe, sec_msg = validate_user_input(topic_input)
+    # Execution Block with Stepper
+    if generate_btn:
         if not topic_input.strip():
-            st.error("⚠️ Please specify a research topic before launching.")
-        elif not is_safe:
-            st.error(f"🚨 {sec_msg}")
-            db.save_security_event("PROMPT_INJECTION_BLOCKED", f"Topic: '{topic_input[:100]}' | {sec_msg}")
-        elif not (os.getenv("OPENROUTER_API_KEY") or os.getenv("OPEN_ROUTER_API_KEY") or os.getenv("GEMINI_API_KEY")):
-            st.error("⚠️ Missing LLM API key! Please fill in your OpenRouter or Gemini API key in the sidebar.")
+            st.error("Please enter a research topic first.")
         else:
-            telemetry_tracker = TelemetryTracker(topic=topic_input.strip())
-            st.markdown("---")
-            st.subheader(f"🔄 Active Pipeline: *{topic_input}*")
+            # 1. OWASP Security Validation
+            is_valid, sec_msg = validate_user_input(topic_input)
+            if not is_valid:
+                st.error(f"Security Alert: Input rejected. {sec_msg}")
+                db.save_security_event("PROMPT_INJECTION_REJECTED", f"Input: {topic_input[:100]} | Reason: {sec_msg}")
+            else:
+                st.session_state.run_in_progress = True
+                telemetry_tracker = TelemetryTracker(topic=topic_input.strip())
 
-            # Visual step indicators
-            p1, p2, p3, p4 = st.columns(4)
-            p1.markdown('<div class="agent-card">🔎 <b>1. Researcher</b><br><small>Gathers facts & web data</small></div>', unsafe_allow_html=True)
-            p2.markdown('<div class="agent-card">📊 <b>2. Content Analyst</b><br><small>Verifies and structures</small></div>', unsafe_allow_html=True)
-            p3.markdown('<div class="agent-card">✍️ <b>3. Blog Writer</b><br><small>Drafts article & narrative</small></div>', unsafe_allow_html=True)
-            p4.markdown('<div class="agent-card">✨ <b>4. Quality Reviewer</b><br><small>Polishes & persists</small></div>', unsafe_allow_html=True)
-
-            progress_bar = st.progress(0.0)
-            status_indicator = st.empty()
-            status_indicator.info("🚀 Initializing multi-agent squad...")
-            log_box = st.empty()
-
-            logs_history = ["▶️ Pipeline initialized. Starting autonomous execution..."]
-            log_box.code("\n".join(logs_history), language="plaintext")
-
-            task_stages = [
-                "1/4: Web Research (DuckDuckGo)",
-                "2/4: Content Analysis",
-                "3/4: Drafting Blog",
-                "4/4: Quality Review & Polish",
-            ]
-            completed_stages = [0]
-
-            def on_task_finish(task_output):
-                completed_stages[0] += 1
-                curr = min(completed_stages[0], 4)
-                progress_bar.progress(curr / 4.0)
-                stage_label = task_stages[curr - 1] if curr <= len(task_stages) else "Finalizing"
-                status_indicator.success(f"✅ Finished: {stage_label}")
-                logs_history.append(f"🏁 Stage {curr}/4 complete: {stage_label}")
-                log_box.code("\n".join(logs_history[-15:]), language="plaintext")
-
-            def on_step(step_output):
-                try:
-                    if hasattr(step_output, "thought") and step_output.thought:
-                        logs_history.append(f"💭 {step_output.thought.strip()[:180]}")
-                    elif isinstance(step_output, tuple) and len(step_output) > 0:
-                        action = step_output[0]
-                        tool = getattr(action, "tool", "tool")
-                        tool_input = getattr(action, "tool_input", "")
-                        logs_history.append(f"🔧 Tool: {tool} ({str(tool_input)[:80]})")
-                    elif hasattr(step_output, "text") and step_output.text:
-                        logs_history.append(f"📝 {step_output.text.strip()[:180]}")
-                    log_box.code("\n".join(logs_history[-15:]), language="plaintext")
-                except Exception:
-                    pass
-
-            try:
-                from crew import ResearchAndBlogWriter
+                # Stepper HUD Container
+                stepper_placeholder = st.empty()
+                stepper_state = init_stepper_state()
+                stepper_placeholder.markdown(render_stepper_html(stepper_state), unsafe_allow_html=True)
 
                 # Construct composite prompt with steering instructions & persistent memory
                 user_mems = db.get_user_memories()
@@ -409,97 +314,124 @@ with main_tab1:
                 mem_suffix = f" [Author Preferences: {', '.join(mem_guidance)}]" if mem_guidance else ""
                 effective_topic = f"{topic_input} (Target Audience: {audience}, Tone: {tone}, Length: {length}){mem_suffix}"
 
-                start_time = time.time()
-                with st.spinner("AI agents are researching, analyzing sources, and drafting the article..."):
-                    crew_instance = ResearchAndBlogWriter()
-                    result = crew_instance.crew(
-                        step_callback=on_step,
-                        task_callback=on_task_finish,
-                    ).kickoff(inputs={"topic": effective_topic})
+                # Decoupled thread & event queue execution
+                event_queue = queue.Queue()
+                result_container = {}
 
-                elapsed = round(time.time() - start_time, 2)
-                progress_bar.progress(1.0)
-                st.success(f"🎉 Research and article generated successfully in {elapsed} seconds!")
+                runner = PipelineRunner(effective_topic, event_queue, result_container)
+                worker_thread = threading.Thread(target=runner.run)
+                worker_thread.start()
 
-                report_content = str(result.raw)
+                # Main thread polling loop (owns ScriptRunContext and renders updates)
+                while worker_thread.is_alive() or not event_queue.empty():
+                    try:
+                        event = event_queue.get_nowait()
+                        stepper_state = reduce_stepper_event(stepper_state, event)
+                        stepper_placeholder.markdown(render_stepper_html(stepper_state), unsafe_allow_html=True)
+                    except queue.Empty:
+                        time.sleep(0.08)
 
-                # Extract token usage if available
-                tokens_used = 0
-                token_usage = getattr(result, "token_usage", None)
-                if token_usage:
-                    tokens_used = getattr(token_usage, "total_tokens", 0)
+                worker_thread.join()
+                st.session_state.run_in_progress = False
 
-                # Mask sensitive secrets/PII in report
-                report_content = mask_pii_and_secrets(report_content)
+                if "error" in result_container:
+                    st.error(f"Agent execution encountered an error: {result_container['error']}")
+                elif "result" in result_container:
+                    result = result_container["result"]
+                    elapsed = result_container.get("elapsed", 0)
 
-                # Finalize telemetry metrics
-                telemetry_data = telemetry_tracker.finalize(report_content)
+                    report_content = str(result.raw)
 
-                # Save to database
-                article_id = db.save_article(
-                    topic=topic_input.strip(),
-                    content=report_content,
-                    tone=tone,
-                    audience=audience,
-                    target_length=length,
-                    generation_time_sec=elapsed,
-                    tokens_used=tokens_used or telemetry_data.get("tokens_estimated", 0),
-                )
+                    # Extract token usage if available
+                    tokens_used = 0
+                    token_usage = getattr(result, "token_usage", None)
+                    if token_usage:
+                        tokens_used = getattr(token_usage, "total_tokens", 0)
 
-                # Persist LLMOps telemetry run
-                db.save_telemetry_run(article_id, telemetry_data)
+                    # Mask sensitive secrets/PII
+                    report_content = mask_pii_and_secrets(report_content)
 
-                # Update session state
-                st.session_state.current_report = report_content
-                st.session_state.current_article_id = article_id
-                st.session_state.last_tokens_used = tokens_used
-                st.session_state.chat_history = []
+                    # Finalize telemetry metrics
+                    telemetry_data = telemetry_tracker.finalize(report_content)
 
-            except Exception as e:
-                st.error(f"Error during agent execution: {e}")
+                    # Save to database
+                    article_id = db.save_article(
+                        topic=topic_input.strip(),
+                        content=report_content,
+                        tone=tone,
+                        audience=audience,
+                        target_length=length,
+                        generation_time_sec=elapsed,
+                        tokens_used=tokens_used or telemetry_data.get("tokens_estimated", 0),
+                    )
 
-    # Show active/latest generated article if available
+                    # Persist LLMOps telemetry run
+                    db.save_telemetry_run(article_id, telemetry_data)
+
+                    # Update session state
+                    st.session_state.current_report = report_content
+                    st.session_state.current_article_id = article_id
+                    st.session_state.current_topic = topic_input.strip()
+                    st.session_state.chat_history = []
+
+                    st.toast(f"🎉 Research and article generated in {elapsed}s!", icon="✅")
+                    st.rerun()
+
+    # Article Display & Reader Experience
     if st.session_state.current_report:
         st.markdown("---")
-        st.subheader("📄 Generated Article Output")
-
         report_content = st.session_state.current_report
-        word_count = len(report_content.split())
-        est_read = max(1, round(word_count / 200))
-        tokens_val = getattr(st.session_state, "last_tokens_used", 0)
+        article_topic = st.session_state.current_topic or "Technical Blog"
 
+        # Honest Metrics Bar (computed on clean prose)
+        metrics = calculate_clean_metrics(report_content)
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Word Count", f"{word_count:,} words")
-        m2.metric("Estimated Read Time", f"~{est_read} min")
-        m3.metric("Review Status", "Quality Verified ✅")
-        m4.metric("Tokens Consumed", f"{tokens_val:,}" if tokens_val else "Observed ✅")
+        m1.metric("Prose Word Count", f"{metrics['word_count']:,} words")
+        m2.metric("Est. Read Time", f"~{metrics['read_time_min']} min")
+        m3.metric("Readability Rating", f"{metrics['complexity_label']} ({metrics['flesch_score']})", help=f"Flesch Grade: {metrics['flesch_grade']}")
+        m4.metric("Verified Citations", f"{metrics['citation_count']} Sources")
 
         res_tab1, res_tab2 = st.tabs(["📖 Formatted Article Preview", "📝 Raw Markdown Source"])
         with res_tab1:
-            st.markdown(report_content)
+            render_article_markdown(report_content)
         with res_tab2:
             st.code(report_content, language="markdown")
 
-        st.download_button(
-            label="📥 Download Article as Markdown (.md)",
-            data=report_content,
-            file_name="generated_report.md",
-            mime="text/markdown",
-            use_container_width=True
-        )
+        # Export Suite (Milestone 4)
+        st.markdown("---")
+        st.markdown("#### 📦 Export Document Suite")
+        exp_col1, exp_col2 = st.columns(2)
+        with exp_col1:
+            md_filename = get_article_filename(article_topic, "md")
+            st.download_button(
+                label="📥 Download Markdown (.md)",
+                data=report_content,
+                file_name=md_filename,
+                mime="text/markdown",
+                use_container_width=True
+            )
+        with exp_col2:
+            html_filename, html_bundle = generate_standalone_html(article_topic, report_content)
+            st.download_button(
+                label="🌐 Download Standalone HTML (.html with Diagrams)",
+                data=html_bundle,
+                file_name=html_filename,
+                mime="text/html",
+                use_container_width=True
+            )
 
 
 # ==============================================================================
-# TAB 2: INTERACTIVE COPILOT & CHAT
+# TAB 2: INTERACTIVE COPILOT & SAFE EDITOR
 # ==============================================================================
 with main_tab2:
-    st.markdown("### 💬 Chat with the Editorial Copilot")
-    st.markdown("Use this conversational assistant to ask follow-up questions, request targeted edits, or transform the article into social media formats.")
+    st.markdown("### 💬 Editorial Copilot & Interactive Revision Editor")
+    st.markdown("Ask follow-up questions, request section rewrites, or generate social distribution assets. Revisions can be applied safely with automatic undo snapshots.")
 
     if not st.session_state.current_report:
-        st.info("ℹ️ No article generated yet. Head over to the **Autonomous Research & Generation** tab to create one, or select a preset topic.")
+        st.info("ℹ️ No article generated yet. Launch a generation in Tab 1 to get started!")
     else:
-        # Quick Transformation Buttons
+        # Quick Transformation Actions
         st.markdown("**⚡ 1-Click Transformation Actions:**")
         q1, q2, q3, q4 = st.columns(4)
 
@@ -513,28 +445,44 @@ with main_tab2:
         if q4.button("❓ Quiz & Interview Qs", use_container_width=True):
             quick_prompt = "Generate 5 thought-provoking discussion/interview questions based on the insights in this article with detailed sample answers."
 
-        # Display Existing Chat Messages
-        for msg in st.session_state.chat_history:
+        # Display Chat History with Apply & Diff buttons
+        for idx, msg in enumerate(st.session_state.chat_history):
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
+                # If assistant provided a large revision proposal, offer Apply and Diff
+                if msg["role"] == "assistant" and len(msg["content"].split()) >= 80:
+                    diff_stats = calculate_diff_stats(st.session_state.current_report, msg["content"])
+                    btn_col1, btn_col2 = st.columns([2, 3])
 
-        # Handle Quick Action Trigger or Chat Input
+                    with btn_col1:
+                        if st.button("⚡ Apply Revision to Article", key=f"apply_{idx}", use_container_width=True):
+                            new_rev_num = db.apply_article_edit_transaction(
+                                article_id=st.session_state.current_article_id,
+                                new_content=msg["content"],
+                                summary="Applied Copilot edit"
+                            )
+                            st.session_state.current_report = msg["content"]
+                            st.toast(f"Applied Revision #{new_rev_num}. Prior version saved safely to undo history!", icon="✅")
+                            st.rerun()
+
+                    with btn_col2:
+                        with st.expander(f"🔍 View Diff (+{diff_stats['additions']} / -{diff_stats['deletions']})"):
+                            st.markdown(generate_inline_diff_html(st.session_state.current_report, msg["content"]), unsafe_allow_html=True)
+
+        # Handle Chat Input
         user_query = st.chat_input("Ask a question, request a revision, or give instructions...")
         active_query = quick_prompt if quick_prompt else user_query
 
         if active_query:
-            # Append user message
             st.session_state.chat_history.append({"role": "user", "content": active_query})
             with st.chat_message("user"):
                 st.markdown(active_query)
 
-            # Save user message to DB
             if st.session_state.current_article_id:
                 db.save_chat_message(st.session_state.current_article_id, "user", active_query)
 
-            # Generate Copilot Response via Gemini 2.5 Flash
             with st.chat_message("assistant"):
-                with st.spinner("Copilot is analyzing the report and drafting your response..."):
+                with st.spinner("Copilot is analyzing the article and drafting your response..."):
                     try:
                         from memory.chat_memory import ChatMemoryManager
 
@@ -553,12 +501,13 @@ with main_tab2:
 
                         st.session_state.chat_history.append({"role": "assistant", "content": reply_text})
 
-                        # Save assistant response to DB
                         if st.session_state.current_article_id:
                             db.save_chat_message(st.session_state.current_article_id, "assistant", reply_text)
 
+                        st.rerun()
+
                     except Exception as err:
-                        st.error(f"Error communicating with Gemini Copilot: {err}")
+                        st.error(f"Error communicating with Copilot: {err}")
 
 
 # ==============================================================================
@@ -597,35 +546,29 @@ with main_tab3:
     st.markdown("#### 📊 Recent Execution Telemetry Runs")
     telemetry_runs = db.get_telemetry_history(limit=10)
     if not telemetry_runs:
-        st.info("No telemetry runs recorded yet. Launch a research crew to collect live metrics.")
+        st.caption("No telemetry runs recorded yet. Generate an article to populate LLMOps metrics.")
     else:
         for run in telemetry_runs:
-            with st.expander(f"🕒 Run #{run['id']}: {run['topic']} ({run['duration_sec']}s)"):
-                tc1, tc2, tc3 = st.columns(3)
-                tc1.metric("Duration", f"{run['duration_sec']} sec")
-                tc2.metric("Estimated Tokens", f"{run['tokens_estimated']:,}")
-                tc3.metric("Readability", f"{run['readability_score']}/100 ({run['readability_grade']})")
+            with st.expander(f"Run #{run['id']}: {run['topic'][:60]} ({run['created_at'][:16]})"):
+                tc1, tc2, tc3, tc4 = st.columns(4)
+                tc1.metric("Duration", f"{run['duration_sec']}s")
+                tc2.metric("Tokens Estimated", f"{run['tokens_estimated']:,}")
+                tc3.metric("Readability Score", f"{run['readability_score']}/100")
+                tc4.metric("Grade Level", run["readability_grade"])
 
-                models = run.get("models_used", [])
-                if models:
-                    st.markdown(f"**Models Utilized:** `{', '.join(models)}`")
-                if run.get("fallback_events"):
-                    st.markdown("**Fallback Incidents Handled:**")
-                    st.json(run["fallback_events"])
+                st.markdown(f"**Models Used:** `{', '.join(run['models_used']) if run['models_used'] else 'Default'}`")
+                st.markdown(f"**Fallback Events ({run['fallback_count']}):**")
+                if run["fallback_events"]:
+                    for ev in run["fallback_events"]:
+                        st.caption(f"• `{ev.get('from_model')}` failed with `{ev.get('error')[:80]}` ➔ Switched to `{ev.get('to_model')}`")
+                else:
+                    st.caption("None — Primary model responded cleanly.")
 
     st.markdown("---")
-    st.markdown("#### 🔒 Security Guardrails & Audit Logs (OWASP LLM Defense)")
-    sec_logs = db.get_security_audit_logs(limit=10)
+    st.markdown("#### 🛡️ OWASP Security Audit Trail")
+    sec_logs = db.get_security_audit_logs(limit=15)
     if not sec_logs:
-        st.success("✅ Clean security state: No prompt injection or SSRF anomalies detected.")
+        st.caption("No security violations detected. All inputs and scraped content verified safe.")
     else:
-        for slog in sec_logs:
-            st.warning(f"🚨 **[{slog['event_type']}]** {slog['details']} *(Logged at {slog['created_at']})*")
-
-    st.markdown("""
-    **Active AI Security Controls:**
-    - 🛡️ **LLM01 - Prompt Injection Defense**: Input pattern sanitization blocking jailbreak attempts.
-    - 🛡️ **LLM01 - Indirect Injection Defense**: Web scraper sanitizes hidden system cues and HTML comments.
-    - 🛡️ **LLM02 - SSRF Defense**: Blocking RFC 1918 private subnets and `169.254.169.254` cloud metadata IPs.
-    - 🛡️ **LLM06 - Sensitive Information Masking**: Auto-redacting API keys, personal emails, and secrets.
-    """)
+        for log in sec_logs:
+            st.warning(f"🚨 **{log['event_type']}** [{log['created_at']}]: {log['details']}")
