@@ -1,18 +1,24 @@
 """Authentication configuration and settings loader.
 
-Reads settings from environment variables or st.secrets with strict validation.
-Fails fast if required secrets (OTP_PEPPER, SESSION_SECRET) are missing in production.
+Reads settings from environment variables with strict validation.
+Fails fast if required secrets (OTP_PEPPER, SESSION_SECRET) are missing outside of
+explicit local development mode. There are deliberately NO derived/fallback
+production secrets: deterministic secrets derived from public deployment context
+(e.g. a Render service id) would let anyone forge OTPs or session tokens.
 """
 
 from __future__ import annotations
 
-import hashlib
-import logging
 import os
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-logger = logging.getLogger("auth.config")
+# Fixed, clearly-named secrets used ONLY when AUTH_DEV_MODE=true and the operator
+# has not provided real values. They are public knowledge and must never be used
+# to protect production data.
+DEV_OTP_PEPPER = "dev_mode_otp_pepper_only_for_local_testing_do_not_use_in_production"
+DEV_SESSION_SECRET = "dev_mode_session_secret_only_for_local_testing_do_not_use_in_production"
+
 
 def _get_val(key: str, default: Optional[str] = None) -> Optional[str]:
     """Retrieve configuration from environment variable."""
@@ -20,6 +26,19 @@ def _get_val(key: str, default: Optional[str] = None) -> Optional[str]:
     if val is not None and val != "":
         return val
     return default
+
+
+def _is_truthy(value: Optional[str]) -> bool:
+    """Interpret common truthy environment variable spellings."""
+    return (value or "").strip().lower() in ("true", "1", "yes", "on")
+
+
+def _secret_generation_hint(name: str) -> str:
+    return (
+        f"Missing required authentication secret: {name}. "
+        "Generate one with `python -c 'import secrets; print(secrets.token_hex(32))'` and set it in .env. "
+        "Set AUTH_DEV_MODE=true only for local development."
+    )
 
 
 @dataclass(frozen=True)
@@ -60,49 +79,35 @@ def load_auth_config(reload: bool = False) -> AuthConfig:
     if _cached_config is not None and not reload:
         return _cached_config
 
-    dev_mode_str = _get_val("AUTH_DEV_MODE", "false").lower()
-    auth_dev_mode = dev_mode_str in ("true", "1", "yes", "on")
+    auth_dev_mode = _is_truthy(_get_val("AUTH_DEV_MODE", "false"))
 
-    # Production marker detection (e.g. TiDB configured or production env)
+    # Production marker detection: a TiDB database is only usable when BOTH the
+    # host and a user are configured. A host alone (e.g. a partially-filled local
+    # .env) is not a production database and must not block local dev mode.
     tidb_host = _get_val("TIDB_HOST")
-    allow_dev_with_tidb = _get_val("ALLOW_DEV_MODE_WITH_PROD_DB", "false").lower() in ("true", "1")
-    if auth_dev_mode and tidb_host and not allow_dev_with_tidb:
+    tidb_user = _get_val("TIDB_USER")
+    allow_dev_with_prod_db = _is_truthy(_get_val("ALLOW_DEV_MODE_WITH_PROD_DB", "false"))
+    if auth_dev_mode and tidb_host and tidb_user and not allow_dev_with_prod_db:
         raise ValueError(
-            "CRITICAL: AUTH_DEV_MODE cannot be enabled when production database TIDB_HOST is configured "
-            "without explicit ALLOW_DEV_MODE_WITH_PROD_DB=true override."
+            "CRITICAL: AUTH_DEV_MODE cannot be enabled when a production database is configured "
+            "(TIDB_HOST and TIDB_USER are both set) without the explicit "
+            "ALLOW_DEV_MODE_WITH_PROD_DB=true override."
         )
 
-    # In dev mode, fall back to fixed development pepper/secrets if not provided
-    default_dev_secret = "dev_secret_only_for_local_testing_do_not_use_in_production"
     otp_pepper = _get_val("OTP_PEPPER")
     session_secret = _get_val("SESSION_SECRET")
 
-    is_render = bool(os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID"))
-    render_seed = os.getenv("RENDER_SERVICE_ID", os.getenv("RENDER_INSTANCE_ID", "render_default_salt"))
-
     if not otp_pepper:
         if auth_dev_mode:
-            otp_pepper = f"otp_pepper_{default_dev_secret}"
-        elif is_render:
-            otp_pepper = hashlib.sha256(f"render_otp_{render_seed}".encode()).hexdigest()
-            logger.warning("OTP_PEPPER not set on Render. Auto-derived deterministic fallback from service context.")
+            otp_pepper = DEV_OTP_PEPPER
         else:
-            raise ValueError(
-                "Missing required authentication secret: OTP_PEPPER. "
-                "Generate one with `python -c 'import secrets; print(secrets.token_hex(32))'` and set in .env."
-            )
+            raise ValueError(_secret_generation_hint("OTP_PEPPER"))
 
     if not session_secret:
         if auth_dev_mode:
-            session_secret = f"session_secret_{default_dev_secret}"
-        elif is_render:
-            session_secret = hashlib.sha256(f"render_session_{render_seed}".encode()).hexdigest()
-            logger.warning("SESSION_SECRET not set on Render. Auto-derived deterministic fallback from service context.")
+            session_secret = DEV_SESSION_SECRET
         else:
-            raise ValueError(
-                "Missing required authentication secret: SESSION_SECRET. "
-                "Generate one with `python -c 'import secrets; print(secrets.token_hex(32))'` and set in .env."
-            )
+            raise ValueError(_secret_generation_hint("SESSION_SECRET"))
 
     # SMTP Settings
     smtp_host = _get_val("SMTP_HOST")
@@ -110,12 +115,7 @@ def load_auth_config(reload: bool = False) -> AuthConfig:
     smtp_user = _get_val("SMTP_USER")
     smtp_password = _get_val("SMTP_PASSWORD")
     smtp_from = _get_val("SMTP_FROM", smtp_user or "noreply@research-studio.local")
-    smtp_use_tls = _get_val("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes")
-
-    # If not in dev mode, verify SMTP is configured
-    if not auth_dev_mode and not smtp_host:
-        # We do not crash outright on import to allow unit tests with fake senders, but warn/flag
-        pass
+    smtp_use_tls = _is_truthy(_get_val("SMTP_USE_TLS", "true"))
 
     # Allowed email domains
     domains_raw = _get_val("ALLOWED_EMAIL_DOMAINS", "")

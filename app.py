@@ -12,9 +12,24 @@ import streamlit as st
 
 import database as db
 from auth import require_login
-from security.guardrails import validate_user_input, mask_pii_and_secrets, verify_citations, format_fenced_preferences
+from security.guardrails import (
+    validate_user_input,
+    mask_pii_and_secrets,
+    verify_citations,
+    format_fenced_preferences,
+    CitationGuard,
+)
 from llmops.telemetry import TelemetryTracker
-from llm_fallback import get_fallback_llm
+from llm_fallback import (
+    get_fallback_llm,
+    get_usage_stats,
+    reset_usage_stats,
+    has_llm_key,
+    get_openrouter_key,
+    get_gemini_key,
+)
+from tools.search_tool import get_serper_key
+from tools.source_registry import get_visited_urls
 
 # UI & Core Modules
 from ui import (
@@ -31,6 +46,14 @@ from core import PipelineRunner, generate_inline_diff_html, calculate_diff_stats
 
 # Load environment variables
 load_dotenv()
+
+# Overall wall-clock budget for a legacy Streamlit research run (seconds).
+# Configurable via RESEARCH_RUN_TIMEOUT_SECONDS; on expiry the worker is asked
+# to cancel and the UI shows a clear timeout error instead of hanging forever.
+try:
+    RUN_TIMEOUT_SECONDS = max(30, int(os.getenv("RESEARCH_RUN_TIMEOUT_SECONDS", "1800")))
+except (TypeError, ValueError):
+    RUN_TIMEOUT_SECONDS = 1800
 
 # Streamlit Page Configuration
 st.set_page_config(
@@ -57,6 +80,21 @@ if "current_topic" not in st.session_state:
 if "run_in_progress" not in st.session_state:
     st.session_state.run_in_progress = False
 
+if "active_runner" not in st.session_state:
+    st.session_state.active_runner = None
+
+if "active_worker_thread" not in st.session_state:
+    st.session_state.active_worker_thread = None
+
+# Reconcile a run that was abandoned by a browser refresh / interrupted script:
+# if the tracked worker thread is gone, do not leave the UI stuck in "running".
+if st.session_state.run_in_progress:
+    _tracked_worker = st.session_state.get("active_worker_thread")
+    if _tracked_worker is None or not _tracked_worker.is_alive():
+        st.session_state.run_in_progress = False
+        st.session_state.active_runner = None
+        st.session_state.active_worker_thread = None
+
 if "current_report" not in st.session_state:
     articles = db.get_articles(limit=1, user_id=current_user_id)
     if articles:
@@ -80,58 +118,102 @@ if "chat_history" not in st.session_state:
 with st.sidebar:
     st.markdown("## ⚙️ Studio Settings")
 
-    openrouter_key = os.getenv("OPENROUTER_API_KEY", "") or os.getenv("OPEN_ROUTER_API_KEY", "")
-    gemini_key = os.getenv("GEMINI_API_KEY", "")
-    serper_key = os.getenv("SERPER_API_KEY", "")
-    has_any_llm = bool(openrouter_key or gemini_key)
+    # ------------------------------------------------------------------
+    # SECURITY: never pre-fill operator credentials into editable widgets and
+    # never mutate process-wide os.environ from a request handler.  Visitors
+    # only see configured / not-configured status.  Optional visitor-supplied
+    # keys are stored in session_state and scoped to a single run via
+    # contextvars (see llm_fallback.scoped_llm_keys / search_tool.scoped_serper_key).
+    # ------------------------------------------------------------------
+    server_has_openrouter = bool(os.getenv("OPENROUTER_API_KEY") or os.getenv("OPEN_ROUTER_API_KEY"))
+    server_has_gemini = bool(os.getenv("GEMINI_API_KEY"))
+    has_any_llm = bool(server_has_openrouter or server_has_gemini)
 
     # 1. API Keys & Models
-    with st.expander("🔑 API Keys & LLM Routing", expanded=not has_any_llm):
-        user_openrouter = st.text_input("OpenRouter API Key (Supports Free Fallbacks)", value=openrouter_key, type="password")
-        user_gemini = st.text_input("Gemini API Key (Optional Direct)", value=gemini_key, type="password")
-        user_serper = st.text_input("Serper.dev API Key (Optional)", value=serper_key, type="password", help="DuckDuckGo is used by default for 100% free searching.")
-
-        if user_openrouter:
-            os.environ["OPENROUTER_API_KEY"] = user_openrouter
-            os.environ["OPEN_ROUTER_API_KEY"] = user_openrouter
-        if user_gemini:
-            os.environ["GEMINI_API_KEY"] = user_gemini
-        if user_serper:
-            os.environ["SERPER_API_KEY"] = user_serper
-
+    with st.expander("🔑 API Keys & LLM Routing", expanded=False):
+        st.caption(
+            "Server credentials are managed by the operator via environment variables "
+            "and are **never displayed** here. Optional keys entered below live only in "
+            "this browser session and are scoped to your next run."
+        )
         c1, c2 = st.columns(2)
         with c1:
-            if os.getenv("OPENROUTER_API_KEY") or os.getenv("OPEN_ROUTER_API_KEY"):
-                st.success("OpenRouter (Active)", icon="🔄")
-            elif os.getenv("GEMINI_API_KEY"):
-                st.success("Gemini (Active)", icon="✅")
+            if server_has_openrouter:
+                st.success("OpenRouter (server: configured)", icon="🔄")
             else:
-                st.error("LLM Key Missing", icon="❌")
+                st.info("OpenRouter (server: not configured)", icon="ℹ️")
         with c2:
-            if os.getenv("SERPER_API_KEY"):
-                st.success("Serper (Active)", icon="✅")
+            if server_has_gemini:
+                st.success("Gemini (server: configured)", icon="✅")
             else:
-                st.info("DuckDuckGo (Free)", icon="🦆")
+                st.info("Gemini (server: not configured)", icon="ℹ️")
+        if not has_any_llm:
+            st.warning(
+                "No server LLM key is configured. Enter your own trial key below "
+                "or ask the operator to set OPENROUTER_API_KEY / GEMINI_API_KEY.",
+                icon="⚠️",
+            )
 
-    # 2. TiDB Cloud Database
+        user_openrouter = st.text_input(
+            "Use your own OpenRouter key (optional, session-only)",
+            value="",
+            type="password",
+            key="user_openrouter_key",
+            placeholder="sk-or-v1-…",
+        )
+        user_gemini = st.text_input(
+            "Use your own Gemini key (optional, session-only)",
+            value="",
+            type="password",
+            key="user_gemini_key",
+            placeholder="AIza…",
+        )
+        user_serper = st.text_input(
+            "Use your own Serper.dev key (optional, session-only)",
+            value="",
+            type="password",
+            key="user_serper_key",
+            placeholder="Serper key",
+            help="DuckDuckGo is used by default for 100% free searching.",
+        )
+        if user_openrouter or user_gemini or user_serper:
+            st.caption("Session-only keys set. They are not written to process environment or disk.")
+
+        if get_serper_key() and not server_has_gemini and not server_has_openrouter:
+            st.info("Search: Serper key available in this session.", icon="🔎")
+        elif server_has_openrouter or server_has_gemini:
+            st.info("Web Search: DuckDuckGo (free) by default; Serper if configured.", icon="🦆")
+        else:
+            st.info("Web Search: DuckDuckGo (free, no key required).", icon="🦆")
+
+    # 2. Database status (read-only — connection settings are operator-managed)
     with st.expander("☁️ TiDB Cloud Serverless", expanded=False):
         backend = db.get_active_backend()
         if backend == "tidb":
             st.success(f"TiDB Cloud: {os.getenv('TIDB_DATABASE', 'research_studio')}", icon="☁️")
         else:
             st.info("SQLite Local (Auto-Fallback)", icon="💾")
+        st.caption(
+            "Database connection settings (TIDB_HOST / TIDB_USER / TIDB_PASSWORD) are "
+            "server-managed environment variables and are not editable from this legacy UI."
+        )
 
-        tidb_h = st.text_input("TiDB Host", value=os.getenv("TIDB_HOST", "gateway01.ap-northeast-1.prod.aws.tidbcloud.com"))
-        tidb_u = st.text_input("TiDB User", value=os.getenv("TIDB_USER", ""), placeholder="xxxxxx.root")
-        tidb_p = st.text_input("TiDB Password", value=os.getenv("TIDB_PASSWORD", ""), type="password")
-        tidb_d = st.text_input("TiDB Database", value=os.getenv("TIDB_DATABASE", "research_studio"))
-        if tidb_h and tidb_u:
-            os.environ["TIDB_HOST"] = tidb_h
-            os.environ["TIDB_USER"] = tidb_u
-            if tidb_p:
-                os.environ["TIDB_PASSWORD"] = tidb_p
-            if tidb_d:
-                os.environ["TIDB_DATABASE"] = tidb_d
+    # 3. Run controls (cancel + overall timeout awareness)
+    if st.session_state.run_in_progress:
+        st.markdown("---")
+        st.warning(
+            f"A research run is in progress (max {RUN_TIMEOUT_SECONDS}s).",
+            icon="⏳",
+        )
+        if st.button("🛑 Cancel Active Run", key="cancel_active_run", width="stretch"):
+            active_runner = st.session_state.get("active_runner")
+            if active_runner is not None:
+                active_runner.request_cancel()
+            st.session_state.run_in_progress = False
+            st.session_state.run_cancel_notice = True
+            st.rerun()
+    elif st.session_state.pop("run_cancel_notice", False):
+        st.info("The previous run was cancelled.", icon="🛑")
 
     # 3. Persistent Author Preferences (Long-Term Memory)
     with st.expander("🧠 Persistent Author Style", expanded=False):
@@ -146,7 +228,7 @@ with st.sidebar:
         diag_idx = diagram_options.index(curr_diag) if curr_diag in diagram_options else 0
         p_diagram = st.selectbox("Preferred Diagram", diagram_options, index=diag_idx)
 
-        if st.button("💾 Save Preferences to Memory", use_container_width=True):
+        if st.button("💾 Save Preferences to Memory", width="stretch"):
             db.set_user_memory("preferred_tone", p_tone, user_id=current_user_id)
             db.set_user_memory("target_audience", p_audience, user_id=current_user_id)
             db.set_user_memory("prohibited_words", p_prohibited, user_id=current_user_id)
@@ -161,7 +243,7 @@ with st.sidebar:
                 st.caption(f"Found {len(revisions)} saved revision snapshot(s):")
                 rev_options = {f"Rev {r['revision_num']}: {r['summary']} ({r['created_at'][:16]})": r["id"] for r in revisions}
                 selected_label = st.selectbox("Select Revision to Restore", list(rev_options.keys()))
-                if selected_label and st.button("↺ Restore Selected Revision", use_container_width=True):
+                if selected_label and st.button("↺ Restore Selected Revision", width="stretch"):
                     rev_id_to_restore = rev_options[selected_label]
                     success = db.rollback_article_revision_transaction(st.session_state.current_article_id, rev_id_to_restore, user_id=current_user_id)
                     if success:
@@ -201,7 +283,7 @@ with st.sidebar:
             created = article["created_at"][:16] if article.get("created_at") else ""
 
             with col_title:
-                if st.button(f"📄 {display_topic}", key=f"load_{article['id']}", use_container_width=True):
+                if st.button(f"📄 {display_topic}", key=f"load_{article['id']}", width="stretch"):
                     st.session_state.current_article_id = article["id"]
                     st.session_state.current_report = article["content"]
                     st.session_state.current_topic = article["topic"]
@@ -228,6 +310,12 @@ with st.sidebar:
 # ==============================================================================
 # MAIN PAGE HEADER
 # ==============================================================================
+st.warning(
+    "**Legacy interface:** this Streamlit app is deprecated. The supported "
+    "production UI is the Next.js app in `frontend/` (served by the FastAPI backend). "
+    "Use this page only for local debugging.",
+    icon="⚠️",
+)
 st.markdown('<div class="main-title">AI Research Studio & Visual Blog Studio</div>', unsafe_allow_html=True)
 st.markdown('<div class="subtitle">Autonomous 4-Agent Research Squad • Native Mermaid Diagrams • TiDB Cloud Persistence • Enterprise Security</div>', unsafe_allow_html=True)
 
@@ -284,12 +372,14 @@ with main_tab1:
         ])
         bypass_cache = st.checkbox("⚡ Bypass Cache (Force Fresh Crawl)", value=False, help="Skip cached scrapes and memoized evaluations, forcing a live crawl and generation.")
 
-    generate_btn = st.button("🚀 Launch Autonomous Research Squad", type="primary", use_container_width=True, disabled=st.session_state.run_in_progress)
+    generate_btn = st.button("🚀 Launch Autonomous Research Squad", type="primary", width="stretch", disabled=st.session_state.run_in_progress)
 
     # Execution Block with Stepper
     if generate_btn:
         if not topic_input.strip():
             st.error("Please enter a research topic first.")
+        elif st.session_state.run_in_progress:
+            st.warning("A research run is already in progress. Cancel it from the sidebar first.")
         else:
             # 1. OWASP Security Validation
             is_valid, sec_msg = validate_user_input(topic_input)
@@ -298,6 +388,8 @@ with main_tab1:
                 db.save_security_event("PROMPT_INJECTION_REJECTED", f"Input: {topic_input[:100]} | Reason: {sec_msg}")
             else:
                 st.session_state.run_in_progress = True
+                # Fresh per-run LLM telemetry; real FallbackLLM usage is recorded below.
+                reset_usage_stats()
                 telemetry_tracker = TelemetryTracker(topic=topic_input.strip())
 
                 # Stepper HUD Container
@@ -310,27 +402,77 @@ with main_tab1:
                 fenced_mem = format_fenced_preferences(user_mems)
                 effective_topic = f"{topic_input} (Target Audience: {audience}, Tone: {tone}, Length: {length}){fenced_mem}"
 
-                # Decoupled thread & event queue execution
+                # Session-scoped optional visitor keys (never written to os.environ).
+                runtime_keys = {
+                    "openrouter": st.session_state.get("user_openrouter_key") or None,
+                    "gemini": st.session_state.get("user_gemini_key") or None,
+                    "serper": st.session_state.get("user_serper_key") or None,
+                }
+
+                # Decoupled thread & event queue execution with cooperative cancel.
                 event_queue = queue.Queue()
                 result_container = {}
+                cancel_event = threading.Event()
 
-                runner = PipelineRunner(effective_topic, event_queue, result_container)
-                worker_thread = threading.Thread(target=runner.run)
+                runner = PipelineRunner(
+                    effective_topic,
+                    event_queue,
+                    result_container,
+                    cancel_event=cancel_event,
+                    runtime_keys={k: v for k, v in runtime_keys.items() if v},
+                )
+                st.session_state.active_runner = runner
+                worker_thread = threading.Thread(target=runner.run, daemon=True)
+                st.session_state.active_worker_thread = worker_thread
                 worker_thread.start()
 
-                # Main thread polling loop (owns ScriptRunContext and renders updates)
-                while worker_thread.is_alive() or not event_queue.empty():
-                    try:
-                        event = event_queue.get_nowait()
-                        stepper_state = reduce_stepper_event(stepper_state, event)
-                        stepper_placeholder.markdown(render_stepper_html(stepper_state), unsafe_allow_html=True)
-                    except queue.Empty:
-                        time.sleep(0.08)
+                # Main thread polling loop (owns ScriptRunContext and renders updates).
+                # Bounded by an overall timeout; the sidebar cancel button cancels
+                # the worker cooperatively.
+                deadline = time.time() + RUN_TIMEOUT_SECONDS
+                timed_out = False
+                try:
+                    while worker_thread.is_alive() or not event_queue.empty():
+                        if time.time() > deadline:
+                            timed_out = True
+                            runner.request_cancel()
+                            break
+                        try:
+                            event = event_queue.get(timeout=0.1)
+                            stepper_state = reduce_stepper_event(stepper_state, event)
+                            stepper_placeholder.markdown(render_stepper_html(stepper_state), unsafe_allow_html=True)
+                        except queue.Empty:
+                            continue
+                except BaseException as loop_exc:  # e.g. Streamlit RerunException on user interaction
+                    if loop_exc.__class__.__name__ in ("RerunException", "StopException"):
+                        runner.request_cancel()
+                    raise
+                finally:
+                    if not timed_out:
+                        worker_thread.join(timeout=5)
 
-                worker_thread.join()
                 st.session_state.run_in_progress = False
+                st.session_state.active_runner = None
+                st.session_state.active_worker_thread = None
 
-                if "error" in result_container:
+                if timed_out:
+                    stepper_placeholder.markdown(
+                        render_stepper_html({
+                            **stepper_state,
+                            "has_error": True,
+                            "error_message": (
+                                f"Run exceeded the {RUN_TIMEOUT_SECONDS}s time limit and was cancelled."
+                            ),
+                        }),
+                        unsafe_allow_html=True,
+                    )
+                    st.error(
+                        f"⏱️ Research run exceeded the {RUN_TIMEOUT_SECONDS}s limit and was cancelled. "
+                        "Increase RESEARCH_RUN_TIMEOUT_SECONDS or retry with a narrower topic."
+                    )
+                elif result_container.get("cancelled"):
+                    st.warning("🛑 Research run was cancelled.", icon="🛑")
+                elif "error" in result_container:
                     st.error(f"Agent execution encountered an error: {result_container['error']}")
                 elif "result" in result_container:
                     result = result_container["result"]
@@ -344,10 +486,24 @@ with main_tab1:
                     if token_usage:
                         tokens_used = getattr(token_usage, "total_tokens", 0)
 
-                    # Mask sensitive secrets/PII
+                    # Mask sensitive secrets/PII, then citation-audit against visited sources.
                     report_content = mask_pii_and_secrets(report_content)
+                    visit_guard = CitationGuard()
+                    for visited_url in get_visited_urls():
+                        visit_guard.register_url(visited_url)
+                    try:
+                        report_content, flagged_urls, stripped_images = visit_guard.audit_report(report_content)
+                        if flagged_urls or stripped_images:
+                            st.caption(
+                                f"🛡️ Citation audit: flagged {len(flagged_urls)} unverified link(s) "
+                                f"and removed {stripped_images} unverified image(s)."
+                            )
+                    except Exception as audit_err:  # noqa: BLE001 - never lose a finished report
+                        st.warning(f"Citation audit skipped due to an internal error: {audit_err}")
 
-                    # Finalize telemetry metrics
+                    # Record REAL FallbackLLM usage/fallback telemetry, then finalize.
+                    usage_stats = get_usage_stats()
+                    telemetry_tracker.record_usage_stats(usage_stats)
                     telemetry_data = telemetry_tracker.finalize(report_content)
 
                     # Save to database scoped to current user
@@ -405,7 +561,7 @@ with main_tab1:
                 data=report_content,
                 file_name=md_filename,
                 mime="text/markdown",
-                use_container_width=True
+                width="stretch"
             )
         with exp_col2:
             html_filename, html_bundle = generate_standalone_html(article_topic, report_content)
@@ -414,7 +570,7 @@ with main_tab1:
                 data=html_bundle,
                 file_name=html_filename,
                 mime="text/html",
-                use_container_width=True
+                width="stretch"
             )
 
 
@@ -433,13 +589,13 @@ with main_tab2:
         q1, q2, q3, q4 = st.columns(4)
 
         quick_prompt = None
-        if q1.button("📱 3x LinkedIn Posts", use_container_width=True):
+        if q1.button("📱 3x LinkedIn Posts", width="stretch"):
             quick_prompt = "Write 3 high-impact, engaging LinkedIn posts based on this report with hashtags, hooks, and actionable takeaways."
-        if q2.button("🐦 Twitter/X Thread", use_container_width=True):
+        if q2.button("🐦 Twitter/X Thread", width="stretch"):
             quick_prompt = "Convert this report into a compelling 5-tweet Twitter/X thread with key takeaways, data points, and concise insights."
-        if q3.button("📌 Executive Summary", use_container_width=True):
+        if q3.button("📌 Executive Summary", width="stretch"):
             quick_prompt = "Provide a 1-page executive bullet-point summary focusing strictly on business impact, ROI, key statistics, and strategic recommendations."
-        if q4.button("❓ Quiz & Interview Qs", use_container_width=True):
+        if q4.button("❓ Quiz & Interview Qs", width="stretch"):
             quick_prompt = "Generate 5 thought-provoking discussion/interview questions based on the insights in this article with detailed sample answers."
 
         # Display Chat History with Apply & Diff buttons
@@ -452,7 +608,7 @@ with main_tab2:
                     btn_col1, btn_col2 = st.columns([2, 3])
 
                     with btn_col1:
-                        if st.button("⚡ Apply Revision to Article", key=f"apply_{idx}", use_container_width=True):
+                        if st.button("⚡ Apply Revision to Article", key=f"apply_{idx}", width="stretch"):
                             new_rev_num = db.apply_article_edit_transaction(
                                 article_id=st.session_state.current_article_id,
                                 new_content=msg["content"],
@@ -492,6 +648,7 @@ with main_tab2:
                             active_query=active_query,
                             article_id=st.session_state.current_article_id,
                             user_memories=user_mems,
+                            user_id=current_user_id,
                         )
 
                         reply_text = get_fallback_llm().call(messages=messages)
@@ -524,13 +681,20 @@ with main_tab3:
 
     st.markdown("---")
     st.markdown("#### 🔄 Model Failover & Database Matrix")
+    session_usage = get_usage_stats()
     hm1, hm2, hm3, hm4 = st.columns(4)
     with hm1:
-        st.success("OpenRouter Fallback Chain: ACTIVE (5 Models)", icon="✅")
+        if has_llm_key():
+            st.success(
+                f"LLM Fallback Chain: READY (session calls: {session_usage['call_count']})",
+                icon="✅",
+            )
+        else:
+            st.info("LLM Fallback Chain: no key configured", icon="ℹ️")
     with hm2:
         st.success("Web Search: DuckDuckGo Native", icon="🦆")
     with hm3:
-        if os.getenv("GEMINI_API_KEY"):
+        if get_gemini_key():
             st.success("Gemini: AVAILABLE", icon="✅")
         else:
             st.info("Gemini: Optional", icon="ℹ️")
@@ -547,6 +711,29 @@ with main_tab3:
             st.info("Database: Local SQLite (Fallback)", icon="💾")
             with st.expander("TiDB Status"):
                 st.caption(tidb_msg)
+
+    # Live (process-wide, since the last reset) FallbackLLM accounting, sourced
+    # from llm_fallback.get_usage_stats() — the same contract the backend uses.
+    with st.expander("🔍 Session Model Usage (live FallbackLLM stats)", expanded=False):
+        st.caption(f"Model attempts recorded: **{session_usage['call_count']}**")
+        st.markdown(
+            "**Models used:** "
+            + (", ".join(f"`{m}`" for m in session_usage["models_used"]) or "— none yet —")
+        )
+        st.markdown(
+            "**Models that failed:** "
+            + (", ".join(f"`{m}`" for m in session_usage["failed_models"]) or "— none —")
+        )
+        if session_usage["fallback_events"]:
+            for ev in session_usage["fallback_events"]:
+                st.caption(
+                    f"• `{ev.get('failed_model')}` ({ev.get('error_type')}) ➔ `{ev.get('switched_to')}`"
+                )
+        else:
+            st.caption("No fallback events this session.")
+        if st.button("♻️ Reset Session Usage Counters", key="btn_reset_usage", width="stretch"):
+            reset_usage_stats()
+            st.rerun()
 
     st.markdown("---")
     st.markdown("#### ⚡ Hybrid Two-Tier Cache Telemetry & Health")
@@ -566,7 +753,7 @@ with main_tab3:
     with col_purge1:
         st.caption(f"Namespaces: {', '.join([f'{k}: {v}' for k, v in c_stats.get('by_namespace', {}).items()]) or 'None active yet'}")
     with col_purge2:
-        if st.button("🗑️ Prune Expired", key="btn_prune_cache", use_container_width=True):
+        if st.button("🗑️ Prune Expired", key="btn_prune_cache", width="stretch"):
             pruned_count = db.prune_expired_cache()
             st.success(f"Pruned {pruned_count} expired entries!", icon="✅")
             st.rerun()
@@ -589,7 +776,17 @@ with main_tab3:
                 st.markdown(f"**Fallback Events ({run['fallback_count']}):**")
                 if run["fallback_events"]:
                     for ev in run["fallback_events"]:
-                        st.caption(f"• `{ev.get('from_model')}` failed with `{ev.get('error')[:80]}` ➔ Switched to `{ev.get('to_model')}`")
+                        # Canonical keys written by TelemetryTracker.record_fallback;
+                        # legacy rows may still use from_model/to_model.
+                        failed_model = ev.get("failed_model") or ev.get("from_model") or "unknown"
+                        switched_to = ev.get("switched_to") or ev.get("to_model") or "next model"
+                        error_type = ev.get("error_type") or "error"
+                        error_text = str(ev.get("error") or "")[:80]
+                        st.caption(
+                            f"• `{failed_model}` failed with `{error_type}`"
+                            + (f" ({error_text})" if error_text else "")
+                            + f" ➔ Switched to `{switched_to}`"
+                        )
                 else:
                     st.caption("None — Primary model responded cleanly.")
 

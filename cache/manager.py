@@ -33,15 +33,31 @@ MAX_PAYLOAD_BYTES = 1024 * 1024
 DEFAULT_L1_MAX_BYTES = 25 * 1024 * 1024
 DEFAULT_L1_MAX_ITEMS = 500
 
-# Tracking parameters to strip during URL normalization
+# Maximum number of negative-cache entries kept in memory (bounded to prevent
+# unbounded growth when remote sources fail with high-cardinality URLs/keys).
+DEFAULT_MAX_FAILURE_CACHE = 512
+
+# Known tracking parameters stripped during URL normalization. Only parameters
+# that do not change server-side content are removed: generic parameters such as
+# ``ref``/``source`` are preserved because they can be semantically meaningful
+# (e.g. ``?ref=download``) and collapsing them caused distinct payloads to share
+# one cache entry.
 TRACKING_PARAMS = {
     "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-    "fbclid", "gclid", "msclkid", "ref", "source", "mc_cid", "mc_eid"
+    "utm_id", "utm_name", "utm_reader", "utm_social", "utm_brand",
+    "fbclid", "gclid", "dclid", "gclsrc", "msclkid", "mc_cid", "mc_eid",
+    "igshid", "yclid", "twclid", "li_fat_id", "_hsenc", "_hsmi",
 }
 
 
 def normalize_url(url: str) -> str:
-    """Normalize a URL to prevent duplicate caching from cosmetic variations."""
+    """Normalize a URL to prevent duplicate caching from cosmetic variations.
+
+    Normalization drops known tracking parameters (UTM/click IDs), lowercases the
+    scheme/host, removes default ports and trailing slashes. Fragments and
+    non-tracking query parameters are preserved so semantically distinct URLs are
+    not collapsed into one shared cache payload.
+    """
     if not url:
         return ""
     try:
@@ -61,7 +77,7 @@ def normalize_url(url: str) -> str:
         if len(path) > 1 and path.endswith("/"):
             path = path[:-1]
 
-        # Filter out tracking query parameters and sort remaining
+        # Filter out *known* tracking query parameters only, then sort the rest
         filtered_query = []
         if parsed.query:
             query_tuples = parse_qsl(parsed.query, keep_blank_values=True)
@@ -71,29 +87,36 @@ def normalize_url(url: str) -> str:
             filtered_query.sort()
 
         query_str = urlencode(filtered_query)
-        # Drop fragment (#...) entirely
-        return urlunparse((scheme, netloc, path, parsed.params, query_str, ""))
+        return urlunparse((scheme, netloc, path, parsed.params, query_str, parsed.fragment))
     except Exception as e:
         logger.debug(f"URL normalization failed for '{url}': {e}")
         return url.strip()
 
 
+def _encode_cache_component(component: Any) -> str:
+    """Length-prefix/type-prefix a cache key component (collision-safe encoding).
+
+    Naive ``"|".join(components)`` aliases ``("ns", "a||b")`` with
+    ``("ns", "a", "b")``. Length prefixes make the encoding unambiguous.
+    """
+    if isinstance(component, str):
+        encoded = "s:" + component
+    else:
+        try:
+            encoded = "j:" + json.dumps(component, sort_keys=True, default=str)
+        except Exception:
+            encoded = "r:" + repr(component)
+    return f"{len(encoded)}:{encoded}"
+
+
 def make_cache_key(namespace: str, *components: Any, user_id: Optional[int] = None) -> str:
     """Generate a deterministic versioned SHA-256 key for a namespace and components."""
-    serialized_parts = []
-    for c in components:
-        if isinstance(c, str):
-            serialized_parts.append(c)
-        else:
-            try:
-                serialized_parts.append(json.dumps(c, sort_keys=True))
-            except Exception:
-                serialized_parts.append(str(c))
+    serialized_parts = [_encode_cache_component(c) for c in components]
 
     if user_id is not None:
-        serialized_parts.append(f"user:{user_id}")
+        serialized_parts.append(_encode_cache_component(f"user:{user_id}"))
 
-    joined = "||".join(serialized_parts)
+    joined = "|".join(serialized_parts)
     digest = hashlib.sha256(joined.encode("utf-8")).hexdigest()
     return f"v1:{namespace}:{digest}"
 
@@ -108,6 +131,7 @@ class HybridCacheManager:
         self,
         max_bytes: int = DEFAULT_L1_MAX_BYTES,
         max_items: int = DEFAULT_L1_MAX_ITEMS,
+        max_failures: int = DEFAULT_MAX_FAILURE_CACHE,
     ):
         self._max_bytes = max_bytes
         self._max_items = max_items
@@ -115,15 +139,21 @@ class HybridCacheManager:
 
         # L1 In-Memory LRU storage
         self._l1: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+        # Lock hierarchy (always acquire in this order to avoid ABBA deadlock):
+        #   1. self._lock       (L1 store)
+        #   2. self._metrics_lock
+        #   3. self._failure_lock (never nested inside the others)
         self._lock = threading.RLock()
 
         # Anti-stampede granular per-key mutexes: key -> [Lock, ref_count]
         self._key_locks: Dict[str, List[Any]] = {}
         self._key_locks_mutex = threading.Lock()
 
-        # Transient negative failure cache: key -> failure_timestamp
+        # Transient negative failure cache: key -> failure_timestamp (bounded)
         self._failure_cache: Dict[str, float] = {}
         self._failure_ttl_sec = 30.0
+        self._max_failures = max(1, int(max_failures))
+        self._failure_lock = threading.Lock()
 
         # Observability metrics
         self._metrics_lock = threading.Lock()
@@ -146,7 +176,12 @@ class HybridCacheManager:
 
     @contextmanager
     def _acquire_stampede_lock(self, key: str, timeout: float = 10.0):
-        """Acquire a granular lock for a specific key, automatically cleaning up references."""
+        """Acquire a granular lock for a specific key, automatically cleaning up references.
+
+        The refcount bookkeeping is exception-safe: even if acquiring or the wrapped
+        body raises (including BaseException/KeyboardInterrupt) the entry is released
+        and removed, so ``_key_locks`` can never leak entries.
+        """
         with self._key_locks_mutex:
             if key not in self._key_locks:
                 self._key_locks[key] = [threading.Lock(), 1]
@@ -154,17 +189,52 @@ class HybridCacheManager:
                 self._key_locks[key][1] += 1
             key_lock = self._key_locks[key][0]
 
-        acquired = key_lock.acquire(timeout=timeout)
+        acquired = False
+        try:
+            acquired = key_lock.acquire(timeout=timeout)
+        except BaseException:
+            with self._key_locks_mutex:
+                self._release_key_lock_ref(key)
+            raise
+
         try:
             yield acquired
         finally:
             if acquired:
-                key_lock.release()
+                try:
+                    key_lock.release()
+                except RuntimeError:
+                    pass
             with self._key_locks_mutex:
-                if key in self._key_locks:
-                    self._key_locks[key][1] -= 1
-                    if self._key_locks[key][1] <= 0:
-                        del self._key_locks[key]
+                self._release_key_lock_ref(key)
+
+    def _release_key_lock_ref(self, key: str) -> None:
+        """Decrement/remove a key-lock reference. Caller must hold ``_key_locks_mutex``."""
+        entry = self._key_locks.get(key)
+        if entry is None:
+            return
+        entry[1] -= 1
+        if entry[1] <= 0:
+            self._key_locks.pop(key, None)
+
+    # -- Negative failure cache (bounded) ---------------------------------
+    def _record_failure(self, key: str) -> None:
+        """Record a transient failure timestamp, evicting oldest entries when full."""
+        with self._failure_lock:
+            self._failure_cache[key] = time.time()
+            overflow = len(self._failure_cache) - self._max_failures
+            if overflow > 0:
+                oldest = sorted(self._failure_cache.items(), key=lambda kv: kv[1])[:overflow]
+                for old_key, _ in oldest:
+                    self._failure_cache.pop(old_key, None)
+
+    def _get_failure_timestamp(self, key: str) -> Optional[float]:
+        with self._failure_lock:
+            return self._failure_cache.get(key)
+
+    def _clear_failure(self, key: str) -> None:
+        with self._failure_lock:
+            self._failure_cache.pop(key, None)
 
     def _evict_l1_if_needed(self, incoming_bytes: int):
         """Evict oldest entries in L1 LRU until within item and byte limits."""
@@ -300,7 +370,7 @@ class HybridCacheManager:
         )
 
         # Clear negative failure cache for this key if previously marked
-        self._failure_cache.pop(key, None)
+        self._clear_failure(key)
         return True
 
     def fetch_or_compute(
@@ -330,7 +400,7 @@ class HybridCacheManager:
             (payload, metadata_dict)
         """
         # Check negative cache
-        last_failure = self._failure_cache.get(key)
+        last_failure = self._get_failure_timestamp(key)
         if last_failure and (time.time() - last_failure) < self._failure_ttl_sec and not bypass:
             # If recently failed, check if we have a stale entry to serve instead of re-failing
             if allow_stale_on_error:
@@ -380,7 +450,7 @@ class HybridCacheManager:
 
             except Exception as err:
                 logger.warning(f"Computation failed for key '{key}': {err}")
-                self._failure_cache[key] = time.time()
+                self._record_failure(key)
 
                 if allow_stale_on_error:
                     stale = self.get(key, namespace=namespace, allow_stale=True)
@@ -421,25 +491,31 @@ class HybridCacheManager:
         return db.clear_cache(namespace=namespace, user_id=user_id)
 
     def get_metrics(self) -> Dict[str, Any]:
-        """Return real-time cache performance metrics."""
-        with self._metrics_lock:
-            total_hits = self._metrics["l1_hits"] + self._metrics["l2_hits"]
-            total_requests = total_hits + self._metrics["misses"]
-            hit_ratio = round((total_hits / total_requests * 100), 1) if total_requests > 0 else 0.0
+        """Return real-time cache performance metrics.
 
-            with self._lock:
-                l1_item_count = len(self._l1)
-                l1_bytes = self._current_bytes
+        Lock order is ``_lock`` -> ``_metrics_lock`` (identical to ``get()``) which
+        eliminates the ABBA deadlock the previous reverse ordering could trigger
+        under concurrent reads.
+        """
+        with self._lock:
+            l1_item_count = len(self._l1)
+            l1_bytes = self._current_bytes
+            with self._metrics_lock:
+                snapshot = dict(self._metrics)
 
-            return {
-                "l1_hits": self._metrics["l1_hits"],
-                "l2_hits": self._metrics["l2_hits"],
-                "total_hits": total_hits,
-                "misses": self._metrics["misses"],
-                "total_requests": total_requests,
-                "hit_ratio_percent": hit_ratio,
-                "latency_saved_ms": self._metrics["latency_saved_ms"],
-                "tokens_saved": self._metrics["tokens_saved"],
-                "l1_items": l1_item_count,
-                "l1_bytes": l1_bytes,
-            }
+        total_hits = snapshot["l1_hits"] + snapshot["l2_hits"]
+        total_requests = total_hits + snapshot["misses"]
+        hit_ratio = round((total_hits / total_requests * 100), 1) if total_requests > 0 else 0.0
+
+        return {
+            "l1_hits": snapshot["l1_hits"],
+            "l2_hits": snapshot["l2_hits"],
+            "total_hits": total_hits,
+            "misses": snapshot["misses"],
+            "total_requests": total_requests,
+            "hit_ratio_percent": hit_ratio,
+            "latency_saved_ms": snapshot["latency_saved_ms"],
+            "tokens_saved": snapshot["tokens_saved"],
+            "l1_items": l1_item_count,
+            "l1_bytes": l1_bytes,
+        }

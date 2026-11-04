@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Dict, Any, List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 import database as db
@@ -22,19 +22,24 @@ class DiffResponse(BaseModel):
 
 
 @router.get("", response_model=List[RevisionSummary])
-def list_revisions(article_id: int, user: Dict[str, Any] = Depends(get_current_user)) -> List[RevisionSummary]:
-    """List historical revision snapshots for an article."""
+def list_revisions(
+    article_id: int,
+    limit: int = Query(200, ge=1, le=1000, description="Maximum revisions to return"),
+    offset: int = Query(0, ge=0, description="Pagination offset (newest first)"),
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> List[RevisionSummary]:
+    """List historical revision snapshots for an article (bounded/paginated)."""
     article = db.get_article(article_id, user_id=user["id"])
     if not article:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Article not found.")
 
-    revs = db.get_article_revisions(article_id, user_id=user["id"])
+    revs = db.get_article_revisions(article_id, user_id=user["id"], limit=limit, offset=offset)
     return [
         RevisionSummary(
             id=r["id"],
             revision_num=r["revision_num"],
             summary=r.get("summary", "Copilot edit"),
-            created_at=r.get("created_at", ""),
+            created_at=str(r.get("created_at", "")),
         )
         for r in revs
     ]
@@ -53,7 +58,7 @@ def get_revision(article_id: int, revision_num: int, user: Dict[str, Any] = Depe
         revision_num=rev["revision_num"],
         content=rev["content"],
         summary=rev.get("summary", ""),
-        created_at=rev.get("created_at", ""),
+        created_at=str(rev.get("created_at", "")),
     )
 
 

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
 import { MermaidCanvas } from "./mermaid-canvas";
@@ -14,6 +14,75 @@ interface ArticleViewerProps {
   generationTime?: number;
   onOpenCopilot?: () => void;
 }
+
+function slugifyHeading(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, "")
+    .replace(/\s+/g, "-");
+}
+
+/**
+ * React Markdown component overrides.
+ *
+ * react-markdown v10 no longer passes an `inline` prop to the `code` renderer,
+ * so inline vs. fenced code is inferred from an explicit `language-*` class or
+ * an embedded newline. `pre` is replaced so fenced blocks do not end up as
+ * `<pre><div>…</div></pre>` (invalid nesting / hydration warnings).
+ */
+const markdownComponents: Components = {
+  h2: ({ node, children, ...props }) => {
+    void node;
+    const text = String(children);
+    return (
+      <h2
+        id={slugifyHeading(text)}
+        className="scroll-mt-24 text-2xl font-bold mt-10 mb-4 pb-2 border-b border-slate-800/80 text-slate-100"
+        {...props}
+      >
+        {children}
+      </h2>
+    );
+  },
+  h3: ({ node, children, ...props }) => {
+    void node;
+    const text = String(children);
+    return (
+      <h3 id={slugifyHeading(text)} className="scroll-mt-24 text-xl font-semibold mt-6 mb-3 text-slate-200" {...props}>
+        {children}
+      </h3>
+    );
+  },
+  pre: ({ children }) => <>{children}</>,
+  code: ({ node, className, children, ...props }) => {
+    void node;
+    const languageMatch = /language-(\w+)/.exec(className ?? "");
+    const language = languageMatch?.[1];
+    const rawText = String(children);
+    const isBlock = Boolean(language) || rawText.includes("\n");
+    const codeText = rawText.replace(/\n$/, "");
+
+    if (isBlock && language === "mermaid") {
+      return <MermaidCanvas code={codeText} />;
+    }
+
+    if (isBlock) {
+      return (
+        <div className="my-4 rounded-xl overflow-hidden border border-slate-800 bg-slate-950 p-4 font-mono text-sm">
+          <pre className="overflow-x-auto text-slate-300">
+            <code className={className}>{children}</code>
+          </pre>
+        </div>
+      );
+    }
+
+    return (
+      <code className="px-1.5 py-0.5 rounded-md bg-slate-800 text-indigo-300 font-mono text-xs" {...props}>
+        {children}
+      </code>
+    );
+  },
+};
 
 export function ArticleViewer({
   topic,
@@ -41,19 +110,19 @@ export function ArticleViewer({
       const h3Match = line.match(/^###\s+(.+)$/);
       if (h2Match) {
         const text = h2Match[1].trim();
-        const id = text.toLowerCase().replace(/[^\w\s-]/g, "").replace(/\s+/g, "-");
-        list.push({ id, text, level: 2 });
+        list.push({ id: slugifyHeading(text), text, level: 2 });
       } else if (h3Match) {
         const text = h3Match[1].trim();
-        const id = text.toLowerCase().replace(/[^\w\s-]/g, "").replace(/\s+/g, "-");
-        list.push({ id, text, level: 3 });
+        list.push({ id: slugifyHeading(text), text, level: 3 });
       }
     });
     return list;
   }, [content]);
 
   const handleCopyMarkdown = () => {
-    navigator.clipboard.writeText(content);
+    void navigator.clipboard.writeText(content).catch((err: unknown) => {
+      console.error("Clipboard write failed:", err);
+    });
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -61,10 +130,10 @@ export function ArticleViewer({
   const handleDownloadMarkdown = () => {
     const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${topic.toLowerCase().replace(/\s+/g, "_")}.md`;
-    a.click();
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${topic.toLowerCase().replace(/\s+/g, "_")}.md`;
+    anchor.click();
     URL.revokeObjectURL(url);
   };
 
@@ -77,11 +146,11 @@ export function ArticleViewer({
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3 text-xs text-slate-400">
               <span className="flex items-center gap-1.5 px-3 py-1 bg-slate-800 rounded-full">
-                <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
+                <BookOpen className="w-3.5 h-3.5 text-indigo-400" aria-hidden="true" />
                 {calculatedWords.toLocaleString()} words
               </span>
               <span className="flex items-center gap-1.5 px-3 py-1 bg-slate-800 rounded-full">
-                <Clock className="w-3.5 h-3.5 text-emerald-400" />
+                <Clock className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
                 {readingTimeMin} min read
               </span>
               {generationTime && (
@@ -93,25 +162,32 @@ export function ArticleViewer({
 
             <div className="flex items-center gap-2">
               <button
+                type="button"
                 onClick={handleCopyMarkdown}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition"
               >
-                {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                {copied ? (
+                  <Check className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
+                ) : (
+                  <Copy className="w-3.5 h-3.5" aria-hidden="true" />
+                )}
                 <span>{copied ? "Copied" : "Copy"}</span>
               </button>
               <button
+                type="button"
                 onClick={handleDownloadMarkdown}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition"
               >
-                <Download className="w-3.5 h-3.5" />
+                <Download className="w-3.5 h-3.5" aria-hidden="true" />
                 <span>Export .md</span>
               </button>
               {onOpenCopilot && (
                 <button
+                  type="button"
                   onClick={onOpenCopilot}
                   className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-medium transition shadow-lg shadow-indigo-600/20"
                 >
-                  <FileText className="w-3.5 h-3.5" />
+                  <FileText className="w-3.5 h-3.5" aria-hidden="true" />
                   <span>AI Copilot</span>
                 </button>
               )}
@@ -124,43 +200,7 @@ export function ArticleViewer({
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             rehypePlugins={[rehypeSanitize]}
-            components={{
-              h2: ({ node, ...props }) => {
-                const text = String(props.children);
-                const id = text.toLowerCase().replace(/[^\w\s-]/g, "").replace(/\s+/g, "-");
-                return <h2 id={id} className="scroll-mt-24 text-2xl font-bold mt-10 mb-4 pb-2 border-b border-slate-800/80 text-slate-100" {...props} />;
-              },
-              h3: ({ node, ...props }) => {
-                const text = String(props.children);
-                const id = text.toLowerCase().replace(/[^\w\s-]/g, "").replace(/\s+/g, "-");
-                return <h3 id={id} className="scroll-mt-24 text-xl font-semibold mt-6 mb-3 text-slate-200" {...props} />;
-              },
-              code: ({ inline, className, children, ...props }: any) => {
-                const match = /language-(\w+)/.exec(className || "");
-                const isMermaid = match && match[1] === "mermaid";
-                const codeString = String(children).replace(/\n$/, "");
-
-                if (!inline && isMermaid) {
-                  return <MermaidCanvas code={codeString} />;
-                }
-
-                if (!inline) {
-                  return (
-                    <div className="my-4 rounded-xl overflow-hidden border border-slate-800 bg-slate-950 p-4 font-mono text-sm">
-                      <pre className="overflow-x-auto text-slate-300">
-                        <code>{children}</code>
-                      </pre>
-                    </div>
-                  );
-                }
-
-                return (
-                  <code className="px-1.5 py-0.5 rounded-md bg-slate-800 text-indigo-300 font-mono text-xs" {...props}>
-                    {children}
-                  </code>
-                );
-              },
-            }}
+            components={markdownComponents}
           >
             {content}
           </ReactMarkdown>
@@ -173,16 +213,18 @@ export function ArticleViewer({
           <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-4">
             Table of Contents
           </h4>
-          <nav className="space-y-2 text-xs">
-            {headings.map((h, i) => (
+          <nav className="space-y-2 text-xs" aria-label="Article table of contents">
+            {headings.map((heading, idx) => (
               <a
-                key={i}
-                href={`#${h.id}`}
+                key={idx}
+                href={`#${heading.id}`}
                 className={`block transition-colors line-clamp-1 ${
-                  h.level === 3 ? "pl-3 text-slate-500 hover:text-slate-300" : "text-slate-400 hover:text-indigo-400 font-medium"
+                  heading.level === 3
+                    ? "pl-3 text-slate-500 hover:text-slate-300"
+                    : "text-slate-400 hover:text-indigo-400 font-medium"
                 }`}
               >
-                {h.text}
+                {heading.text}
               </a>
             ))}
           </nav>

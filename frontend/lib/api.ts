@@ -1,11 +1,41 @@
 /**
- * Enterprise typed API client for AI Research & Visual Blog Studio.
- * Uses native fetch with credentials: 'include' for HttpOnly cookies.
+ * Typed API client for the AI Research & Visual Blog Studio.
+ *
+ * The frontend is built as a static export (`output: "export"`) and, in
+ * production, served by the FastAPI backend from the same origin, so relative
+ * `/api/v1/...` URLs are correct there.
+ *
+ * During `next dev` the UI runs on :3000 while FastAPI runs on :8000, so a
+ * relative URL would 404. Set `NEXT_PUBLIC_API_BASE=http://localhost:8000`
+ * before `npm run dev` (see frontend/README.md). The value is inlined at build
+ * time, so production builds should leave it unset to keep same-origin paths.
+ *
+ * Note: Next.js rewrites are not available with `output: "export"`, so this
+ * env-var indirection is the supported dev proxy mechanism.
  */
+
+const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
+export const API_BASE = RAW_API_BASE.replace(/\/+$/, "");
+
+/** Resolve an API path against the configured base (empty string = same origin). */
+export function apiUrl(path: string): string {
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  return `${API_BASE}${normalized}`;
+}
+
+const DEFAULT_TIMEOUT_MS = 30_000;
 
 export interface User {
   id: number;
   email: string;
+}
+
+export interface AuthResult {
+  success: boolean;
+  message: string;
+  user?: User;
+  token?: string;
+  dev_code?: string;
 }
 
 export interface ArticleSummary {
@@ -22,6 +52,8 @@ export interface ArticleDetail extends ArticleSummary {
   target_length?: string;
   generation_time_sec?: number;
   tokens_used?: number;
+  updated_at?: string;
+  user_id?: number;
 }
 
 export interface RunResponse {
@@ -30,9 +62,11 @@ export interface RunResponse {
   topic: string;
 }
 
+export type RunState = "pending" | "running" | "completed" | "failed" | "cancelled";
+
 export interface RunStatus {
   run_id: string;
-  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  status: RunState;
   topic: string;
   result_article_id?: number | null;
   error_message?: string | null;
@@ -46,64 +80,162 @@ export interface RevisionSummary {
   revision_num: number;
   summary: string;
   created_at: string;
-  author?: string;
 }
 
+export interface DiffStats {
+  additions: number;
+  deletions: number;
+  total_changes: number;
+}
+
+/**
+ * Mirrors `DiffResponse` from `backend/routes/revisions.py`.
+ * `diff_html` is server-generated, HTML-escaped markup; the client never
+ * injects it as raw HTML (see components/diff-viewer.tsx).
+ */
 export interface DiffResult {
   article_id?: number;
   from_revision: number;
   to_revision: number;
-  diff_patch: string;
-  diff_html?: string;
-  stats?: {
-    additions: number;
-    deletions: number;
-    modifications: number;
-  };
+  diff_html: string;
+  stats: DiffStats;
 }
 
-async function fetchJson<T>(url: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(url, {
-    ...options,
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-  });
+export interface CopilotEditResult {
+  success: boolean;
+  new_revision_num: number;
+  content: string;
+}
 
-  if (!res.ok) {
-    let errMessage = `HTTP ${res.status}: ${res.statusText}`;
-    try {
-      const body = await res.json();
-      if (body.detail) errMessage = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
-      else if (body.error?.message) errMessage = body.error.message;
-    } catch {
-      // ignore
-    }
-    throw new Error(errMessage);
+export interface CacheMetrics {
+  total_hits?: number;
+  l1_hits?: number;
+  l2_hits?: number;
+  [key: string]: unknown;
+}
+
+export interface TelemetryStats {
+  studio: Record<string, unknown>;
+  cache: {
+    metrics: CacheMetrics;
+    db_stats: Record<string, unknown>;
+  };
+  database: {
+    backend: string;
+    is_live: boolean;
+    status_message: string;
+  };
+  recent_runs: Array<Record<string, unknown>>;
+}
+
+export interface UserKeysInfo {
+  has_gemini: boolean;
+  has_openrouter: boolean;
+  gemini_masked?: string | null;
+  openrouter_masked?: string | null;
+  server_has_gemini: boolean;
+  server_has_openrouter: boolean;
+}
+
+export interface UserKeysUpdate {
+  gemini_api_key?: string;
+  openrouter_api_key?: string;
+}
+
+interface RawDiffResponse {
+  old_revision_num: number;
+  new_revision_num: number;
+  diff_html: string;
+  stats?: Partial<DiffStats>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Human-readable message from a FastAPI/standard error payload. */
+export function extractApiErrorMessage(payload: unknown, fallback: string): string {
+  if (!isRecord(payload)) return fallback;
+
+  const detail = payload.detail;
+  if (typeof detail === "string") return detail;
+  if (detail !== undefined) return JSON.stringify(detail);
+
+  const error = payload.error;
+  if (isRecord(error) && typeof error.message === "string") return error.message;
+
+  return fallback;
+}
+
+/** Human-readable message from an unknown thrown value. */
+export function errorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string" && error) return error;
+  return fallback;
+}
+
+async function fetchJson<T>(path: string, options: RequestInit = {}, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<T> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  const callerSignal = options.signal;
+  const onCallerAbort = () => controller.abort();
+  if (callerSignal) {
+    if (callerSignal.aborted) controller.abort();
+    else callerSignal.addEventListener("abort", onCallerAbort);
   }
 
-  return res.json() as Promise<T>;
+  try {
+    const res = await fetch(apiUrl(path), {
+      ...options,
+      credentials: "include",
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers ?? {}),
+      },
+    });
+
+    if (!res.ok) {
+      let message = `HTTP ${res.status}: ${res.statusText}`;
+      try {
+        const body: unknown = await res.json();
+        message = extractApiErrorMessage(body, message);
+      } catch {
+        // Non-JSON error body; keep the status line.
+      }
+      throw new Error(message);
+    }
+
+    return (await res.json()) as T;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s. The backend may be unreachable.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+    callerSignal?.removeEventListener("abort", onCallerAbort);
+  }
 }
 
 export const api = {
   // Auth
-  async loginWithPassword(email: string, password: string, otpCode?: string): Promise<{ success: boolean; message: string; user?: User; token?: string }> {
+  async loginWithPassword(email: string, password: string, otpCode?: string): Promise<AuthResult> {
     return fetchJson("/api/v1/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password, otp_code: otpCode || null }),
     });
   },
 
-  async requestOtp(email: string): Promise<{ success: boolean; message: string; dev_code?: string }> {
+  async requestOtp(email: string): Promise<AuthResult> {
     return fetchJson("/api/v1/auth/otp/request", {
       method: "POST",
       body: JSON.stringify({ email }),
     });
   },
 
-  async verifyOtp(email: string, code: string): Promise<{ success: boolean; message: string; user?: User; token?: string }> {
+  async verifyOtp(email: string, code: string): Promise<AuthResult> {
     return fetchJson("/api/v1/auth/otp/verify", {
       method: "POST",
       body: JSON.stringify({ email, code }),
@@ -162,15 +294,25 @@ export const api = {
     return fetchJson(`/api/v1/articles/${articleId}/revisions`);
   },
 
+  /**
+   * Backend returns `{ old_revision_num, new_revision_num, diff_html, stats }`.
+   * `diff_html` is escaped server-generated markup rendered through the safe
+   * allowlist renderer in components/diff-viewer.tsx (never raw innerHTML).
+   */
   async getDiff(articleId: number, fromRev: number, toRev: number): Promise<DiffResult> {
-    const res = await fetchJson<any>(`/api/v1/articles/${articleId}/revisions/diff/${fromRev}/${toRev}`);
+    const raw = await fetchJson<RawDiffResponse>(`/api/v1/articles/${articleId}/revisions/diff/${fromRev}/${toRev}`);
+    const from = raw.old_revision_num ?? fromRev;
+    const to = raw.new_revision_num ?? toRev;
     return {
       article_id: articleId,
-      from_revision: res.old_revision_num ?? fromRev,
-      to_revision: res.new_revision_num ?? toRev,
-      diff_patch: res.diff_html || "",
-      diff_html: res.diff_html,
-      stats: res.stats,
+      from_revision: from,
+      to_revision: to,
+      diff_html: raw.diff_html ?? "",
+      stats: {
+        additions: raw.stats?.additions ?? 0,
+        deletions: raw.stats?.deletions ?? 0,
+        total_changes: raw.stats?.total_changes ?? 0,
+      },
     };
   },
 
@@ -184,22 +326,40 @@ export const api = {
     });
   },
 
+  /**
+   * Backend contract: POST /api/v1/articles/{article_id}/edit
+   * Request: { "instruction": string }
+   * Response: { "success": boolean, "new_revision_num": number, "content": string }
+   */
   async applyCopilotEdit(params: {
     article_id: number;
     instruction: string;
-  }): Promise<{ success: boolean; new_revision_num: number; content: string }> {
+  }): Promise<CopilotEditResult> {
     return fetchJson(`/api/v1/articles/${params.article_id}/edit`, {
       method: "POST",
-      body: JSON.stringify(params),
-    });
+      body: JSON.stringify({ instruction: params.instruction }),
+      // AI edits can take longer than plain CRUD calls.
+    }, 120_000);
   },
 
   // Telemetry
-  async getTelemetry(): Promise<any> {
-    return fetchJson("/api/v1/telemetry/latest");
+  async getTelemetryStats(): Promise<TelemetryStats> {
+    return fetchJson("/api/v1/telemetry/stats");
   },
 
-  async getTelemetryStats(): Promise<any> {
-    return this.getTelemetry();
+  async getTelemetry(): Promise<TelemetryStats> {
+    return this.getTelemetryStats();
+  },
+
+  // API Keys Management
+  async getUserKeys(): Promise<UserKeysInfo> {
+    return fetchJson("/api/v1/auth/keys");
+  },
+
+  async saveUserKeys(data: UserKeysUpdate): Promise<{ status: string; message: string }> {
+    return fetchJson("/api/v1/auth/keys", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   },
 };

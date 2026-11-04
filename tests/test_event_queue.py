@@ -117,8 +117,8 @@ def test_render_stepper_html():
 
     assert "stepper-container" in html_out
     assert "Senior Researcher" in html_out
-    assert "Systems Analyst" in html_out
-    assert "Lead Author" in html_out
+    assert "Content Analyst" in html_out
+    assert "Blog Post Writer" in html_out
     assert "Quality Reviewer" in html_out
     assert "stage-running" in html_out
     assert "prefers-reduced-motion" in html_out

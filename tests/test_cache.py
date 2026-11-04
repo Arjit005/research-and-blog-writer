@@ -41,16 +41,97 @@ def setup_clean_db():
 # 1. URL Normalization
 # ---------------------------------------------------------------------------
 def test_url_normalization():
-    """Verify tracking parameters and fragments are stripped while valid query params remain."""
-    raw = "HTTPS://Example.COM:443/api/v1/resource/?utm_source=twitter&valid=true&ref=rss#fragment"
+    """Verify only known tracking params are stripped while meaningful params/fragments remain."""
+    raw = "HTTPS://Example.COM:443/api/v1/resource/?utm_source=twitter&valid=true#section-2"
     clean = normalize_url(raw)
-    assert clean == "https://example.com/api/v1/resource?valid=true"
+    # Tracking params stripped, fragment and real query params preserved.
+    assert clean == "https://example.com/api/v1/resource?valid=true#section-2"
+
+    # Generic, potentially semantic params must NOT be collapsed anymore.
+    assert normalize_url("https://example.com/page?ref=nav") == "https://example.com/page?ref=nav"
+    assert normalize_url("https://example.com/page?source=feed") == "https://example.com/page?source=feed"
+    assert normalize_url("https://example.com/page?utm_source=rss&b=2") == "https://example.com/page?b=2"
 
     # Default http port 80 stripped
     assert normalize_url("http://example.com:80/path/") == "http://example.com/path"
 
     # Trailing slash stripped on non-root path
     assert normalize_url("https://example.com/path/") == "https://example.com/path"
+
+
+def test_cache_key_encoding_is_collision_resistant():
+    """Length-prefixed component encoding must not alias distinct component tuples."""
+    assert make_cache_key("ns", "a||b") != make_cache_key("ns", "a", "b")
+    assert make_cache_key("ns", "a", "b") != make_cache_key("ns", "ab")
+    assert make_cache_key("ns", "1", "23") != make_cache_key("ns", "12", "3")
+    assert make_cache_key("ns", "x") == make_cache_key("ns", "x")
+
+
+def test_failure_cache_is_bounded():
+    """Negative caching must not grow without bound across high-cardinality keys."""
+    mgr = HybridCacheManager(max_failures=5)
+
+    def always_fails():
+        raise RuntimeError("upstream down")
+
+    for index in range(12):
+        with pytest.raises(RuntimeError):
+            mgr.fetch_or_compute(
+                f"fail-key-{index}", "resilience", always_fails, ttl_seconds=60,
+                allow_stale_on_error=False,
+            )
+    assert len(mgr._failure_cache) <= 5
+
+
+def test_stampede_locks_are_released_when_fetch_raises():
+    """Exception paths must not leak per-key anti-stampede lock entries."""
+    mgr = HybridCacheManager()
+
+    def boom():
+        raise ValueError("compute failed")
+
+    for index in range(5):
+        with pytest.raises(ValueError):
+            mgr.fetch_or_compute(
+                f"raise-key-{index}", "resilience", boom, ttl_seconds=60,
+                allow_stale_on_error=False,
+            )
+    assert mgr._key_locks == {}
+
+
+def test_get_and_get_metrics_do_not_deadlock_concurrently():
+    """get()/get_metrics() must use one lock order (previously ABBA-deadlocked)."""
+    mgr = HybridCacheManager.get_instance()
+    mgr.set(make_cache_key("lock_order", "entry"), "lock_order", "payload", ttl_seconds=60)
+    key = make_cache_key("lock_order", "entry")
+    errors = []
+
+    def read_loop():
+        try:
+            for _ in range(200):
+                mgr.get(key, namespace="lock_order")
+        except BaseException as exc:  # pragma: no cover
+            errors.append(exc)
+
+    def metrics_loop():
+        try:
+            for _ in range(200):
+                mgr.get_metrics()
+        except BaseException as exc:  # pragma: no cover
+            errors.append(exc)
+
+    readers = [threading.Thread(target=read_loop), threading.Thread(target=read_loop)]
+    metrics = [threading.Thread(target=metrics_loop), threading.Thread(target=metrics_loop)]
+    for thread in readers + metrics:
+        thread.start()
+    for thread in readers + metrics:
+        thread.join(timeout=15)
+        assert not thread.is_alive(), "get()/get_metrics() deadlocked"
+
+    assert not errors
+    metrics_snapshot = mgr.get_metrics()
+    assert metrics_snapshot["total_requests"] >= metrics_snapshot["total_hits"]
+
 
 
 # ---------------------------------------------------------------------------

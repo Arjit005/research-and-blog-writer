@@ -2,10 +2,67 @@ services:
   - type: web
     name: research-and-blog-studio
     runtime: python
-    buildCommand: "pip install -r requirements.txt && (cd frontend && npm install && npm run build)"
-    startCommand: "uvicorn backend.main:app --host 0.0.0.0 --port $PORT"
+    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt && cd frontend && npm ci && npm run build"
+    startCommand: "python -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips '*'"
+    healthCheckPath: /health
+    autoDeploy: true
     envVars:
+      # --- Runtime versions ---
       - key: PYTHON_VERSION
-        value: 3.11.9
+        value: 3.13.9
+      - key: NODE_VERSION
+        value: "22"
+
+      # --- Production posture ---
+      # backend/routes/auth.py treats ENVIRONMENT=production (or RENDER) as secure-cookie
+      # mode: Secure HttpOnly cookies with the __Host- prefix.
+      - key: ENVIRONMENT
+        value: production
       - key: AUTH_DEV_MODE
         value: "false"
+
+      # --- Authentication secrets (set in the Render dashboard) ---
+      - key: OTP_PEPPER
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+
+      # --- LLM providers ---
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+
+      # --- TiDB Cloud Serverless (optional; falls back to SQLite) ---
+      - key: TIDB_HOST
+        sync: false
+      - key: TIDB_PORT
+        value: "4000"
+      - key: TIDB_USER
+        sync: false
+      - key: TIDB_PASSWORD
+        sync: false
+      - key: TIDB_DATABASE
+        sync: false
+
+      # --- SMTP delivery (required when AUTH_DEV_MODE=false) ---
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: SMTP_USE_TLS
+        value: "true"
+
+      # --- LangSmith observability (optional) ---
+      - key: LANGSMITH_API_KEY
+        sync: false
+      - key: LANGSMITH_TRACING
+        value: "true"
+      - key: LANGSMITH_PROJECT
+        value: research-and-blog-writer

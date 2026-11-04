@@ -1,70 +1,59 @@
 {
   // =================================================================
-  // Research & Blog Writer Crew — JSON-first configuration
+  // Research & Blog Writer Crew — JSON-FIRST CONFIG (LEGACY)
   //
-  // This file defines the complete crew: which agents run, what tasks
-  // they execute, and in what order.  crewAI reads this file when you
-  // run `crewai run`.
+  // STATUS: LEGACY / NOT THE SOURCE OF TRUTH.
+  // The supported, executable definition lives in crew.py
+  // (ResearchAndBlogWriter).  This JSONC mirror is kept only for
+  // reference/inspection and is not guaranteed to be loadable by
+  // `crewai run` (custom Python tools cannot be referenced from JSON,
+  // and the coded crew uses the multi-model FallbackLLM).
   //
   // Pipeline:  Research → Analyse → Write → Quality Review
   // =================================================================
 
-  // Display name for this crew (shown in logs and the crewAI dashboard)
+  // Display name for this crew (shown in logs)
   "name": "Research_and_Blog_writer",
 
   // ---------------------------------------------------------------
-  // AGENTS — each name must match a file in agents/<name>.jsonc
+  // AGENTS — each name matches a file in agents/<name>.jsonc
   // ---------------------------------------------------------------
   "agents": ["research", "content_analyst", "report_writer", "quality_reviewer"],
 
   // ---------------------------------------------------------------
   // TASKS — executed in order (sequential process)
-  // Each task's output is passed as context to the next task.
   // ---------------------------------------------------------------
   "tasks": [
     {
       // --- Task 1: Research the topic ---
       "name": "research_the_given_topic_task",
-
-      // {topic} is a runtime placeholder — crewai run prompts for it
-      "description": "Research the topic '{topic}' thoroughly using reliable online sources. Find relevant, accurate, and up-to-date information. Focus on collecting key facts, statistics, expert opinions, and useful source URLs that can be passed to the next agent for analysis.",
-
-      "expected_output": "A structured research report containing key findings, important facts, relevant statistics, source URLs, and a summary of the most important discoveries. Organised clearly for easy analysis.",
-
-      // Which agent handles this task (must be in the agents list above)
+      // {topic} is a runtime placeholder
+      "description": "Conduct deep, exhaustive technical research on '{topic}'. Gather minute technical details including architectural mechanisms, internal workflows, quantitative benchmarks (latency, memory, throughput), real-world production trade-offs, edge cases, and authoritative reference links to official documentation and research papers. Only list URLs actually retrieved through the search/scrape tools.",
+      "expected_output": "An exhaustive technical dossier with verified technical facts, low-level specifications, quantitative benchmarks, and a structured Entity & Verified Source Registry with full URLs.",
       "agent": "research"
     },
 
     {
       // --- Task 2: Analyse the research ---
       "name": "analyze_the_research_provided_task",
-
-      "description": "Analyze the research provided by the Researcher on '{topic}'. Identify the most important findings, verify critical information, remove irrelevant or duplicate information, and organise the findings into clear thematic sections for the blog post.",
-
-      "expected_output": "A clear and organised analysis containing the most important verified findings grouped by theme, key insights, relevant evidence, source references, and any inconsistencies or gaps that should be noted.",
-
+      "description": "Synthesize and architect the technical findings on '{topic}'. Organize insights into logical architectural layers. Design at least 1-2 native Mermaid diagrams (flowcharts or sequence diagrams) demonstrating dataflow or system topology. Formulate comparative matrix tables with quantitative criteria, and plan a short explanatory note for each diagram. Preserve all citations and metrics from the Entity & Verified Source Registry.",
+      "expected_output": "A comprehensive synthesis blueprint with thematic sections, complete Mermaid diagram definitions ready for insertion, comparative evaluation tables, and curated citations.",
       "agent": "content_analyst"
     },
 
     {
       // --- Task 3: Write the blog post ---
       "name": "create_a_wellstructured_blog_post_task",
-
-      "description": "Create a well-structured, engaging blog post based on the analysis of '{topic}'. Use an attention-grabbing introduction, clear section headings, concise explanations with supporting evidence, bullet points for lists, and a compelling conclusion. Do not add unsupported information.",
-
-      "expected_output": "A polished, accurate, and engaging blog post (1500-2500 words) in Markdown format with a compelling title, clear sections, proper headings, and source references.",
-
+      "description": "Write an authoritative, publication-ready deep-dive technical blog post (2,000 - 3,500 words) on '{topic}' using the analysis and diagram blueprint. Include an H1 title, an Executive Summary callout, deep-dive H2/H3 technical sections, at least 1-2 native Mermaid code blocks, a short explanatory note for each diagram (no external images), Markdown comparison tables, and a dedicated References & Verified Sources section. Ground all claims in the Entity & Verified Source Registry; never invent image URLs.",
+      "expected_output": "A polished, exhaustive technical blog post in Markdown format (2,000 - 3,500 words) with native Mermaid diagrams, explanatory notes, comparative tables, and verified-source references.",
       "agent": "report_writer"
     },
 
     {
       // --- Task 4: Quality review ---
       "name": "review_the_final_report_task",
-
-      "description": "Review the blog post about '{topic}' for factual accuracy, contradictions, missing important information, grammar, clarity, and readability. Verify key claims using reliable sources. Correct any errors without adding unsupported information. Produce the final, publication-ready version.",
-
-      "expected_output": "The final, quality-checked blog post in Markdown format — accurate, well-structured, and ready to publish. All errors corrected and inconsistencies resolved.",
-
+      "description": "Perform an exhaustive technical audit of the blog post on '{topic}'. Verify all technical assertions and quantitative metrics against the Entity & Verified Source Registry. Validate that all Mermaid diagram syntax is 100% valid. Ensure every diagram has a descriptive explanatory note, and check that the References section is properly formatted with live, retrieved links. Produce the finalized, publication-ready version.",
+      "expected_output": "The finalized, publication-ready technical blog post in Markdown format, verified for depth, diagram clarity, Mermaid syntax validity, and citation accuracy.",
       "agent": "quality_reviewer",
 
       // Save the final output to a file
@@ -75,22 +64,12 @@
   // ---------------------------------------------------------------
   // EXECUTION SETTINGS
   // ---------------------------------------------------------------
-
-  // "sequential" — tasks run in order, each receiving prior outputs
-  // "hierarchical" — a manager agent delegates (requires manager_llm)
   "process": "sequential",
-
-  // Show detailed execution progress in the console
-  "verbose": true,
-
-  // Memory disabled — requires an embedder (e.g. OpenAI API key).
-  // Enable with "memory": true once an embedder is configured.
+  "verbose": false,
   "memory": false,
 
   // ---------------------------------------------------------------
   // RUNTIME INPUTS
-  // Placeholders like {topic} in agent/task text are filled from here.
-  // `crewai run` prompts for any placeholders missing from this object.
   // ---------------------------------------------------------------
   "inputs": {}
 }

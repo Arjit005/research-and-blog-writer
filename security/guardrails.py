@@ -86,8 +86,14 @@ API_KEY_PATTERNS = [
     r"sk-[a-zA-Z0-9_\-]{20,}",                  # Generic OpenAI/Anthropic/OpenRouter key
     r"sk-or-v1-[a-zA-Z0-9]{32,}",              # OpenRouter key
     r"AIza[0-9A-Za-z-_]{35}",                   # Google API Key
-    r"[0-9a-fA-F]{40}",                         # 40-char hex (e.g. GitHub/Serper keys)
-    r"ghp_[a-zA-Z0-9]{36}",                     # GitHub personal access token
+    r"AKIA[0-9A-Z]{16}",                        # AWS access key ID
+    r"ASIA[0-9A-Z]{16}",                        # AWS temporary access key ID
+    r"gh[pousr]_[a-zA-Z0-9]{36,}",              # GitHub classic tokens (ghp_/gho_/ghu_/ghs_/ghr_)
+    r"github_pat_[a-zA-Z0-9_]{22,}",            # GitHub fine-grained PAT
+    r"xox[baprs]-[a-zA-Z0-9-]{10,}",            # Slack tokens
+    r"ya29\.[a-zA-Z0-9_\-]{20,}",               # Google OAuth access token
+    r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----",
+    r"\b[0-9a-fA-F]{40}\b",                    # 40-char hex (e.g. legacy GitHub/Serper keys)
 ]
 
 EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,7}\b")
@@ -114,13 +120,18 @@ def validate_user_input(text: str, max_chars: int = 2000) -> Tuple[bool, str]:
     if len(cleaned) > max_chars:
         return False, f"Input exceeds maximum allowed length of {max_chars} characters."
 
-    # Check for direct prompt injection signatures
-    match = COMPILED_INJECTION_REGEX.search(cleaned)
+    # Check for direct prompt injection signatures on normalized text so that
+    # zero-width / homoglyph whitespace obfuscation ("ig\u200Bnore ...") cannot
+    # slip past the regex. Return the normalized text when it is safe.
+    normalized = normalize_text_for_security(cleaned)
+    normalized = re.sub(r"[\x00-\x1f\x7f]", "", normalized)
+
+    match = COMPILED_INJECTION_REGEX.search(normalized)
     if match:
         violation = match.group(0)
         return False, f"Security Warning: Potential prompt injection pattern detected ('{violation}'). Request rejected."
 
-    return True, cleaned
+    return True, normalized
 
 
 def sanitize_scraped_content(raw_text: str, max_chars: int = 15000) -> str:

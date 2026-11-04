@@ -29,6 +29,20 @@ class UserResponse(BaseModel):
     email: str
 
 
+class UserKeysResponse(BaseModel):
+    has_gemini: bool
+    has_openrouter: bool
+    gemini_masked: Optional[str] = None
+    openrouter_masked: Optional[str] = None
+    server_has_gemini: bool = False
+    server_has_openrouter: bool = False
+
+
+class UserKeysUpdateRequest(BaseModel):
+    gemini_api_key: Optional[str] = Field(None, max_length=256)
+    openrouter_api_key: Optional[str] = Field(None, max_length=256)
+
+
 class AuthResponse(BaseModel):
     success: bool
     message: str
@@ -77,6 +91,25 @@ class ArticleCreateRequest(BaseModel):
     tone: Optional[str] = "Professional & Authoritative"
     audience: Optional[str] = "Software Engineers & Developers"
     target_length: Optional[str] = "Standard Blog (1,500 - 2,000 words)"
+
+
+class CopilotEditRequest(BaseModel):
+    """Instruction for the AI Copilot revision endpoint."""
+
+    instruction: str = Field(
+        ...,
+        min_length=3,
+        max_length=2000,
+        description="Natural-language edit instruction for the AI Copilot",
+    )
+
+
+class CopilotEditResponse(BaseModel):
+    """Result of an AI Copilot article edit/revision."""
+
+    success: bool
+    new_revision_num: int
+    content: str
 
 
 # ---------------------------------------------------------------------------

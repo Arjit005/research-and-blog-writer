@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Search, PenTool, GitFork, CheckCircle, Loader2, XCircle, Clock, Zap, ExternalLink } from "lucide-react";
+import { Search, PenTool, GitFork, CheckCircle, Loader2, XCircle, Clock, ExternalLink } from "lucide-react";
 
 interface LiveStepperProps {
   runId: string;
@@ -46,13 +46,8 @@ export function LiveStepper({ topic, onCancel, logs, stage, traceUrl }: LiveStep
 
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800/80 rounded-lg text-xs font-mono text-slate-300">
-            <Clock className="w-3.5 h-3.5 text-slate-400" />
+            <Clock className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
             <span>{elapsed}s elapsed</span>
-          </div>
-
-          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800/80 rounded-lg text-xs font-mono text-slate-300">
-            <Zap className="w-3.5 h-3.5 text-amber-400" />
-            <span>~{Math.round(elapsed * 45)} tokens</span>
           </div>
 
           {traceUrl && (
@@ -89,6 +84,7 @@ export function LiveStepper({ topic, onCancel, logs, stage, traceUrl }: LiveStep
           return (
             <div
               key={s.id}
+              aria-current={isCurrent ? "step" : undefined}
               className={`p-4 rounded-xl border transition-all ${
                 isCurrent
                   ? "bg-indigo-950/40 border-indigo-500/50 shadow-lg shadow-indigo-500/10 ring-1 ring-indigo-500/30"
@@ -127,10 +123,18 @@ export function LiveStepper({ topic, onCancel, logs, stage, traceUrl }: LiveStep
           <span>Agent Activity Ledger</span>
           <span className="text-[10px] text-slate-500">{logs.length} events logged</span>
         </div>
-        <div className="space-y-1.5 max-h-36 overflow-y-auto pr-2">
+        <div
+          role="log"
+          aria-live="polite"
+          aria-relevant="additions text"
+          aria-label="Agent activity ledger"
+          className="space-y-1.5 max-h-36 overflow-y-auto pr-2"
+        >
           {logs.map((log, idx) => (
             <div key={idx} className="flex items-start gap-2 text-slate-300">
-              <span className="text-slate-500 select-none">&gt;</span>
+              <span className="text-slate-500 select-none" aria-hidden="true">
+                &gt;
+              </span>
               <span className="text-indigo-400 uppercase text-[10px] tracking-wider shrink-0 mt-0.5">
                 [{log.type}]
               </span>
@@ -138,7 +142,7 @@ export function LiveStepper({ topic, onCancel, logs, stage, traceUrl }: LiveStep
             </div>
           ))}
           {logs.length === 0 && (
-            <div className="text-slate-500 italic">Squad agents initializing...</div>
+            <div className="text-slate-500 italic">Squad agents initializing…</div>
           )}
         </div>
       </div>

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import html
+import json
 import uuid
 from typing import List, Tuple, Optional
 import streamlit as st
@@ -82,9 +83,21 @@ def estimate_mermaid_height(diagram_code: str, min_height: int = 320, max_height
 
 def generate_mermaid_html(diagram_code: str, diagram_id: str) -> str:
     """Generate self-contained HTML running Mermaid 10.x with strict security and error boundaries."""
-    # Escape diagram text to prevent premature tag closing or script injection
+    # Escape diagram text for HTML contexts (visible fallback <pre><code> block).
     escaped_code = html.escape(diagram_code)
-    
+
+    # JSON-encode the diagram source for the JS context. This defeats template
+    # literal injection (backticks / `${...}`) and, by escaping `<`, `>` and `&`,
+    # prevents `</script>` from terminating the inline module early.
+    diagram_js_literal = (
+        json.dumps(diagram_code)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -202,7 +215,7 @@ def generate_mermaid_html(diagram_code: str, diagram_id: str) -> str:
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
     }});
 
-    const diagramText = `{escaped_code}`.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+    const diagramText = {diagram_js_literal};
     const container = document.getElementById('diagram-target');
     const errorBox = document.getElementById('error-target');
     const toolbar = document.getElementById('toolbar-target');
@@ -281,11 +294,13 @@ def render_article_markdown(content: str) -> None:
 
     segments = split_markdown_and_mermaid(content)
     if not segments:
-        st.markdown(content, unsafe_allow_html=True)
+        # LLM-generated prose is untrusted: render as plain markdown, never raw HTML.
+        st.markdown(content)
         return
 
     for kind, text in segments:
         if kind == "prose":
-            st.markdown(text, unsafe_allow_html=True)
+            # Scraped/LLM prose must not be allowed to inject HTML/JS.
+            st.markdown(text)
         elif kind == "diagram":
             render_mermaid_diagram(text)

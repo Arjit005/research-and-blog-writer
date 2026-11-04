@@ -19,10 +19,19 @@ from auth.config import load_auth_config
 from auth.otp import normalize_email, mask_email, issue_otp_code, verify_otp_code
 from auth.email_sender import get_email_sender
 from auth.sessions import create_user_session, validate_session_token, revoke_session, revoke_all_user_sessions
-from auth.rate_limit import check_rate_limits
+from auth.rate_limit import (
+    check_rate_limits,
+    is_password_login_throttled,
+    record_password_failure,
+    PASSWORD_ATTEMPT_THROTTLE_MESSAGE,
+)
 import database as db
 
 GENERIC_DISPATCH_MESSAGE = "If this email can sign in, a verification code has been sent."
+
+GENERIC_INVALID_CREDENTIALS = "Invalid email or password."
+INVALID_VERIFICATION_CODE = "Invalid verification code."
+ACCOUNT_DISABLED_MESSAGE = "This account is currently disabled. Please contact support."
 
 
 def extract_client_ip(headers: Optional[Dict[str, str]] = None) -> Optional[str]:
@@ -171,7 +180,16 @@ def login_or_register_with_password(
     otp_code: Optional[str] = None,
     request_ip: Optional[str] = None,
 ) -> Tuple[bool, str, Optional[str], Optional[Dict[str, Any]]]:
-    """Authenticate or register user using password (with optional OTP 2FA check).
+    """Authenticate or register a user using a password (with optional OTP 2FA).
+
+    Security rules (fail closed):
+    1. Password sign-in only authenticates accounts that already store a password
+       hash; the password is compared in constant time.
+    2. Accounts without a password hash (OTP-only) and unknown emails MUST present
+       a valid OTP code before a password is set or a session is created.
+    3. Unknown emails are never auto-registered without proof of email ownership.
+    4. No code path mints a session without a verified password or a verified OTP.
+    5. Failed attempts are throttled per email and per client IP.
 
     Returns:
         (success_bool, message, raw_session_token, user_dict)
@@ -185,35 +203,66 @@ def login_or_register_with_password(
     if not password or len(password) < 6:
         return False, "Password must be at least 6 characters long.", None, None
 
-    # Optional 2FA OTP code check if provided
-    if otp_code:
-        is_valid, err_msg = verify_otp_code(norm_email, otp_code)
-        if not is_valid:
-            db.save_security_event("AUTH_PASSWORD_OTP_FAILED", f"Email: {masked} | Reason: {err_msg}")
-            return False, f"Invalid passcode: {err_msg}", None, None
+    # 1. Throttle check happens BEFORE any credential verification.
+    if is_password_login_throttled(norm_email, request_ip):
+        db.save_security_event("AUTH_PASSWORD_THROTTLED", f"Email: {masked}")
+        return False, PASSWORD_ATTEMPT_THROTTLE_MESSAGE, None, None
 
     user = db.get_user_by_email(norm_email)
-    if not user:
-        # First-time registration with password!
-        pwd_hash = hash_password(password)
+
+    # 2. Optional OTP proof (also serves as 2FA for password accounts).
+    otp_valid = False
+    if otp_code:
+        otp_valid, otp_err = verify_otp_code(norm_email, otp_code)
+        if not otp_valid:
+            db.save_security_event("AUTH_PASSWORD_OTP_FAILED", f"Email: {masked} | Reason: {otp_err}")
+
+    password_valid = bool(
+        user and user.get("password_hash") and verify_password(password, user["password_hash"])
+    )
+
+    if user is None:
+        # 3a. Unknown email: registration requires a valid OTP proof.
+        if not otp_valid:
+            record_password_failure(norm_email, request_ip)
+            db.save_security_event(
+                "AUTH_LOGIN_FAILED", f"Email: {masked} | Reason: unknown email without OTP proof"
+            )
+            return False, GENERIC_INVALID_CREDENTIALS, None, None
+
         user = db.get_or_create_user(norm_email)
-        db.set_user_password(user["id"], pwd_hash)
-        db.save_security_event("AUTH_REGISTER_SUCCESS", f"Email: {masked} | UserID: {user['id']}")
-    else:
-        # Existing user
         if not user.get("is_active"):
-            return False, "This account is currently disabled. Please contact support.", None, None
+            return False, ACCOUNT_DISABLED_MESSAGE, None, None
+        db.set_user_password(user["id"], hash_password(password))
+        db.save_security_event("AUTH_REGISTER_SUCCESS", f"Email: {masked} | UserID: {user['id']}")
+    elif user.get("password_hash"):
+        # 3b. Existing password account: verify the password, and the OTP if supplied.
+        if not password_valid:
+            record_password_failure(norm_email, request_ip)
+            db.save_security_event("AUTH_PASSWORD_INVALID", f"Email: {masked}")
+            return False, GENERIC_INVALID_CREDENTIALS, None, None
+        if otp_code and not otp_valid:
+            return False, INVALID_VERIFICATION_CODE, None, None
+        if not user.get("is_active"):
+            db.save_security_event("AUTH_ACCOUNT_DISABLED", f"Email: {masked}")
+            return False, ACCOUNT_DISABLED_MESSAGE, None, None
+    else:
+        # 3c. Existing OTP-only account: require OTP proof BEFORE setting a password.
+        if otp_code and not otp_valid:
+            return False, INVALID_VERIFICATION_CODE, None, None
+        if not otp_valid:
+            record_password_failure(norm_email, request_ip)
+            db.save_security_event(
+                "AUTH_LOGIN_FAILED", f"Email: {masked} | Reason: OTP-only account requires OTP proof"
+            )
+            return False, GENERIC_INVALID_CREDENTIALS, None, None
+        if not user.get("is_active"):
+            db.save_security_event("AUTH_ACCOUNT_DISABLED", f"Email: {masked}")
+            return False, ACCOUNT_DISABLED_MESSAGE, None, None
+        db.set_user_password(user["id"], hash_password(password))
+        db.save_security_event("AUTH_PASSWORD_SET", f"Email: {masked} | UserID: {user['id']}")
 
-        if not user.get("password_hash"):
-            # User previously used OTP only; set their initial password now
-            pwd_hash = hash_password(password)
-            db.set_user_password(user["id"], pwd_hash)
-        else:
-            if not verify_password(password, user["password_hash"]):
-                db.save_security_event("AUTH_PASSWORD_INVALID", f"Email: {masked}")
-                return False, "Invalid email or password.", None, None
-
-    # Establish session
+    # 4. Credentials verified (password and/or OTP): establish the session.
     raw_token, _ = create_user_session(user["id"])
     db.save_security_event("AUTH_LOGIN_SUCCESS", f"Email: {masked} | Method: Password")
     return True, "Login successful.", raw_token, user

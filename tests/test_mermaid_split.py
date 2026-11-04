@@ -2,6 +2,8 @@
 
 import pytest
 import html
+import json
+import re
 from ui.mermaid_renderer import (
     split_markdown_and_mermaid,
     estimate_mermaid_height,
@@ -108,3 +110,39 @@ def test_html_escaping_and_script_sanitization():
     assert html.escape("<script>alert('pwned')</script>") in html_output or "&lt;script&gt;" in html_output
     assert "securityLevel: 'strict'" in html_output
     assert "mermaid.render" in html_output
+
+
+def test_template_literal_injection_neutralized():
+    """Backticks / ${...} / </script> in diagram source must not break out of the JS context."""
+    malicious = (
+        'flowchart TD\n'
+        '  A["`${alert(1)}`"] --> B["</script><script>alert(2)</script>"]\n'
+        '  C["${document.cookie}"] --> D'
+    )
+    html_output = generate_mermaid_html(malicious, "inject01")
+
+    # Source is JSON-encoded into a plain double-quoted string literal, never a template literal.
+    assert "const diagramText = " in html_output
+    assert "const diagramText = `" not in html_output
+    match = re.search(r'const diagramText = (".*?");\n', html_output, re.DOTALL)
+    assert match is not None
+    assert json.loads(match.group(1)) == malicious  # exact round-trip, no code execution
+    # Only the single real module-closing </script> tag survives.
+    assert html_output.count("</script>") == 1
+    # The visible fallback is still HTML-escaped.
+    assert "&lt;script&gt;" in html_output
+
+
+def test_mermaid_renderer_prose_not_rendered_as_raw_html(monkeypatch):
+    """LLM/scraped prose must be rendered without unsafe_allow_html."""
+    import ui.mermaid_renderer as renderer
+
+    calls = []
+
+    def fake_markdown(text, *args, **kwargs):
+        calls.append((text, kwargs.get("unsafe_allow_html", False)))
+
+    monkeypatch.setattr(renderer.st, "markdown", fake_markdown)
+    renderer.render_article_markdown("# Title\n\nSome **bold** prose with <script>x</script>.")
+    assert calls
+    assert all(unsafe is False for _, unsafe in calls)

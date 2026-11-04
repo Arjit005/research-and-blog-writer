@@ -1,8 +1,9 @@
 """UI Stepper Component & State Reducer for the 4-Agent Pipeline.
 
-Renders a live 4-stage visual stepper (Researcher -> Analyst -> Author -> Reviewer).
-Includes pure event reduction, duration calculations, and accessible HTML/CSS
-with prefers-reduced-motion support.
+Renders a live 4-stage visual stepper whose stage names mirror the crew roles
+in ``crew.py`` (Senior Researcher -> Content Analyst -> Blog Post Writer ->
+Quality Reviewer). Includes pure event reduction, duration calculations, and
+accessible HTML/CSS with prefers-reduced-motion support.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import time
 import html
 from typing import Dict, Any, List, Optional
 
+# Stage names must stay aligned with the @agent role names in crew.py.
 STAGES = [
     {
         "id": 1,
@@ -20,13 +22,13 @@ STAGES = [
     },
     {
         "id": 2,
-        "name": "Systems Analyst",
+        "name": "Content Analyst",
         "icon": "📊",
         "default_detail": "Designing Mermaid diagrams & matrices",
     },
     {
         "id": 3,
-        "name": "Lead Author",
+        "name": "Blog Post Writer",
         "icon": "✍️",
         "default_detail": "Drafting deep-dive technical narrative",
     },
@@ -120,6 +122,16 @@ def reduce_stepper_event(state: Dict[str, Any], event: Dict[str, Any]) -> Dict[s
         if stage_id in new_state["stages"]:
             new_state["stages"][stage_id]["status"] = "error"
             new_state["stages"][stage_id]["detail"] = new_state["error_message"][:120]
+
+    elif event_type == "cancelled":
+        stage_id = event.get("stage_id", new_state["active_stage"]) or 1
+        message = event.get("message", "Run cancelled by user or timeout.")
+        new_state["has_error"] = True
+        new_state["is_finished"] = True
+        new_state["error_message"] = message
+        if stage_id in new_state["stages"]:
+            new_state["stages"][stage_id]["status"] = "error"
+            new_state["stages"][stage_id]["detail"] = message[:120]
 
     elif event_type == "run_done":
         new_state["is_finished"] = True

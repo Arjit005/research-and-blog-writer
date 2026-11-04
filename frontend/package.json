@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "serve": "npx serve out",
+    "typecheck": "next typegen && tsc --noEmit --incremental false",
     "lint": "eslint"
   },
   "dependencies": {

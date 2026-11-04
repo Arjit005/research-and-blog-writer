@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
-import { api, User } from "@/lib/api";
-import { Mail, Lock, KeyRound, ShieldCheck, AlertCircle, Loader2, Eye, EyeOff } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { api, errorMessage, User } from "@/lib/api";
+import { Mail, Lock, KeyRound, ShieldCheck, AlertCircle, Loader2, Eye, EyeOff, X } from "lucide-react";
 
 interface AuthDialogProps {
   isOpen: boolean;
@@ -10,8 +10,9 @@ interface AuthDialogProps {
   onClose?: () => void;
 }
 
-export function AuthDialog({ isOpen, onSuccess }: AuthDialogProps) {
+export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
   const [authMode, setAuthMode] = useState<"password" | "otp">("password");
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   // Password flow state
   const [passwordEmail, setPasswordEmail] = useState("");
@@ -32,9 +33,59 @@ export function AuthDialog({ isOpen, onSuccess }: AuthDialogProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Dismissible modal: Esc closes, overlay click closes, Tab is trapped inside,
+  // and focus returns to the element that opened the dialog.
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusableSelector =
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+    const focusFirstField = window.setTimeout(() => {
+      const first = dialog.querySelector<HTMLElement>(focusableSelector);
+      first?.focus();
+    }, 0);
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose?.();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const focusables = Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector)).filter(
+        (element) => element.offsetParent !== null
+      );
+      if (focusables.length === 0) return;
+
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.clearTimeout(focusFirstField);
+      document.removeEventListener("keydown", handleKeyDown);
+      previouslyFocused?.focus();
+    };
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
-  // Handler for Password login / register (with optional 2FA OTP)
+  // Handler for password login (accounts with a stored password; optional 2FA OTP)
+  // New emails are NOT auto-registered here: the backend requires a verified OTP first.
   const handlePasswordAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -47,8 +98,8 @@ export function AuthDialog({ isOpen, onSuccess }: AuthDialogProps) {
         const user = await api.getMe();
         onSuccess(user);
       }
-    } catch (err: any) {
-      setError(err.message || "Failed to sign in. Please verify your credentials.");
+    } catch (err) {
+      setError(errorMessage(err, "Failed to sign in. Please verify your credentials."));
     } finally {
       setLoading(false);
     }
@@ -71,8 +122,8 @@ export function AuthDialog({ isOpen, onSuccess }: AuthDialogProps) {
       } else {
         setPasswordOtpSentMsg("Verification code sent to your email!");
       }
-    } catch (err: any) {
-      setError(err.message || "Failed to send verification passcode.");
+    } catch (err) {
+      setError(errorMessage(err, "Failed to send verification passcode."));
     } finally {
       setRequestingPasswordOtp(false);
     }
@@ -90,8 +141,8 @@ export function AuthDialog({ isOpen, onSuccess }: AuthDialogProps) {
         setOtpCode(res.dev_code);
       }
       setOtpStep("code");
-    } catch (err: any) {
-      setError(err.message || "Failed to send code. Please try again.");
+    } catch (err) {
+      setError(errorMessage(err, "Failed to send code. Please try again."));
     } finally {
       setLoading(false);
     }
@@ -110,22 +161,45 @@ export function AuthDialog({ isOpen, onSuccess }: AuthDialogProps) {
         const user = await api.getMe();
         onSuccess(user);
       }
-    } catch (err: any) {
-      setError(err.message || "Invalid verification code.");
+    } catch (err) {
+      setError(errorMessage(err, "Invalid verification code."));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden p-6 text-slate-100">
-        <div className="flex items-center gap-3 mb-5">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose?.();
+      }}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="auth-dialog-title"
+        className="relative w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden p-6 text-slate-100"
+      >
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close sign-in dialog"
+            className="absolute right-3 top-3 p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition"
+          >
+            <X className="w-4 h-4" aria-hidden="true" />
+          </button>
+        )}
+        <div className="flex items-center gap-3 mb-5 pr-8">
           <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl text-indigo-400">
-            <ShieldCheck className="w-6 h-6" />
+            <ShieldCheck className="w-6 h-6" aria-hidden="true" />
           </div>
           <div>
-            <h2 className="text-xl font-bold">Research Studio</h2>
+            <h2 id="auth-dialog-title" className="text-xl font-bold">
+              Research Studio
+            </h2>
             <p className="text-sm text-slate-400">Secure Account Authentication</p>
           </div>
         </div>
@@ -163,8 +237,11 @@ export function AuthDialog({ isOpen, onSuccess }: AuthDialogProps) {
         </div>
 
         {error && (
-          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-xl flex items-center gap-2 text-sm text-red-400">
-            <AlertCircle className="w-4 h-4 shrink-0" />
+          <div
+            role="alert"
+            className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-xl flex items-center gap-2 text-sm text-red-400"
+          >
+            <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
             <span>{error}</span>
           </div>
         )}
@@ -206,9 +283,14 @@ export function AuthDialog({ isOpen, onSuccess }: AuthDialogProps) {
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
                   className="absolute right-3 top-3 text-slate-400 hover:text-slate-200"
                 >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  {showPassword ? (
+                    <EyeOff className="w-4 h-4" aria-hidden="true" />
+                  ) : (
+                    <Eye className="w-4 h-4" aria-hidden="true" />
+                  )}
                 </button>
               </div>
             </div>
@@ -265,7 +347,20 @@ export function AuthDialog({ isOpen, onSuccess }: AuthDialogProps) {
               Sign In with Password
             </button>
             <p className="text-xs text-center text-slate-500">
-              New user? Entering your email and password will register your account automatically.
+              First time here?{" "}
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode("otp");
+                  setOtpStep("email");
+                  setError(null);
+                }}
+                className="text-indigo-400 hover:underline font-medium"
+              >
+                Verify your email with a passcode
+              </button>{" "}
+              — new accounts are created only after OTP verification. Unknown emails cannot sign in with a password
+              alone; add a fresh passcode below to set a password.
             </p>
           </form>
         ) : (

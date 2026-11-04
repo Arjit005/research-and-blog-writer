@@ -26,6 +26,8 @@ def test_tracing_disabled_by_default_without_api_key(monkeypatch):
     assert span is None
     tracer.end_span("stage_0", outputs={"result": "ok"})
     tracer.log_evaluation("flesch_reading_ease", 75.5)
+    tracer.record_model_usage(["model-a", "model-b"])
+    tracer.record_metadata({"fallback_count": 1})
     url = tracer.end_job(outputs={"article_id": 1})
     assert url is None
 
@@ -48,7 +50,8 @@ def test_tracer_with_mocked_run_tree(monkeypatch):
     mock_child = MagicMock()
     mock_tree.create_child.return_value = mock_child
 
-    with patch("langsmith.run_trees.RunTree", return_value=mock_tree):
+    with patch("llmops.tracing.is_tracing_enabled", return_value=True), \
+         patch("langsmith.run_trees.RunTree", return_value=mock_tree):
         tracer = LangSmithJobTracer(
             run_id="run_mock_456",
             topic="Deep Learning Optimization",
@@ -75,6 +78,94 @@ def test_tracer_with_mocked_run_tree(monkeypatch):
         assert url == "https://smith.langchain.com/o/org/projects/p/proj/r/mock-tree-uuid-1"
         mock_tree.end.assert_called_once()
         mock_tree.patch.assert_called_once()
+
+
+def test_model_usage_and_metadata_attached_to_spans_and_root(monkeypatch):
+    """Model usage is recorded as span/root metadata (native-provider-friendly observability)."""
+    monkeypatch.setenv("LANGSMITH_API_KEY", "lsv2_pt_mock_test_key_12345")
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+
+    mock_tree = MagicMock()
+    mock_tree.id = "mock-tree-uuid-2"
+    mock_tree.extra = {"metadata": {}}
+    mock_tree.get_url.return_value = "https://example.invalid/run"
+    mock_child = MagicMock()
+    mock_tree.create_child.return_value = mock_child
+
+    with patch("llmops.tracing.is_tracing_enabled", return_value=True), \
+         patch("langsmith.run_trees.RunTree", return_value=mock_tree):
+        tracer = LangSmithJobTracer(run_id="run_meta", topic="Meta")
+        tracer.record_model_usage("model-a")
+        tracer.record_model_usage(["model-a", "model-b"])
+        tracer.record_metadata({"fallback_count": 2})
+
+        tracer.start_span("stage_0", "Stage", metadata={"agent_role": "Senior Researcher"})
+        create_kwargs = mock_tree.create_child.call_args.kwargs
+        assert create_kwargs["extra"]["metadata"]["agent_role"] == "Senior Researcher"
+
+        tracer.end_span("stage_0", outputs={"ok": True})
+        span_outputs = mock_child.end.call_args.kwargs["outputs"]
+        assert span_outputs["models_used"] == ["model-a", "model-b"]
+
+        tracer.end_job(outputs={"status": "completed"})
+        root_outputs = mock_tree.end.call_args.kwargs["outputs"]
+        assert root_outputs["models_used"] == ["model-a", "model-b"]
+        assert root_outputs["metadata"]["fallback_count"] == 2
+
+
+def test_tracing_masks_error_strings():
+    """Error strings attached to spans/jobs must be PII/secret-masked."""
+    with patch("llmops.tracing.is_tracing_enabled", return_value=True), \
+         patch("langsmith.run_trees.RunTree") as run_tree_cls:
+        mock_tree = MagicMock()
+        mock_tree.id = "id"
+        mock_tree.extra = {"metadata": {}}
+        mock_tree.get_url.return_value = None
+        mock_child = MagicMock()
+        mock_tree.create_child.return_value = mock_child
+        run_tree_cls.return_value = mock_tree
+
+        tracer = LangSmithJobTracer(run_id="run_mask", topic="Mask")
+        tracer.start_span("stage_0", "Stage")
+        tracer.end_span("stage_0", error="failed for alice@enterprise.com key sk-or-v1-abcdef1234567890")
+        span_error = mock_child.end.call_args.kwargs["error"]
+        assert "alice@enterprise.com" not in span_error
+        assert "sk-or-v1-abcdef1234567890" not in span_error
+
+        tracer.end_job(error="contact alice@enterprise.com")
+        root_error = mock_tree.end.call_args.kwargs["error"]
+        assert "alice@enterprise.com" not in root_error
+
+
+def test_export_failure_to_dataset_masks_error_message(monkeypatch):
+    """export_failure_to_dataset must mask the error string before uploading it."""
+    monkeypatch.setenv("LANGSMITH_API_KEY", "lsv2_pt_mock_test_key_12345")
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+
+    created = {}
+
+    class FakeClient:
+        def read_dataset(self, dataset_name):
+            raise RuntimeError("not found")
+
+        def create_dataset(self, dataset_name, description=""):
+            return MagicMock(id="dataset-1")
+
+        def create_example(self, **kwargs):
+            created.update(kwargs)
+
+    with patch("llmops.tracing.is_tracing_enabled", return_value=True), \
+         patch("langsmith.Client", return_value=FakeClient()):
+        ok = export_failure_to_dataset(
+            dataset_name="prod_failures",
+            topic="Failing topic for alice@enterprise.com",
+            error_message="401 Unauthorized for alice@enterprise.com with sk-or-v1-abcdef1234567890",
+        )
+
+    assert ok is True
+    assert "alice@enterprise.com" not in created["outputs"]["error_message"]
+    assert "sk-or-v1-abcdef1234567890" not in created["outputs"]["error_message"]
+    assert "alice@enterprise.com" not in created["inputs"]["topic"]
 
 
 def test_export_failure_to_dataset_disabled_when_no_key(monkeypatch):

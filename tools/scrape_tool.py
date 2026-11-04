@@ -7,6 +7,11 @@ Enforces:
 4. Response streaming with strict 2 MB size cap and timeout limits.
 5. Multi-tier text cleaning: HTML/script stripping, prompt injection scrubbing, PII redaction, and dedup.
 6. 24-hour TTL-enforced database caching of sanitized bulletins only.
+
+The hardened pipeline (:func:`execute_scrape_pipeline`) is the **live** code path
+used by :class:`ScrapeTool._run`; there is no unguarded ``crewai_tools`` scrape
+path left.  Cached payloads are always the sanitized/fenced text and are
+re-sanitized again on read (defense-in-depth against legacy cache entries).
 """
 
 from __future__ import annotations
@@ -22,14 +27,15 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 from bs4 import BeautifulSoup, Comment
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
-from crewai_tools import ScrapeWebsiteTool
 
 from security.guardrails import sanitize_scraped_content, mask_pii_and_secrets, fence_untrusted_content
+from tools.source_registry import register_visited_url
 
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024  # 2 MB limit
 MAX_REDIRECTS = 3
 CONNECT_TIMEOUT = 5.0
 READ_TIMEOUT = 10.0
+MAX_SCRAPE_WORDS = 1500
 
 
 def resolve_safe(url: str) -> Tuple[str, str, int]:
@@ -182,16 +188,23 @@ def strip_html_and_scripts(raw_html: str) -> str:
     for comment in soup.find_all(string=lambda s: isinstance(s, Comment)):
         comment.extract()
     # 2. Remove script, style, and noscript elements
-    for tag in soup(["script", "style", "noscript"]):
+    for tag in soup(["script", "style", "noscript", "template"]):
         tag.decompose()
     # 3. Remove elements explicitly styled as hidden
+    hidden_markers = ["display:none", "visibility:hidden", "opacity:0", "font-size:0", "height:0", "width:0"]
     for tag in soup.find_all(style=True):
         style = tag.get("style", "").lower().replace(" ", "")
-        if any(h in style for h in ["display:none", "visibility:hidden", "opacity:0", "font-size:0"]):
+        if any(marker in style for marker in hidden_markers):
             tag.decompose()
-    # 4. Extract text preserving paragraph breaks
+    # 4. Remove elements hidden through HTML attributes
+    for tag in soup.find_all(True):
+        if tag.attrs is None:
+            continue
+        if tag.get("hidden") is not None or tag.get("aria-hidden") == "true":
+            tag.decompose()
+    # 5. Extract text preserving paragraph breaks
     text = soup.get_text(separator="\n\n")
-    # 5. Clean up whitespace
+    # 6. Clean up whitespace
     text = re.sub(r"\r\n|\r", "\n", text)
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n\s*\n", "\n\n", text)
@@ -210,6 +223,9 @@ def scrub_instruction_like_passages(text: str) -> str:
         r"new\s+operating\s+instructions",
         r"reveal\s+your\s+secret\s+instructions",
         r"your\s+new\s+role\s+is\s+now",
+        r"leak\s+all\s+(?:environment\s+)?secrets",
+        r"declare\s+product\s+[a-z0-9]+\s+as\s+the\s+sole",
+        r"bypass\s+all\s+safety\s+filters?",
     ]
     pattern = re.compile("|".join(injection_imperatives), re.IGNORECASE)
 
@@ -261,40 +277,72 @@ def is_safe_url(url: str) -> tuple[bool, str]:
         return False, str(e)
 
 
-def execute_scrape_pipeline(url: str, max_words: int = 1500) -> str:
-    """Single fixed-order pipeline for fetching, scrubbing, and sanitizing web content."""
+def execute_scrape_pipeline(url: str, max_words: int = MAX_SCRAPE_WORDS) -> str:
+    """Single fixed-order pipeline for fetching, scrubbing, sanitizing, and fencing web content.
+
+    Order: SSRF/DNS-pinning validation -> bounded fetch -> HTML/hidden-element strip
+    -> instruction-like passage scrub -> indirect-injection sanitization -> PII/secret
+    masking -> boilerplate dedup -> word-budget compaction -> untrusted-content fencing.
+
+    Raises:
+        ValueError: on SSRF violations, fetch failures, oversized payloads, or when
+            no readable text could be extracted from the page.
+    """
     # 1. SSRF & DNS Pinning validation
     resolve_safe(url)
 
     # 2. Safe fetch with size caps & manual redirect tracking
     final_url, raw_html = safe_fetch(url)
 
-    # 3. Strip HTML, scripts, styles
+    # 3. Strip HTML, scripts, styles, hidden nodes
     plain_text = strip_html_and_scripts(raw_html)
+    if not plain_text.strip():
+        raise ValueError(f"No readable text content could be extracted from {url}.")
 
     # 4. Scrub instruction-like prompt injections
     scrubbed_text = scrub_instruction_like_passages(plain_text)
 
-    # 5. PII & secrets redaction
-    redacted_text = mask_pii_and_secrets(scrubbed_text)
+    # 5. Remove indirect injection cues ([system note], "note to AI", etc.)
+    sanitized_text = sanitize_scraped_content(scrubbed_text)
 
-    # 6. Deduplicate boilerplate
+    # 6. PII & secrets redaction
+    redacted_text = mask_pii_and_secrets(sanitized_text)
+
+    # 7. Deduplicate boilerplate
     deduped_text = deduplicate_paragraphs(redacted_text)
+    if not deduped_text.strip():
+        raise ValueError(f"No readable text content could be extracted from {url}.")
 
-    # 7. Word budgeting & compaction
-    words = deduped_text.split()
-    if len(words) > max_words:
-        compacted = " ".join(words[:max_words]) + f"\n\n[... truncated to {max_words} words for context optimization ...]"
-    else:
-        compacted = deduped_text
+    # 8. Word budgeting & compaction
+    compacted = compact_scraped_text(deduped_text, max_words=max_words)
 
-    # 8. Data Fencing (Delimited Untrusted Context)
+    # 9. Data Fencing (delimited untrusted context)
     return fence_untrusted_content(compacted, source_id=1, url=final_url)
+
+
+def sanitize_cached_scrape(cached_text: str, url: str = "") -> str:
+    """Re-sanitize an already-cached scrape payload (defense-in-depth on cache reads)."""
+    if not cached_text:
+        return ""
+    text = sanitize_scraped_content(str(cached_text))
+    text = mask_pii_and_secrets(text)
+    if not text.strip():
+        return ""
+    # Legacy/unfenced cache entries get re-fenced; fenced entries are re-sanitized in place.
+    if "<untrusted_source" not in text:
+        return fence_untrusted_content(text, source_id=1, url=url)
+    return text
 
 
 class ScrapeInput(BaseModel):
     """Input schema for ScrapeTool."""
     url: str = Field(description="The full URL of the webpage to scrape")
+
+
+# Defensive schema rebuild: some environments (and the JSON-first ``crewai run``
+# loader) call ``model_rebuild()`` on tool schemas; making it explicit here keeps
+# the tool definitions loadable even when annotations were evaluated lazily.
+ScrapeInput.model_rebuild()
 
 
 class ScrapeTool(BaseTool):
@@ -308,12 +356,15 @@ class ScrapeTool(BaseTool):
     args_schema: Type[BaseModel] = ScrapeInput
 
     def _run(self, url: str = "", **kwargs: Any) -> str:
-        """Fetch and extract text content from a webpage with SSRF and injection guards."""
+        """Fetch, sanitize, fence, and cache a webpage through the hardened pipeline."""
         target_url = url or kwargs.get("website_url", "") or kwargs.get("url", "")
+        if isinstance(target_url, dict):
+            target_url = target_url.get("url", "")
+        target_url = str(target_url or "").strip()
         if not target_url:
             return "Error: No URL provided."
 
-        # Security check
+        # Security check (SSRF / DNS pinning)
         is_safe, error_msg = is_safe_url(target_url)
         if not is_safe:
             try:
@@ -323,28 +374,33 @@ class ScrapeTool(BaseTool):
                 pass
             return f"Security Warning: Blocked potentially unsafe URL. Reason: {error_msg}"
 
-        # 1. Check cache (delegates to HybridCacheManager L1/L2 and research_cache)
+        # 1. Cache read: only sanitized payloads are stored; re-sanitize on read.
         try:
             from database import get_cached_scrape
             cached = get_cached_scrape(target_url)
             if cached:
-                return cached
+                re_sanitized = sanitize_cached_scrape(cached, url=target_url)
+                if re_sanitized:
+                    return re_sanitized
         except Exception:
             pass
 
-        # 2. Fetch via ScrapeWebsiteTool
+        # 2. Live hardened pipeline (bounded fetch -> scrub -> mask -> dedup -> fence)
         try:
-            scraper = ScrapeWebsiteTool(website_url=target_url)
-            content = str(scraper._run(website_url=target_url))
-            if not content.strip():
+            fenced = execute_scrape_pipeline(target_url, max_words=MAX_SCRAPE_WORDS)
+            if not fenced.strip():
                 return f"Notice: No readable text content could be extracted from {target_url}."
-            sanitized = sanitize_scraped_content(content)
-            compacted = compact_scraped_text(sanitized, max_words=1500)
+
+            register_visited_url(target_url, source="scrape")
+
+            # 3. Cache only the sanitized, fenced output.
             try:
                 from database import set_cached_scrape
-                set_cached_scrape(target_url, compacted)
+                set_cached_scrape(target_url, fenced)
             except Exception:
                 pass
-            return compacted
-        except Exception as e:
+            return fenced
+        except ValueError as e:
+            return f"Notice: Failed to fetch webpage content from {target_url} (Error: {e}). Proceed with other available sources."
+        except Exception as e:  # noqa: BLE001 - tools must never crash the agent run
             return f"Notice: Failed to fetch webpage content from {target_url} (Error: {e}). Proceed with other available sources."

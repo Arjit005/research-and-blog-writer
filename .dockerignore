@@ -1,19 +1,48 @@
+# --- Version control / tooling ---
 .git
+.github
 .gitignore
+.vscode
+.idea
+
+# --- Secrets & local environment ---
+.env
+.env.*
+!.env.example
+
+# --- Python ---
 .venv
+venv
 __pycache__
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*.egg-info
 .pytest_cache
+.mypy_cache
+.ruff_cache
 .coverage
 htmlcov/
 *.db
 *.db-wal
 *.db-shm
-.env
-report.md
+research_studio.db*
+
+# --- Frontend build artifacts (biggest offenders: ~600 MB combined) ---
+frontend/node_modules
+frontend/.next
+frontend/out
+
+# --- Legacy / non-runtime files ---
+app.py
+ui/
 tests/
 examples/
-.github/
+docs/
 setup.bat
+report.md
+crew.log
+uv.lock.bak
+
+# --- OS noise ---
+.DS_Store
+Thumbs.db
+Desktop.ini

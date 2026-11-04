@@ -11,17 +11,83 @@ import os
 import re
 import time
 import json
+import decimal
 import sqlite3
 import hashlib
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# Local SQLite database path
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "research_studio.db")
+# Maximum number of automatic retries for optimistic concurrency helpers.
+_MAX_WRITE_RETRIES = 8
+
+# SQLite/TiDB "stuck write" errors that are safe to retry on a fresh attempt.
+_RETRYABLE_WRITE_MARKERS = (
+    "UNIQUE",
+    "DUPLICATE",
+    "INTEGRITY",
+    "PRIMARY KEY",
+    "DATABASE IS LOCKED",
+    "DATABASE LOCKED",
+    "SQLITE_BUSY",
+    "LOCK WAIT TIMEOUT",
+    "DEADLOCK",
+)
+
+_READ_ONLY_SQL_PREFIXES = ("SELECT", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "WITH")
+
+
+class DatabaseConnectionError(RuntimeError):
+    """Raised when the configured TiDB backend cannot be reached.
+
+    Previously a failed TiDB connection silently degraded to a *separate* local
+    SQLite database, which created split-brain data (writes landing in different
+    stores). When TiDB is configured we now fail loudly unless the operator
+    explicitly opts into SQLite fallback via ``ALLOW_SQLITE_FALLBACK=true``.
+    """
+
+
+# Local SQLite database path.
+# Overridable via RESEARCH_STUDIO_DB_PATH so tests and CI can point at an
+# isolated file/memory database instead of mutating the developer's real DB.
+DB_PATH = os.getenv("RESEARCH_STUDIO_DB_PATH") or os.getenv("DATABASE_PATH") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "research_studio.db"
+)
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Read a boolean environment flag (``true/1/yes/on``)."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("true", "1", "yes", "on")
+
+
+def allow_sqlite_fallback() -> bool:
+    """Whether a configured-but-unreachable TiDB may degrade to local SQLite.
+
+    Defaults to False: once TiDB is configured, silently writing to a different
+    SQLite database would split the data across two stores.
+    """
+    return _env_flag("ALLOW_SQLITE_FALLBACK", False)
+
+
+def legacy_unowned_rows_enabled() -> bool:
+    """Whether readers automatically include pre-auth rows (``user_id IS NULL``).
+
+    Defaults to False so legacy rows are never exposed to every tenant. Operators
+    that need a transition window can set ``ALLOW_LEGACY_UNOWNED_ROWS=true`` and
+    then use the explicit, one-shot ``claim_legacy_data()`` helper.
+    """
+    return _env_flag("ALLOW_LEGACY_UNOWNED_ROWS", False)
+
+
+def _legacy_sql(user_column: str = "user_id") -> str:
+    """Return an optional SQL fragment that includes unowned legacy rows."""
+    return f" OR {user_column} IS NULL" if legacy_unowned_rows_enabled() else ""
 
 
 def is_tidb_configured() -> bool:
@@ -151,30 +217,55 @@ def _connect_tidb():
         raise
 
 
+def _connect_tidb_with_retry(attempts: int = 2, delay: float = 0.1) -> Any:
+    """Attempt to acquire a TiDB connection, retrying transient failures once."""
+    last_error: Optional[Exception] = None
+    for attempt in range(max(1, attempts)):
+        try:
+            return _tidb_pool.get_connection()
+        except Exception as exc:  # pragma: no cover - depends on live backend
+            last_error = exc
+            if attempt < attempts - 1:
+                time.sleep(delay * (attempt + 1))
+    raise DatabaseConnectionError(
+        f"TiDB is configured (TIDB_HOST={os.getenv('TIDB_HOST')!r}) but unreachable: {last_error}. "
+        "Refusing to fall back to local SQLite (split-brain). "
+        "Set ALLOW_SQLITE_FALLBACK=true to explicitly opt into SQLite fallback."
+    ) from last_error
+
+
 @contextmanager
 def get_connection():
     """Yield a database connection and a helper execute wrapper.
 
     Uses thread-safe connection pooling for TiDB Cloud to minimize latency.
+    A reachable SQLite fallback is only used when TiDB is *not* configured, or
+    when ``ALLOW_SQLITE_FALLBACK=true`` explicitly opts into degraded mode.
     """
     conn = None
     is_tidb = False
     from_pool = False
 
     if is_tidb_configured():
-        try:
-            conn = _tidb_pool.get_connection()
+        if allow_sqlite_fallback():
+            try:
+                conn = _connect_tidb_with_retry(attempts=2)
+                is_tidb = True
+                from_pool = True
+            except DatabaseConnectionError as exc:
+                logger.warning("%s Falling back to local SQLite (ALLOW_SQLITE_FALLBACK=true).", exc)
+                conn = None
+        else:
+            conn = _connect_tidb_with_retry(attempts=2)
             is_tidb = True
             from_pool = True
-        except Exception as e:
-            logger.warning(f"Failed to connect to TiDB Cloud ({e}). Falling back to local SQLite.")
-            conn = None
 
     if conn is None:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=10.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA busy_timeout=10000")
         is_tidb = False
 
     try:
@@ -196,29 +287,119 @@ def get_connection():
                 pass
 
 
+def _is_connection_error(exc: BaseException) -> bool:
+    """Best-effort detection of a pymysql connection/transport failure."""
+    name = type(exc).__name__.lower()
+    if "operationalerror" in name or "interfaceerror" in name:
+        return True
+    message = str(exc).lower()
+    markers = (
+        "lost connection",
+        "server has gone away",
+        "connection reset",
+        "broken pipe",
+        "can't connect",
+        "connection refused",
+        "(2013",
+        "(2006",
+        "(2003",
+        "(2055",
+    )
+    return any(marker in message for marker in markers)
+
+
+def _is_read_only_sql(sql: str) -> bool:
+    """Whether a statement is safe to replay after a reconnect (no side effects)."""
+    stripped = sql.lstrip()
+    while stripped.startswith("("):
+        stripped = stripped[1:].lstrip()
+    return stripped.upper().startswith(_READ_ONLY_SQL_PREFIXES)
+
+
 def _exec(conn: Any, is_tidb: bool, sql: str, params: Tuple = ()) -> Any:
-    """Execute SQL query handling placeholder differences (? for SQLite, %s for TiDB) with auto-reconnect retry."""
-    if is_tidb:
-        tidb_sql = sql.replace("?", "%s")
-        # Pre-ping reconnection to defeat idle serverless drops
+    """Execute SQL query handling placeholder differences (? for SQLite, %s for TiDB).
+
+    A dropped TiDB connection is retried **once** and only for read-only
+    statements issued before any commit. Non-idempotent writes (INSERT/UPDATE/
+    DELETE/REPLACE) are never replayed blindly: replaying them could duplicate
+    rows or corrupt a transaction that the server may already have applied.
+    """
+    if not is_tidb:
+        return conn.execute(sql, params)
+
+    tidb_sql = sql.replace("?", "%s")
+    cursor = conn.cursor()
+    try:
+        cursor.execute(tidb_sql, params)
+    except Exception as exc:
+        if not (_is_read_only_sql(sql) and _is_connection_error(exc)):
+            raise
+        logger.warning("TiDB connection dropped on read query; reconnecting once: %s", exc)
         try:
             conn.ping(reconnect=True)
-        except Exception:
-            pass
-        cursor = conn.cursor()
-        try:
+            cursor = conn.cursor()
             cursor.execute(tidb_sql, params)
         except Exception:
-            # Reconnect-once retry for idle serverless drops
-            try:
-                conn.ping(reconnect=True)
-                cursor = conn.cursor()
-                cursor.execute(tidb_sql, params)
-            except Exception:
-                raise
-        return cursor
-    else:
-        return conn.execute(sql, params)
+            raise
+    return cursor
+
+
+def _normalize_value(value: Any) -> Any:
+    """Normalize backend-native values to JSON/Pydantic friendly Python types.
+
+    pymysql's ``DictCursor`` returns ``datetime`` objects (and ``Decimal`` for
+    DECIMAL aggregates), which a ``str`` Pydantic field rejects with a 500 —
+    SQLite, by contrast, returns ISO strings. This helper makes every reader
+    return the same dialect-independent representation.
+    """
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(value, decimal.Decimal):
+        if value == value.to_integral_value():
+            return int(value)
+        return float(value)
+    if isinstance(value, (bytes, bytearray)):
+        try:
+            return value.decode("utf-8")
+        except Exception:
+            return bytes(value).decode("utf-8", errors="replace")
+    return value
+
+
+def _row_to_dict(row: Any) -> Dict[str, Any]:
+    """Convert a DB row (dict or sqlite3.Row) to a normalized dict."""
+    if row is None:
+        return {}
+    return {key: _normalize_value(value) for key, value in dict(row).items()}
+
+
+def _rows_to_dicts(rows: Any) -> List[Dict[str, Any]]:
+    """Convert DB rows to normalized dicts."""
+    return [_row_to_dict(row) for row in rows]
+
+
+def _get_value(row: Any, is_tidb: bool, key: str, index: int) -> Any:
+    """Read a column from a TiDB dict row or a SQLite tuple row."""
+    if row is None:
+        return None
+    if is_tidb:
+        try:
+            return row[key]
+        except (KeyError, TypeError):
+            return row[index]
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError):
+        try:
+            return row[index]
+        except Exception:
+            return None
+
+
+def _is_retryable_write_error(exc: BaseException) -> bool:
+    """Whether a write failed for a transient duplicate/lock reason and may retry."""
+    message = f"{type(exc).__name__} {exc}".upper()
+    return any(marker in message for marker in _RETRYABLE_WRITE_MARKERS)
 
 
 def check_tidb_live_status() -> Tuple[bool, str]:
@@ -232,7 +413,7 @@ def check_tidb_live_status() -> Tuple[bool, str]:
     try:
         with get_connection() as (conn, is_tidb):
             if not is_tidb:
-                return False, "Connection to TiDB failed. Falling back to local SQLite."
+                return False, "Connection to TiDB failed. Falling back to local SQLite (ALLOW_SQLITE_FALLBACK=true)."
             cursor = _exec(conn, True, "SELECT 1 AS alive")
             row = cursor.fetchone()
             if row:
@@ -281,6 +462,62 @@ def _ensure_column_exists(conn: Any, is_tidb: bool, table: str, col: str, col_ty
         existing_cols = [row[1] for row in cursor.fetchall()]
         if safe_col not in existing_cols:
             conn.execute(f"ALTER TABLE {safe_table} ADD COLUMN {safe_col} {safe_type}")
+
+
+def _ensure_job_event_unique_index(conn: Any, is_tidb: bool) -> None:
+    """Idempotently enforce UNIQUE(run_id, seq_id) on the job event ledger.
+
+    The original schema only created a *non-unique* index, so the duplicate-key
+    retry in ``append_job_event`` could never fire and concurrent workers could
+    persist duplicate ``seq_id`` values (breaking resumable SSE).
+    """
+    try:
+        if is_tidb:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME
+                FROM information_schema.STATISTICS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'job_events'
+                ORDER BY INDEX_NAME, SEQ_IN_INDEX
+                """
+            )
+            indexes: Dict[str, Dict[str, Any]] = {}
+            for row in cursor.fetchall():
+                name = row["INDEX_NAME"] if isinstance(row, dict) else row[0]
+                non_unique = row["NON_UNIQUE"] if isinstance(row, dict) else row[1]
+                column = row["COLUMN_NAME"] if isinstance(row, dict) else row[3]
+                entry = indexes.setdefault(name, {"non_unique": non_unique, "columns": []})
+                entry["columns"].append(column)
+            if any(e["non_unique"] == 0 and e["columns"] == ["run_id", "seq_id"] for e in indexes.values()):
+                return
+            try:
+                cursor.execute("ALTER TABLE job_events ADD UNIQUE KEY uk_event_run_seq (run_id, seq_id)")
+            except Exception as exc:  # duplicate key name or pre-existing duplicate rows
+                logger.warning("Could not add UNIQUE(run_id, seq_id) to job_events: %s", exc)
+        else:
+            cursor = conn.execute("PRAGMA index_list(job_events)")
+            for idx_row in cursor.fetchall():
+                index_name = idx_row[1]
+                is_unique = bool(idx_row[2])
+                if not is_unique:
+                    continue
+                cols_cursor = conn.execute(f"PRAGMA index_info({index_name})")
+                columns = [r[2] for r in cols_cursor.fetchall()]
+                if columns == ["run_id", "seq_id"]:
+                    return
+            conn.execute("DROP INDEX IF EXISTS idx_event_run_seq")
+            try:
+                conn.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uk_event_run_seq ON job_events(run_id, seq_id)"
+                )
+            except sqlite3.IntegrityError:
+                logger.warning(
+                    "job_events already contains duplicate (run_id, seq_id) rows; "
+                    "cannot create unique index until ledger is de-duplicated."
+                )
+    except Exception as exc:  # pragma: no cover - defensive migration path
+        logger.warning("Job event unique-index migration skipped: %s", exc)
 
 
 def init_db():
@@ -473,7 +710,17 @@ def init_db():
                     event_type  VARCHAR(50) NOT NULL,
                     payload     MEDIUMTEXT NOT NULL,
                     created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_event_run_seq (run_id, seq_id)
+                    UNIQUE KEY uk_event_run_seq (run_id, seq_id)
+                );
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS password_attempts (
+                    id           INT AUTO_INCREMENT PRIMARY KEY,
+                    email        VARCHAR(255) NOT NULL,
+                    ip           VARCHAR(64) NULL,
+                    attempted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_pwd_attempt_email (email, attempted_at),
+                    INDEX idx_pwd_attempt_ip (ip, attempted_at)
                 );
             """)
 
@@ -648,6 +895,13 @@ def init_db():
                     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
                 );
 
+                CREATE TABLE IF NOT EXISTS password_attempts (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email        TEXT NOT NULL,
+                    ip           TEXT NULL,
+                    attempted_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_chat_article ON chat_history(article_id);
                 CREATE INDEX IF NOT EXISTS idx_articles_created ON articles(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_telemetry_created ON telemetry_runs(created_at DESC);
@@ -656,7 +910,8 @@ def init_db():
                 CREATE INDEX IF NOT EXISTS idx_otp_email ON otp_codes(email, created_at);
                 CREATE INDEX IF NOT EXISTS idx_sess_user ON auth_sessions(user_id);
                 CREATE INDEX IF NOT EXISTS idx_job_user ON research_jobs(user_id, status);
-                CREATE INDEX IF NOT EXISTS idx_event_run_seq ON job_events(run_id, seq_id);
+                CREATE INDEX IF NOT EXISTS idx_pwd_attempt_email ON password_attempts(email, attempted_at);
+                CREATE INDEX IF NOT EXISTS idx_pwd_attempt_ip ON password_attempts(ip, attempted_at);
             """)
 
             # Ensure user_id column exists on pre-existing tables if created earlier
@@ -672,6 +927,8 @@ def init_db():
                 CREATE INDEX IF NOT EXISTS idx_telem_user ON telemetry_runs(user_id);
             """)
 
+        _ensure_job_event_unique_index(conn, is_tidb)
+
 
 # ---------------------------------------------------------------------------
 # Auth CRUD (Users, OTP Codes, Auth Sessions, Legacy Claiming)
@@ -684,13 +941,13 @@ def get_or_create_user(email: str) -> Dict[str, Any]:
         cursor = _exec(conn, is_tidb, "SELECT id, email, password_hash, created_at, last_login_at, is_active FROM users WHERE email = ?", (norm_email,))
         row = cursor.fetchone()
         if row:
-            return dict(row)
+            return _row_to_dict(row)
 
         cursor = _exec(conn, is_tidb, "INSERT INTO users (email, is_active) VALUES (?, 1)", (norm_email,))
         user_id = cursor.lastrowid
         cursor = _exec(conn, is_tidb, "SELECT id, email, password_hash, created_at, last_login_at, is_active FROM users WHERE id = ?", (user_id,))
         new_row = cursor.fetchone()
-        return dict(new_row)
+        return _row_to_dict(new_row)
 
 
 def get_user_by_id(user_id: int) -> Optional[Dict[str, Any]]:
@@ -698,7 +955,7 @@ def get_user_by_id(user_id: int) -> Optional[Dict[str, Any]]:
     with get_connection() as (conn, is_tidb):
         cursor = _exec(conn, is_tidb, "SELECT id, email, password_hash, created_at, last_login_at, is_active FROM users WHERE id = ?", (user_id,))
         row = cursor.fetchone()
-        return dict(row) if row else None
+        return _row_to_dict(row) if row else None
 
 
 def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
@@ -707,7 +964,7 @@ def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
     with get_connection() as (conn, is_tidb):
         cursor = _exec(conn, is_tidb, "SELECT id, email, password_hash, created_at, last_login_at, is_active FROM users WHERE email = ?", (norm_email,))
         row = cursor.fetchone()
-        return dict(row) if row else None
+        return _row_to_dict(row) if row else None
 
 
 def set_user_password(user_id: int, password_hash: str) -> None:
@@ -752,7 +1009,7 @@ def get_latest_otp_code(email: str) -> Optional[Dict[str, Any]]:
             (norm_email, now_str),
         )
         row = cursor.fetchone()
-        return dict(row) if row else None
+        return _row_to_dict(row) if row else None
 
 
 def increment_otp_attempts(otp_id: int) -> int:
@@ -829,6 +1086,68 @@ def count_recent_otps_by_ip(ip: str, window_seconds: int = 3600) -> int:
         return (row["cnt"] if is_tidb else row[0]) if row else 0
 
 
+def record_password_attempt(email: str, ip: Optional[str] = None) -> None:
+    """Record a failed password authentication attempt for rate limiting/lockout.
+
+    Callers (auth service) invoke this for rejected logins; ``count_recent_password_attempts``
+    then performs honest, DB-grounded lockout checks that survive restarts and
+    multi-process deployments.
+    """
+    norm_email = (email or "").strip().lower()
+    if not norm_email:
+        return
+    ip_value = (ip or "").strip() or None
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with get_connection() as (conn, is_tidb):
+        _exec(
+            conn,
+            is_tidb,
+            "INSERT INTO password_attempts (email, ip, attempted_at) VALUES (?, ?, ?)",
+            (norm_email, ip_value, now_str),
+        )
+
+
+def count_recent_password_attempts(
+    email: str,
+    ip: Optional[str] = None,
+    window_seconds: int = 900,
+) -> int:
+    """Count failed password attempts within ``window_seconds``.
+
+    When ``ip`` is supplied, attempts are counted per-email *or* per-IP so both
+    credential stuffing from one address and distributed guessing against one
+    account are visible to the caller.
+    """
+    norm_email = (email or "").strip().lower()
+    if not norm_email:
+        return 0
+    try:
+        window = max(0, int(window_seconds))
+    except (TypeError, ValueError):
+        window = 900
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=window)
+    cutoff_str = cutoff.strftime("%Y-%m-%d %H:%M:%S")
+    ip_value = (ip or "").strip() or None
+
+    with get_connection() as (conn, is_tidb):
+        if ip_value:
+            cursor = _exec(
+                conn,
+                is_tidb,
+                "SELECT COUNT(*) AS cnt FROM password_attempts WHERE attempted_at >= ? AND (email = ? OR ip = ?)",
+                (cutoff_str, norm_email, ip_value),
+            )
+        else:
+            cursor = _exec(
+                conn,
+                is_tidb,
+                "SELECT COUNT(*) AS cnt FROM password_attempts WHERE attempted_at >= ? AND email = ?",
+                (cutoff_str, norm_email),
+            )
+        row = cursor.fetchone()
+        return int(_get_value(row, is_tidb, "cnt", 0) or 0)
+
+
 def save_auth_session(user_id: int, token_hash: str, expires_at: datetime) -> int:
     """Store hashed session token with user reference and expiry in UTC."""
     exp_str = expires_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -857,7 +1176,7 @@ def get_auth_session_by_token_hash(token_hash: str) -> Optional[Dict[str, Any]]:
             (token_hash, now_str),
         )
         row = cursor.fetchone()
-        return dict(row) if row else None
+        return _row_to_dict(row) if row else None
 
 
 def update_session_last_seen(session_id: int):
@@ -930,27 +1249,93 @@ def save_article(topic, content, tone=None, audience=None, target_length=None, g
         return cursor.lastrowid
 
 
-def get_articles(limit=50, user_id: Optional[int] = None):
-    """Fetch recent articles ordered by creation date, scoped to user_id if provided."""
+def _clamp_limit(limit: int, default: int = 100, maximum: int = 500) -> int:
+    """Clamp a LIMIT value into a sane, injection-safe integer range."""
+    try:
+        value = int(limit)
+    except (TypeError, ValueError):
+        return default
+    return max(0, min(value, maximum))
+
+
+def _clamp_offset(offset: int) -> int:
+    """Clamp an OFFSET value to a non-negative integer."""
+    try:
+        return max(0, int(offset))
+    except (TypeError, ValueError):
+        return 0
+
+
+def save_article_with_initial_revision(
+    topic,
+    content,
+    tone=None,
+    audience=None,
+    target_length=None,
+    generation_time=0,
+    tokens_used=0,
+    user_id: Optional[int] = None,
+    summary: str = "Initial AI Squad Generation",
+    author: str = "AI Squad",
+) -> Tuple[int, int]:
+    """Atomically insert an article and its revision #1 in a single transaction.
+
+    Returns ``(article_id, revision_num)``. Keeping the article row and its first
+    snapshot in one transaction avoids orphaned articles (and lets callers write
+    the terminal job status last).
+    """
+    word_count = len(content.split())
+    with get_connection() as (conn, is_tidb):
+        cursor = _exec(
+            conn,
+            is_tidb,
+            """INSERT INTO articles
+               (topic, content, word_count, tone, audience, target_length, generation_time_sec, tokens_used, user_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (topic, content, word_count, tone, audience, target_length, generation_time, tokens_used, user_id),
+        )
+        article_id = cursor.lastrowid
+        revision_num = _insert_article_revision_with_retry(
+            conn, is_tidb, article_id, content, summary, user_id
+        )
+        return article_id, revision_num
+
+
+def get_articles(limit=50, user_id: Optional[int] = None, offset: int = 0, include_content: bool = True):
+    """Fetch recent articles ordered by creation date, scoped to user_id if provided.
+
+    ``include_content=False`` returns summary rows only (list endpoints should not
+    ship up to 100 full articles over the wire just to drop the content in Pydantic).
+    """
+    safe_limit = _clamp_limit(limit, default=50, maximum=500)
+    safe_offset = _clamp_offset(offset)
+    columns = (
+        "id, user_id, topic, content, word_count, tone, audience, target_length,"
+        " generation_time_sec, tokens_used, created_at, updated_at"
+        if include_content
+        else "id, user_id, topic, word_count, tone, audience, target_length,"
+        " generation_time_sec, tokens_used, created_at, updated_at"
+    )
     with get_connection() as (conn, is_tidb):
         if user_id is not None:
             cursor = _exec(
                 conn, is_tidb,
-                """SELECT id, user_id, topic, content, word_count, tone, audience, target_length,
-                          generation_time_sec, tokens_used, created_at, updated_at
-                   FROM articles WHERE user_id = ? ORDER BY created_at DESC LIMIT ?""",
-                (user_id, limit),
+                f"SELECT {columns} FROM articles WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                (user_id, safe_limit, safe_offset),
             )
         else:
             cursor = _exec(
                 conn, is_tidb,
-                """SELECT id, user_id, topic, content, word_count, tone, audience, target_length,
-                          generation_time_sec, tokens_used, created_at, updated_at
-                   FROM articles ORDER BY created_at DESC LIMIT ?""",
-                (limit,),
+                f"SELECT {columns} FROM articles ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                (safe_limit, safe_offset),
             )
         rows = cursor.fetchall()
-        return [dict(r) for r in rows]
+        return _rows_to_dicts(rows)
+
+
+def get_article_summaries(limit: int = 100, offset: int = 0, user_id: Optional[int] = None):
+    """Fetch lightweight article summaries (no ``content`` column) for list endpoints."""
+    return get_articles(limit=limit, user_id=user_id, offset=offset, include_content=False)
 
 
 # Alias for backward compatibility
@@ -977,7 +1362,7 @@ def get_article(article_id: int, user_id: Optional[int] = None) -> Optional[Dict
                 (article_id,),
             )
         row = cursor.fetchone()
-        return dict(row) if row else None
+        return _row_to_dict(row) if row else None
 
 
 def update_article_content(article_id: int, new_content: str, user_id: Optional[int] = None):
@@ -1002,36 +1387,88 @@ def update_article_content(article_id: int, new_content: str, user_id: Optional[
 # Revisions CRUD & Atomic Transactions (User Scoped)
 # ---------------------------------------------------------------------------
 
-def get_article_revisions(article_id: int, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
-    """Fetch all stored revisions for an article ordered from latest to oldest."""
+def _insert_article_revision_with_retry(
+    conn: Any,
+    is_tidb: bool,
+    article_id: int,
+    content: str,
+    summary: Optional[str] = None,
+    user_id: Optional[int] = None,
+    max_attempts: int = _MAX_WRITE_RETRIES,
+) -> int:
+    """Insert a revision allocating ``MAX(revision_num)+1`` with bounded retry.
+
+    ``SELECT MAX(...) + 1`` followed by an INSERT is racy under concurrent edits:
+    both writers compute the same number, the UNIQUE(article_id, revision_num)
+    constraint rejects one, and previously that surfaced as a 500 / lost snapshot.
+    On a duplicate-key (or transient lock) error we recompute MAX and retry.
+    """
+    last_error: Optional[BaseException] = None
+    for attempt in range(max(1, max_attempts)):
+        cursor = _exec(
+            conn,
+            is_tidb,
+            "SELECT COALESCE(MAX(revision_num), 0) + 1 AS next_rev FROM article_revisions WHERE article_id = ?",
+            (article_id,),
+        )
+        row = cursor.fetchone()
+        next_rev = int(_get_value(row, is_tidb, "next_rev", 0) or 1)
+        try:
+            _exec(
+                conn,
+                is_tidb,
+                "INSERT INTO article_revisions (article_id, revision_num, content, summary, user_id) VALUES (?, ?, ?, ?, ?)",
+                (article_id, next_rev, content, summary if summary is not None else "Revision", user_id),
+            )
+            return next_rev
+        except Exception as exc:
+            last_error = exc
+            if attempt < max_attempts - 1 and _is_retryable_write_error(exc):
+                time.sleep(0.01 * (attempt + 1))
+                continue
+            raise
+    raise RuntimeError(f"Could not allocate a revision number for article {article_id}: {last_error}")
+
+
+def get_article_revisions(
+    article_id: int,
+    user_id: Optional[int] = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> List[Dict[str, Any]]:
+    """Fetch stored revisions for an article, newest first, bounded by ``limit``."""
+    safe_limit = _clamp_limit(limit, default=200, maximum=1000)
+    safe_offset = _clamp_offset(offset)
+    legacy = _legacy_sql()
     with get_connection() as (conn, is_tidb):
         if user_id is not None:
             cursor = _exec(
                 conn, is_tidb,
-                """SELECT id, user_id, article_id, revision_num, content, summary, created_at
-                   FROM article_revisions WHERE article_id = ? AND (user_id = ? OR user_id IS NULL)
-                   ORDER BY revision_num DESC""",
-                (article_id, user_id),
+                f"""SELECT id, user_id, article_id, revision_num, content, summary, created_at
+                   FROM article_revisions WHERE article_id = ? AND (user_id = ?{legacy})
+                   ORDER BY revision_num DESC LIMIT ? OFFSET ?""",
+                (article_id, user_id, safe_limit, safe_offset),
             )
         else:
             cursor = _exec(
                 conn, is_tidb,
                 """SELECT id, user_id, article_id, revision_num, content, summary, created_at
-                   FROM article_revisions WHERE article_id = ? ORDER BY revision_num DESC""",
-                (article_id,),
+                   FROM article_revisions WHERE article_id = ? ORDER BY revision_num DESC LIMIT ? OFFSET ?""",
+                (article_id, safe_limit, safe_offset),
             )
         rows = cursor.fetchall()
-        return [dict(r) for r in rows]
+        return _rows_to_dicts(rows)
 
 
 def get_single_revision(revision_id: int, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
     """Fetch a specific revision by ID."""
+    legacy = _legacy_sql()
     with get_connection() as (conn, is_tidb):
         if user_id is not None:
             cursor = _exec(
                 conn, is_tidb,
-                """SELECT id, user_id, article_id, revision_num, content, summary, created_at
-                   FROM article_revisions WHERE id = ? AND (user_id = ? OR user_id IS NULL)""",
+                f"""SELECT id, user_id, article_id, revision_num, content, summary, created_at
+                   FROM article_revisions WHERE id = ? AND (user_id = ?{legacy})""",
                 (revision_id, user_id),
             )
         else:
@@ -1042,13 +1479,15 @@ def get_single_revision(revision_id: int, user_id: Optional[int] = None) -> Opti
                 (revision_id,),
             )
         row = cursor.fetchone()
-        return dict(row) if row else None
+        return _row_to_dict(row) if row else None
 
 
 def apply_article_edit_transaction(article_id: int, new_content: str, summary: str = "Copilot revision", user_id: Optional[int] = None) -> int:
     """Atomic transaction: snapshots current article content into article_revisions, then updates articles.content.
 
-    Returns the new revision number. Scoped to user_id if provided.
+    Returns the new revision number. Scoped to user_id if provided. The revision
+    number allocation is retried on duplicate-key races so concurrent edits cannot
+    500 or drop a snapshot.
     """
     with get_connection() as (conn, is_tidb):
         if user_id is not None:
@@ -1059,16 +1498,10 @@ def apply_article_edit_transaction(article_id: int, new_content: str, summary: s
         if not row:
             raise ValueError(f"Article {article_id} not found or access denied.")
 
-        current_content = row["content"] if is_tidb else row[0]
+        current_content = _get_value(row, is_tidb, "content", 0)
 
-        cursor = _exec(conn, is_tidb, "SELECT COALESCE(MAX(revision_num), 0) + 1 AS next_rev FROM article_revisions WHERE article_id = ?", (article_id,))
-        rev_row = cursor.fetchone()
-        next_rev = (rev_row["next_rev"] if is_tidb else rev_row[0]) or 1
-
-        _exec(
-            conn, is_tidb,
-            "INSERT INTO article_revisions (article_id, revision_num, content, summary, user_id) VALUES (?, ?, ?, ?, ?)",
-            (article_id, next_rev, current_content, summary, user_id),
+        next_rev = _insert_article_revision_with_retry(
+            conn, is_tidb, article_id, current_content, summary, user_id
         )
 
         word_count = len(new_content.split())
@@ -1083,11 +1516,12 @@ def apply_article_edit_transaction(article_id: int, new_content: str, summary: s
 
 def rollback_article_revision_transaction(article_id: int, target_revision_id: int, user_id: Optional[int] = None) -> bool:
     """Atomic rollback: snapshots current content as 'Before rollback to N', then restores target revision content."""
+    legacy = _legacy_sql()
     with get_connection() as (conn, is_tidb):
         if user_id is not None:
             cursor = _exec(
                 conn, is_tidb,
-                "SELECT revision_num, content FROM article_revisions WHERE id = ? AND article_id = ? AND (user_id = ? OR user_id IS NULL)",
+                f"SELECT revision_num, content FROM article_revisions WHERE id = ? AND article_id = ? AND (user_id = ?{legacy})",
                 (target_revision_id, article_id, user_id),
             )
         else:
@@ -1100,8 +1534,8 @@ def rollback_article_revision_transaction(article_id: int, target_revision_id: i
         if not target_row:
             return False
 
-        target_rev_num = target_row["revision_num"] if is_tidb else target_row[0]
-        target_content = target_row["content"] if is_tidb else target_row[1]
+        target_rev_num = _get_value(target_row, is_tidb, "revision_num", 0)
+        target_content = _get_value(target_row, is_tidb, "content", 1)
 
         if user_id is not None:
             cursor = _exec(conn, is_tidb, "SELECT content FROM articles WHERE id = ? AND user_id = ?", (article_id, user_id))
@@ -1110,16 +1544,10 @@ def rollback_article_revision_transaction(article_id: int, target_revision_id: i
         curr_row = cursor.fetchone()
         if not curr_row:
             return False
-        current_content = curr_row["content"] if is_tidb else curr_row[0]
+        current_content = _get_value(curr_row, is_tidb, "content", 0)
 
-        cursor = _exec(conn, is_tidb, "SELECT COALESCE(MAX(revision_num), 0) + 1 AS next_rev FROM article_revisions WHERE article_id = ?", (article_id,))
-        rev_row = cursor.fetchone()
-        next_rev = (rev_row["next_rev"] if is_tidb else rev_row[0]) or 1
-
-        _exec(
-            conn, is_tidb,
-            "INSERT INTO article_revisions (article_id, revision_num, content, summary, user_id) VALUES (?, ?, ?, ?, ?)",
-            (article_id, next_rev, current_content, f"Before rollback to revision {target_rev_num}", user_id),
+        _insert_article_revision_with_retry(
+            conn, is_tidb, article_id, current_content, f"Before rollback to revision {target_rev_num}", user_id
         )
 
         word_count = len(target_content.split())
@@ -1139,22 +1567,11 @@ def save_article_revision(
     author: str = "User",
     user_id: Optional[int] = None,
 ) -> int:
-    """Save an explicit revision snapshot for an article."""
+    """Save an explicit revision snapshot for an article (retry-safe numbering)."""
     with get_connection() as (conn, is_tidb):
-        cursor = _exec(
-            conn, is_tidb,
-            "SELECT COALESCE(MAX(revision_num), 0) + 1 AS next_rev FROM article_revisions WHERE article_id = ?",
-            (article_id,),
+        return _insert_article_revision_with_retry(
+            conn, is_tidb, article_id, content, summary, user_id
         )
-        rev_row = cursor.fetchone()
-        next_rev = (rev_row["next_rev"] if is_tidb else rev_row[0]) or 1
-
-        _exec(
-            conn, is_tidb,
-            "INSERT INTO article_revisions (article_id, revision_num, content, summary, user_id) VALUES (?, ?, ?, ?, ?)",
-            (article_id, next_rev, content, summary, user_id),
-        )
-        return next_rev
 
 
 def get_article_revision(
@@ -1163,13 +1580,14 @@ def get_article_revision(
     user_id: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     """Retrieve a single revision by article_id and revision_num."""
+    legacy = _legacy_sql()
     with get_connection() as (conn, is_tidb):
         if user_id is not None:
             cursor = _exec(
                 conn, is_tidb,
-                """SELECT id, article_id, revision_num, content, summary, created_at, user_id
+                f"""SELECT id, article_id, revision_num, content, summary, created_at, user_id
                    FROM article_revisions
-                   WHERE article_id = ? AND revision_num = ? AND (user_id = ? OR user_id IS NULL)""",
+                   WHERE article_id = ? AND revision_num = ? AND (user_id = ?{legacy})""",
                 (article_id, revision_num, user_id),
             )
         else:
@@ -1181,7 +1599,7 @@ def get_article_revision(
                 (article_id, revision_num),
             )
         row = cursor.fetchone()
-        return dict(row) if row else None
+        return _row_to_dict(row) if row else None
 
 
 def restore_article_revision(
@@ -1198,12 +1616,13 @@ def restore_article_revision(
 
 def delete_article(article_id: int, user_id: Optional[int] = None) -> bool:
     """Delete an article and its associated chat history, respecting user ownership."""
+    legacy = _legacy_sql()
     with get_connection() as (conn, is_tidb):
         if user_id is not None:
             cursor = _exec(conn, is_tidb, "DELETE FROM articles WHERE id = ? AND user_id = ?", (article_id, user_id))
             affected = cursor.rowcount if hasattr(cursor, "rowcount") else 1
-            _exec(conn, is_tidb, "DELETE FROM chat_history WHERE article_id = ? AND (user_id = ? OR user_id IS NULL)", (article_id, user_id))
-            _exec(conn, is_tidb, "DELETE FROM article_revisions WHERE article_id = ? AND (user_id = ? OR user_id IS NULL)", (article_id, user_id))
+            _exec(conn, is_tidb, f"DELETE FROM chat_history WHERE article_id = ? AND (user_id = ?{legacy})", (article_id, user_id))
+            _exec(conn, is_tidb, f"DELETE FROM article_revisions WHERE article_id = ? AND (user_id = ?{legacy})", (article_id, user_id))
             return bool(affected and affected > 0)
         else:
             cursor = _exec(conn, is_tidb, "DELETE FROM articles WHERE id = ?", (article_id,))
@@ -1229,11 +1648,12 @@ def save_chat_message(article_id: int, role: str, content: str, user_id: Optiona
 
 def get_chat_history(article_id: int, user_id: Optional[int] = None):
     """Fetch all chat messages for an article in order, scoped to user_id."""
+    legacy = _legacy_sql()
     with get_connection() as (conn, is_tidb):
         if user_id is not None:
             cursor = _exec(
                 conn, is_tidb,
-                "SELECT role, content, created_at FROM chat_history WHERE article_id = ? AND (user_id = ? OR user_id IS NULL) ORDER BY id ASC",
+                f"SELECT role, content, created_at FROM chat_history WHERE article_id = ? AND (user_id = ?{legacy}) ORDER BY id ASC",
                 (article_id, user_id),
             )
         else:
@@ -1243,14 +1663,15 @@ def get_chat_history(article_id: int, user_id: Optional[int] = None):
                 (article_id,),
             )
         rows = cursor.fetchall()
-        return [dict(r) for r in rows]
+        return _rows_to_dicts(rows)
 
 
 def clear_chat_history(article_id: int, user_id: Optional[int] = None):
     """Delete all chat messages for an article."""
+    legacy = _legacy_sql()
     with get_connection() as (conn, is_tidb):
         if user_id is not None:
-            _exec(conn, is_tidb, "DELETE FROM chat_history WHERE article_id = ? AND (user_id = ? OR user_id IS NULL)", (article_id, user_id))
+            _exec(conn, is_tidb, f"DELETE FROM chat_history WHERE article_id = ? AND (user_id = ?{legacy})", (article_id, user_id))
         else:
             _exec(conn, is_tidb, "DELETE FROM chat_history WHERE article_id = ?", (article_id,))
 
@@ -1298,15 +1719,17 @@ def save_security_event(event_type: str, details: Any, user_id: Optional[int] = 
 
 def get_telemetry_history(limit=10, user_id: Optional[int] = None):
     """Fetch recent telemetry runs."""
+    safe_limit = _clamp_limit(limit, default=10, maximum=500)
+    legacy = _legacy_sql()
     with get_connection() as (conn, is_tidb):
         if user_id is not None:
             cursor = _exec(
                 conn, is_tidb,
-                """SELECT id, user_id, article_id, topic, duration_sec, tokens_estimated,
+                f"""SELECT id, user_id, article_id, topic, duration_sec, tokens_estimated,
                           models_used, fallback_count, fallback_events,
                           readability_score, readability_grade, trace_url, created_at
-                   FROM telemetry_runs WHERE user_id = ? OR user_id IS NULL ORDER BY created_at DESC LIMIT ?""",
-                (user_id, limit),
+                   FROM telemetry_runs WHERE user_id = ?{legacy} ORDER BY created_at DESC LIMIT ?""",
+                (user_id, safe_limit),
             )
         else:
             cursor = _exec(
@@ -1315,12 +1738,12 @@ def get_telemetry_history(limit=10, user_id: Optional[int] = None):
                           models_used, fallback_count, fallback_events,
                           readability_score, readability_grade, trace_url, created_at
                    FROM telemetry_runs ORDER BY created_at DESC LIMIT ?""",
-                (limit,),
+                (safe_limit,),
             )
         rows = cursor.fetchall()
         result = []
         for r in rows:
-            d = dict(r)
+            d = _row_to_dict(r)
             if isinstance(d.get("models_used"), str):
                 try:
                     d["models_used"] = json.loads(d["models_used"])
@@ -1337,21 +1760,23 @@ def get_telemetry_history(limit=10, user_id: Optional[int] = None):
 
 def get_security_audit_logs(limit=20, user_id: Optional[int] = None):
     """Fetch recent security audit events."""
+    safe_limit = _clamp_limit(limit, default=20, maximum=500)
+    legacy = _legacy_sql()
     with get_connection() as (conn, is_tidb):
         if user_id is not None:
             cursor = _exec(
                 conn, is_tidb,
-                "SELECT id, user_id, event_type, details, created_at FROM security_audit_logs WHERE user_id = ? OR user_id IS NULL ORDER BY created_at DESC LIMIT ?",
-                (user_id, limit),
+                f"SELECT id, user_id, event_type, details, created_at FROM security_audit_logs WHERE user_id = ?{legacy} ORDER BY created_at DESC LIMIT ?",
+                (user_id, safe_limit),
             )
         else:
             cursor = _exec(
                 conn, is_tidb,
                 "SELECT id, user_id, event_type, details, created_at FROM security_audit_logs ORDER BY created_at DESC LIMIT ?",
-                (limit,),
+                (safe_limit,),
             )
         rows = cursor.fetchall()
-        return [dict(r) for r in rows]
+        return _rows_to_dicts(rows)
 
 
 # ---------------------------------------------------------------------------
@@ -1750,13 +2175,31 @@ def delete_user_memory(key: str, user_id: Optional[int] = None, user_key: Option
             _exec(conn, is_tidb, "DELETE FROM user_memory WHERE user_key = ? AND memory_key = ?", (resolved_key, key))
 
 
+def get_user_api_keys(user_id: int) -> Dict[str, str]:
+    """Retrieve saved API keys for a user, falling back to server environment variables."""
+    memories = get_user_memories(user_id=user_id)
+    return {
+        "gemini_api_key": memories.get("api_key_gemini", "") or os.getenv("GEMINI_API_KEY", ""),
+        "openrouter_api_key": memories.get("api_key_openrouter", "") or os.getenv("OPENROUTER_API_KEY", "") or os.getenv("OPEN_ROUTER_API_KEY", ""),
+    }
+
+
+def save_user_api_keys(user_id: int, gemini_key: Optional[str] = None, openrouter_key: Optional[str] = None):
+    """Save persistent API keys for a user in user_memory."""
+    if gemini_key is not None and gemini_key.strip():
+        set_user_memory("api_key_gemini", gemini_key.strip(), memory_type="credential", user_id=user_id)
+    if openrouter_key is not None and openrouter_key.strip():
+        set_user_memory("api_key_openrouter", openrouter_key.strip(), memory_type="credential", user_id=user_id)
+
+
 def get_chat_session(article_id: int, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
     """Retrieve the rolling summary and message count for a chat session."""
+    legacy = _legacy_sql()
     with get_connection() as (conn, is_tidb):
         if user_id is not None:
             cursor = _exec(
                 conn, is_tidb,
-                "SELECT article_id, user_id, running_summary, message_count FROM chat_sessions WHERE article_id = ? AND (user_id = ? OR user_id IS NULL)",
+                f"SELECT article_id, user_id, running_summary, message_count FROM chat_sessions WHERE article_id = ? AND (user_id = ?{legacy})",
                 (article_id, user_id),
             )
         else:
@@ -1766,7 +2209,7 @@ def get_chat_session(article_id: int, user_id: Optional[int] = None) -> Optional
                 (article_id,),
             )
         row = cursor.fetchone()
-        return dict(row) if row else None
+        return _row_to_dict(row) if row else None
 
 
 def save_chat_session(article_id: int, running_summary: str, message_count: int = 0, user_id: Optional[int] = None):
@@ -1824,7 +2267,7 @@ def get_stats(user_id: Optional[int] = None):
                 FROM articles
             """)
         row = cursor.fetchone()
-        return dict(row) if row else {}
+        return _row_to_dict(row) if row else {}
 
 
 # ---------------------------------------------------------------------------
@@ -1850,16 +2293,27 @@ def create_research_job(
         )
 
 
+_TERMINAL_JOB_STATUSES = ("cancelled", "failed", "completed")
+
+
 def update_research_job(
     run_id: str,
     status: Optional[str] = None,
     result_article_id: Optional[int] = None,
     error_message: Optional[str] = None,
     trace_url: Optional[str] = None,
-) -> None:
-    """Update status, article reference, error message, or LangSmith trace URL of an existing research job."""
+) -> bool:
+    """Update status/metadata of an existing research job.
+
+    Terminal jobs are frozen: a status transition is only applied while the job is
+    still ``pending``/``running``. This prevents a slow background worker from
+    resurrecting a job the user already cancelled (or a failed job from flipping
+    itself back to ``running``). Metadata-only updates stay allowed.
+
+    Returns True when a row was actually updated.
+    """
     updates = []
-    params = []
+    params: List[Any] = []
     if status is not None:
         updates.append("status = ?")
         params.append(status)
@@ -1874,27 +2328,34 @@ def update_research_job(
         params.append(trace_url)
 
     if not updates:
-        return
+        return False
 
     params.append(run_id)
     with get_connection() as (conn, is_tidb):
         sql = f"UPDATE research_jobs SET {', '.join(updates)} WHERE run_id = ?"
-        _exec(conn, is_tidb, sql, tuple(params))
+        if status is not None:
+            sql += " AND status NOT IN ('cancelled', 'failed', 'completed')"
+        cursor = _exec(conn, is_tidb, sql, tuple(params))
+        rowcount = getattr(cursor, "rowcount", None)
+        if rowcount is None:
+            return True
+        return bool(rowcount > 0)
 
 
 def get_research_job(run_id: str, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
     """Retrieve research job details, optionally verifying user ownership."""
+    legacy = _legacy_sql()
     with get_connection() as (conn, is_tidb):
         if user_id is not None:
             cursor = _exec(
                 conn, is_tidb,
-                "SELECT * FROM research_jobs WHERE run_id = ? AND (user_id = ? OR user_id IS NULL)",
+                f"SELECT * FROM research_jobs WHERE run_id = ? AND (user_id = ?{legacy})",
                 (run_id, user_id),
             )
         else:
             cursor = _exec(conn, is_tidb, "SELECT * FROM research_jobs WHERE run_id = ?", (run_id,))
         row = cursor.fetchone()
-        return dict(row) if row else None
+        return _row_to_dict(row) if row else None
 
 
 def get_active_user_job(user_id: int) -> Optional[Dict[str, Any]]:
@@ -1906,50 +2367,121 @@ def get_active_user_job(user_id: int) -> Optional[Dict[str, Any]]:
             (user_id,),
         )
         row = cursor.fetchone()
-        return dict(row) if row else None
+        return _row_to_dict(row) if row else None
+
+
+def recover_interrupted_jobs(stale_after_seconds: int = 0) -> int:
+    """Mark jobs left in ``pending``/``running`` by a dead process as failed.
+
+    Background research workers run in in-process daemon threads and the
+    cancellation events live only in memory, so a restart orphans any in-flight
+    job forever. Call this from the FastAPI lifespan startup (after ``init_db``)
+    to fail such jobs with a clear reason and append a terminal SSE event so
+    reconnecting clients close their streams.
+
+    ``stale_after_seconds`` limits the sweep to jobs whose ``updated_at`` is at
+    least that old (default 0 = every inherited pending/running job).
+
+    Returns the number of recovered jobs.
+    """
+    try:
+        stale_after = max(0, int(stale_after_seconds))
+    except (TypeError, ValueError):
+        stale_after = 0
+    now = datetime.now(timezone.utc)
+    cutoff_str = (now - timedelta(seconds=stale_after)).strftime("%Y-%m-%d %H:%M:%S")
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    message = "interrupted by server restart"
+
+    recovered_run_ids: List[str] = []
+    with get_connection() as (conn, is_tidb):
+        cursor = _exec(
+            conn,
+            is_tidb,
+            "SELECT run_id FROM research_jobs WHERE status IN ('pending', 'running') AND updated_at <= ?",
+            (cutoff_str,),
+        )
+        rows = cursor.fetchall()
+        recovered_run_ids = [str(_get_value(r, is_tidb, "run_id", 0)) for r in rows]
+        if not recovered_run_ids:
+            return 0
+        cursor = _exec(
+            conn,
+            is_tidb,
+            "UPDATE research_jobs SET status = 'failed', error_message = ?, updated_at = ? "
+            "WHERE status IN ('pending', 'running') AND updated_at <= ?",
+            (message, now_str, cutoff_str),
+        )
+        rowcount = getattr(cursor, "rowcount", None)
+        recovered_count = int(rowcount) if isinstance(rowcount, int) and rowcount >= 0 else len(recovered_run_ids)
+
+    # Append terminal events *after* the status sweep committed (durable ordering).
+    for run_id in recovered_run_ids:
+        try:
+            append_job_event(run_id, "error", {"message": message, "timestamp": time.time()})
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Could not append recovery event for run %s: %s", run_id, exc)
+    return recovered_count
 
 
 def append_job_event(run_id: str, event_type: str, payload: Any) -> int:
-    """Append a sequenced event to the durable job event ledger with concurrency retry protection."""
+    """Append a sequenced event to the durable job event ledger.
+
+    The sequence is allocated atomically (single ``INSERT ... SELECT MAX+1`` on
+    SQLite, ``SELECT ... FOR UPDATE`` inside the transaction on TiDB) and the
+    UNIQUE(run_id, seq_id) constraint backs that up: on a duplicate/lock error we
+    retry with a freshly computed sequence instead of losing the event.
+    """
     payload_str = json.dumps(payload) if not isinstance(payload, str) else payload
-    with get_connection() as (conn, is_tidb):
-        for attempt in range(5):
-            cursor = _exec(
-                conn, is_tidb,
-                "SELECT COALESCE(MAX(seq_id), 0) + 1 AS next_seq FROM job_events WHERE run_id = ?",
-                (run_id,),
-            )
-            row = cursor.fetchone()
-            next_seq = row["next_seq"] if isinstance(row, dict) else row[0]
-
-            try:
-                _exec(
-                    conn, is_tidb,
-                    "INSERT INTO job_events (run_id, seq_id, event_type, payload) VALUES (?, ?, ?, ?)",
-                    (run_id, next_seq, event_type, payload_str),
-                )
+    last_error: Optional[BaseException] = None
+    for attempt in range(_MAX_WRITE_RETRIES):
+        try:
+            with get_connection() as (conn, is_tidb):
+                if is_tidb:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT COALESCE(MAX(seq_id), 0) + 1 AS next_seq FROM job_events WHERE run_id = %s FOR UPDATE",
+                        (run_id,),
+                    )
+                    row = cursor.fetchone()
+                    next_seq = int(_get_value(row, True, "next_seq", 0) or 1)
+                    cursor.execute(
+                        "INSERT INTO job_events (run_id, seq_id, event_type, payload) VALUES (%s, %s, %s, %s)",
+                        (run_id, next_seq, event_type, payload_str),
+                    )
+                else:
+                    cursor = conn.execute(
+                        "INSERT INTO job_events (run_id, seq_id, event_type, payload) "
+                        "SELECT ?, COALESCE(MAX(seq_id), 0) + 1, ?, ? FROM job_events WHERE run_id = ?",
+                        (run_id, event_type, payload_str, run_id),
+                    )
+                    inserted_rowid = cursor.lastrowid
+                    seq_cursor = conn.execute("SELECT seq_id FROM job_events WHERE id = ?", (inserted_rowid,))
+                    seq_row = seq_cursor.fetchone()
+                    next_seq = int(_get_value(seq_row, False, "seq_id", 0) or 1)
                 return next_seq
-            except Exception as e:
-                err_str = str(e).upper()
-                if attempt < 4 and ("UNIQUE" in err_str or "DUPLICATE" in err_str):
-                    time.sleep(0.02 * (attempt + 1))
-                    continue
-                raise
-        return 1
+        except Exception as exc:
+            last_error = exc
+            if attempt < _MAX_WRITE_RETRIES - 1 and _is_retryable_write_error(exc):
+                time.sleep(0.01 * (attempt + 1))
+                continue
+            raise
+    raise RuntimeError(f"Could not append job event for run {run_id}: {last_error}")
 
 
-def get_job_events(run_id: str, after_seq_id: int = 0) -> List[Dict[str, Any]]:
-    """Retrieve sequenced events for a job with seq_id > after_seq_id."""
+def get_job_events(run_id: str, after_seq_id: int = 0, limit: int = 2000) -> List[Dict[str, Any]]:
+    """Retrieve sequenced events for a job with seq_id > after_seq_id (bounded)."""
+    safe_limit = _clamp_limit(limit, default=2000, maximum=5000)
     with get_connection() as (conn, is_tidb):
         cursor = _exec(
             conn, is_tidb,
-            "SELECT seq_id, event_type, payload, created_at FROM job_events WHERE run_id = ? AND seq_id > ? ORDER BY seq_id ASC",
-            (run_id, after_seq_id),
+            "SELECT seq_id, event_type, payload, created_at FROM job_events WHERE run_id = ? AND seq_id > ? ORDER BY seq_id ASC LIMIT ?",
+            (run_id, after_seq_id, safe_limit),
         )
         rows = cursor.fetchall()
         result = []
         for r in rows:
-            d = dict(r)
+            d = _row_to_dict(r)
             try:
                 d["payload"] = json.loads(d["payload"])
             except Exception:

@@ -67,6 +67,105 @@ def test_chat_memory_sliding_window_and_summarization():
     assert "Author Style & Editorial Guidelines:" in messages[0]["content"]
 
 
+def test_chat_memory_token_budget_bounds_window():
+    """The window is bounded by tokens, not just by turn count."""
+    mgr = ChatMemoryManager(max_turns=20, max_tokens=40)
+    history = [
+        {"role": "user", "content": "x" * 200},
+        {"role": "assistant", "content": "y" * 200},
+        {"role": "user", "content": "z" * 200},
+        {"role": "user", "content": "short final question"},
+    ]
+    messages = mgr.build_bounded_context(
+        chat_history=history,
+        current_report="# Report",
+        active_query="short final question",
+        article_id=None,
+    )
+    # Only a small tail can fit in a 40-token budget.
+    assert len(messages) < len(history) + 1
+    assert messages[-1]["content"] == "short final question"
+    assert "Prior Conversation Summary:" in messages[0]["content"]
+
+
+def test_chat_memory_merges_and_retains_existing_summary():
+    """A persisted rolling summary is retained instead of being discarded (>7 older turns)."""
+    article_id = db.save_article("Summary Retention Topic", "# Draft")
+    legacy_summary = "LEGACY-SUMMARY: user prefers a formal tone and metric units."
+    db.save_chat_session(article_id, legacy_summary, message_count=12, user_id=1)
+
+    history = [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"turn {i} about hashing"}
+        for i in range(14)
+    ]
+    mgr = ChatMemoryManager(max_turns=2)
+    messages = mgr.build_bounded_context(
+        chat_history=history,
+        current_report="# Report",
+        active_query="next question",
+        article_id=article_id,
+        user_id=1,
+    )
+    system_content = messages[0]["content"]
+    assert legacy_summary in system_content
+    assert "about hashing" in system_content
+
+    persisted = db.get_chat_session(article_id, user_id=1)
+    assert persisted is not None
+    assert legacy_summary in persisted["running_summary"]
+
+
+def test_chat_memory_user_scoping_isolates_summaries():
+    """User A's rolling summary must never be injected into user B's context."""
+    article_id = db.save_article("Cross User Topic", "# Draft")
+    private_summary = "USER-ONE-PRIVATE: confidential editorial instructions."
+    db.save_chat_session(article_id, private_summary, message_count=9, user_id=1)
+
+    # Database-level isolation: user 2 cannot read user 1's session row.
+    assert db.get_chat_session(article_id, user_id=1)["running_summary"] == private_summary
+    assert db.get_chat_session(article_id, user_id=2) is None
+
+    history = [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"turn {i}"}
+        for i in range(10)
+    ]
+    mgr = ChatMemoryManager(max_turns=2)
+    messages = mgr.build_bounded_context(
+        chat_history=history,
+        current_report="# Report",
+        active_query="next",
+        article_id=article_id,
+        user_id=2,
+    )
+    assert private_summary not in messages[0]["content"]
+
+    # Writes are scoped to the caller's user id.
+    persisted_for_user_two = db.get_chat_session(article_id, user_id=2)
+    assert persisted_for_user_two is not None
+    assert private_summary not in (persisted_for_user_two.get("running_summary") or "")
+
+
+def test_chat_memory_passes_user_id_to_session_io():
+    """user_id must be forwarded to get_chat_session/save_chat_session."""
+    mgr = ChatMemoryManager(max_turns=1)
+    history = [
+        {"role": "user", "content": "old turn one"},
+        {"role": "assistant", "content": "old turn two"},
+        {"role": "user", "content": "latest"},
+    ]
+    with patch("database.get_chat_session", return_value=None) as mock_get, \
+         patch("database.save_chat_session") as mock_save:
+        mgr.build_bounded_context(
+            chat_history=history,
+            current_report="# Report",
+            active_query="latest",
+            article_id=77,
+            user_id=42,
+        )
+    mock_get.assert_called_once_with(77, user_id=42)
+    assert mock_save.call_args.kwargs.get("user_id") == 42
+
+
 def test_database_research_cache_crud():
     """Verify research cache insertion, retrieval, and updates."""
     test_url = "https://example.com/research-paper-test"
@@ -107,13 +206,13 @@ def test_database_chat_sessions_crud():
     assert session["message_count"] == 8
 
 
-def test_scrape_tool_uses_cache():
-    """Verify ScrapeTool returns cached content immediately without calling external scraper."""
+def test_scrape_tool_uses_cache_without_live_fetch():
+    """Verify ScrapeTool returns re-sanitized cached content immediately (no live fetch)."""
     test_url = "https://example.com/cached-page"
     db.set_cached_scrape(test_url, "Pre-cached compact content from database.")
 
     tool = ScrapeTool()
-    with patch("tools.scrape_tool.ScrapeWebsiteTool") as mock_scrape:
+    with patch("tools.scrape_tool.safe_fetch") as mock_fetch:
         result = tool._run(url=test_url)
-        assert result == "Pre-cached compact content from database."
-        mock_scrape.assert_not_called()
+    assert "Pre-cached compact content from database." in result
+    mock_fetch.assert_not_called()
