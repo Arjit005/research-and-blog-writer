@@ -50,12 +50,27 @@ class DatabaseConnectionError(RuntimeError):
     """
 
 
-# Local SQLite database path.
-# Overridable via RESEARCH_STUDIO_DB_PATH so tests and CI can point at an
-# isolated file/memory database instead of mutating the developer's real DB.
-DB_PATH = os.getenv("RESEARCH_STUDIO_DB_PATH") or os.getenv("DATABASE_PATH") or os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "research_studio.db"
-)
+# Local SQLite database path — resolved lazily at connection time so that
+# tests can set RESEARCH_STUDIO_DB_PATH in conftest.py *before* the first
+# connection is opened, without racing against module-level evaluation.
+# The module-level DB_PATH is kept as a readable default for callers that
+# inspect it directly (e.g. health-check logging), but get_connection() always
+# re-reads the env vars so overrides applied after import still take effect.
+_DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "research_studio.db")
+
+
+def _resolve_db_path() -> str:
+    """Return the effective SQLite database path, re-reading env vars each call."""
+    return (
+        os.getenv("RESEARCH_STUDIO_DB_PATH")
+        or os.getenv("DATABASE_PATH")
+        or _DEFAULT_DB_PATH
+    )
+
+
+# Kept for backward-compat (e.g. health-check display). Always use
+# _resolve_db_path() inside connection code.
+DB_PATH = _DEFAULT_DB_PATH
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -261,7 +276,7 @@ def get_connection():
             from_pool = True
 
     if conn is None:
-        conn = sqlite3.connect(DB_PATH, timeout=10.0)
+        conn = sqlite3.connect(_resolve_db_path(), timeout=10.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
@@ -523,411 +538,37 @@ def _ensure_job_event_unique_index(conn: Any, is_tidb: bool) -> None:
 
 
 def init_db():
-    """Initialize database schemas and apply idempotent migrations on TiDB Cloud or SQLite."""
+    """Initialize database schemas and apply idempotent migrations on TiDB Cloud or SQLite.
+
+    All table definitions live in ``db_schema.py`` (single source of truth).
+    Both backends are driven from the same spec so they stay in sync automatically.
+    """
+    from db_schema import build_tidb_ddl, build_sqlite_ddl, SQLITE_EXTRA_INDEXES, MIGRATION_COLUMNS
+
     with get_connection() as (conn, is_tidb):
         if is_tidb:
             cursor = conn.cursor()
-            # Migration tracking table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS schema_version (
-                    version INT PRIMARY KEY,
-                    applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
+            for ddl in build_tidb_ddl():
+                cursor.execute(ddl + ";")
 
-            # 1. Base Studio Tables
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS articles (
-                    id                  INT AUTO_INCREMENT PRIMARY KEY,
-                    user_id             INT NULL,
-                    topic               TEXT NOT NULL,
-                    content             MEDIUMTEXT NOT NULL,
-                    word_count          INT NOT NULL DEFAULT 0,
-                    tone                VARCHAR(100) DEFAULT 'Professional & Authoritative',
-                    audience            VARCHAR(100) DEFAULT 'Software Engineers & Developers',
-                    target_length       VARCHAR(100) DEFAULT 'Standard Blog (1,500 - 2,000 words)',
-                    generation_time_sec DOUBLE DEFAULT 0,
-                    tokens_used         INT DEFAULT 0,
-                    created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    INDEX idx_art_user (user_id)
-                );
-            """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS chat_history (
-                    id          INT AUTO_INCREMENT PRIMARY KEY,
-                    user_id     INT NULL,
-                    article_id  INT NOT NULL,
-                    role        VARCHAR(20) NOT NULL,
-                    content     MEDIUMTEXT NOT NULL,
-                    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_chat_article (article_id),
-                    INDEX idx_chat_user (user_id)
-                );
-            """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS telemetry_runs (
-                    id                INT AUTO_INCREMENT PRIMARY KEY,
-                    user_id           INT NULL,
-                    article_id        INT,
-                    topic             TEXT NOT NULL,
-                    duration_sec      DOUBLE DEFAULT 0,
-                    tokens_estimated  INT DEFAULT 0,
-                    models_used       TEXT,
-                    fallback_count    INT DEFAULT 0,
-                    fallback_events   MEDIUMTEXT,
-                    readability_score DOUBLE DEFAULT 0,
-                    readability_grade VARCHAR(100) DEFAULT 'N/A',
-                    created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_telem_user (user_id)
-                );
-            """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS security_audit_logs (
-                    id          INT AUTO_INCREMENT PRIMARY KEY,
-                    user_id     INT NULL,
-                    event_type  VARCHAR(100) NOT NULL,
-                    details     TEXT NOT NULL,
-                    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_audit_user (user_id)
-                );
-            """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS system_cache (
-                    cache_key   VARCHAR(64) PRIMARY KEY,
-                    namespace   VARCHAR(32) NOT NULL,
-                    payload     LONGTEXT NOT NULL,
-                    meta_info   JSON NULL,
-                    user_id     INT NULL,
-                    created_at  DATETIME NOT NULL,
-                    expires_at  DATETIME NOT NULL,
-                    INDEX idx_cache_ns_exp (namespace, expires_at),
-                    INDEX idx_cache_user (user_id),
-                    INDEX idx_cache_created (created_at)
-                );
-            """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS research_cache (
-                    url_hash        VARCHAR(64) PRIMARY KEY,
-                    url             TEXT NOT NULL,
-                    compact_content MEDIUMTEXT NOT NULL,
-                    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS user_memory (
-                    id           INT AUTO_INCREMENT PRIMARY KEY,
-                    user_id      INT NULL,
-                    user_key     VARCHAR(128) NOT NULL DEFAULT 'default_user',
-                    memory_type  VARCHAR(64) NOT NULL DEFAULT 'preference',
-                    memory_key   VARCHAR(128) NOT NULL,
-                    memory_value TEXT NOT NULL,
-                    updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    UNIQUE KEY uk_user_mem (user_key, memory_key),
-                    INDEX idx_mem_user (user_id)
-                );
-            """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS chat_sessions (
-                    article_id      INT PRIMARY KEY,
-                    user_id         INT NULL,
-                    running_summary MEDIUMTEXT,
-                    message_count   INT DEFAULT 0,
-                    updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    INDEX idx_sess_usr (user_id)
-                );
-            """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS article_revisions (
-                    id           INT AUTO_INCREMENT PRIMARY KEY,
-                    user_id      INT NULL,
-                    article_id   INT NOT NULL,
-                    revision_num INT NOT NULL,
-                    content      MEDIUMTEXT NOT NULL,
-                    summary      VARCHAR(255) DEFAULT 'Copilot edit',
-                    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_rev_art (article_id),
-                    INDEX idx_rev_usr (user_id),
-                    UNIQUE KEY uk_art_rev (article_id, revision_num)
-                );
-            """)
-
-            # 2. Auth Tables (Milestone 1)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    id            INT AUTO_INCREMENT PRIMARY KEY,
-                    email         VARCHAR(255) NOT NULL UNIQUE,
-                    password_hash VARCHAR(255) NULL,
-                    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    last_login_at DATETIME NULL,
-                    is_active     TINYINT(1) NOT NULL DEFAULT 1
-                );
-            """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS otp_codes (
-                    id         INT AUTO_INCREMENT PRIMARY KEY,
-                    email      VARCHAR(255) NOT NULL,
-                    code_hash  CHAR(64) NOT NULL,
-                    expires_at DATETIME NOT NULL,
-                    attempts   INT NOT NULL DEFAULT 0,
-                    used       TINYINT(1) NOT NULL DEFAULT 0,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    request_ip VARCHAR(64) NULL,
-                    INDEX idx_otp_email (email, created_at)
-                );
-            """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS auth_sessions (
-                    id           INT AUTO_INCREMENT PRIMARY KEY,
-                    user_id      INT NOT NULL,
-                    token_hash   CHAR(64) NOT NULL UNIQUE,
-                    expires_at   DATETIME NOT NULL,
-                    created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    last_seen_at DATETIME NULL,
-                    INDEX idx_sess_user (user_id)
-                );
-            """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS research_jobs (
-                    run_id            VARCHAR(64) PRIMARY KEY,
-                    user_id           INT NULL,
-                    topic             TEXT NOT NULL,
-                    tone              VARCHAR(100) NULL,
-                    audience          VARCHAR(100) NULL,
-                    target_length     VARCHAR(100) NULL,
-                    status            VARCHAR(30) NOT NULL DEFAULT 'pending',
-                    result_article_id INT NULL,
-                    error_message     TEXT NULL,
-                    trace_url         VARCHAR(512) NULL,
-                    created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    INDEX idx_job_user (user_id, status)
-                );
-            """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS job_events (
-                    id          INT AUTO_INCREMENT PRIMARY KEY,
-                    run_id      VARCHAR(64) NOT NULL,
-                    seq_id      INT NOT NULL,
-                    event_type  VARCHAR(50) NOT NULL,
-                    payload     MEDIUMTEXT NOT NULL,
-                    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE KEY uk_event_run_seq (run_id, seq_id)
-                );
-            """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS password_attempts (
-                    id           INT AUTO_INCREMENT PRIMARY KEY,
-                    email        VARCHAR(255) NOT NULL,
-                    ip           VARCHAR(64) NULL,
-                    attempted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_pwd_attempt_email (email, attempted_at),
-                    INDEX idx_pwd_attempt_ip (ip, attempted_at)
-                );
-            """)
-
-            # Ensure user_id and trace_url columns exist on pre-existing tables
-            for tbl in ["articles", "chat_history", "telemetry_runs", "security_audit_logs", "user_memory", "chat_sessions", "article_revisions"]:
-                _ensure_column_exists(conn, is_tidb, tbl, "user_id", "INT NULL")
-            _ensure_column_exists(conn, is_tidb, "telemetry_runs", "trace_url", "VARCHAR(512) NULL")
-            _ensure_column_exists(conn, is_tidb, "research_jobs", "trace_url", "VARCHAR(512) NULL")
-            _ensure_column_exists(conn, is_tidb, "users", "password_hash", "VARCHAR(255) NULL")
+            # Idempotent column migrations for pre-existing databases
+            for table, col, tidb_type, _sqlite_type in MIGRATION_COLUMNS:
+                _ensure_column_exists(conn, is_tidb, table, col, tidb_type)
 
         else:
-            # SQLite Backend
-            conn.executescript("""
-                CREATE TABLE IF NOT EXISTS schema_version (
-                    version INTEGER PRIMARY KEY,
-                    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-                );
+            # SQLite: execute all CREATE TABLE statements individually then indexes
+            for ddl in build_sqlite_ddl():
+                conn.execute(ddl)
 
-                CREATE TABLE IF NOT EXISTS articles (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id     INTEGER NULL,
-                    topic       TEXT NOT NULL,
-                    content     TEXT NOT NULL,
-                    word_count  INTEGER NOT NULL DEFAULT 0,
-                    tone        TEXT DEFAULT 'Professional & Authoritative',
-                    audience    TEXT DEFAULT 'Software Engineers & Developers',
-                    target_length TEXT DEFAULT 'Standard Blog (1,500 - 2,000 words)',
-                    generation_time_sec REAL DEFAULT 0,
-                    tokens_used INTEGER DEFAULT 0,
-                    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-                    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
-                );
+            for idx_sql in SQLITE_EXTRA_INDEXES:
+                try:
+                    conn.execute(idx_sql)
+                except Exception:
+                    pass  # index already exists or table not yet present
 
-                CREATE TABLE IF NOT EXISTS chat_history (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id     INTEGER NULL,
-                    article_id  INTEGER NOT NULL,
-                    role        TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
-                    content     TEXT NOT NULL,
-                    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-                    FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
-                );
-
-                CREATE TABLE IF NOT EXISTS telemetry_runs (
-                    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id           INTEGER NULL,
-                    article_id        INTEGER,
-                    topic             TEXT NOT NULL,
-                    duration_sec      REAL DEFAULT 0,
-                    tokens_estimated  INTEGER DEFAULT 0,
-                    models_used       TEXT DEFAULT '[]',
-                    fallback_count    INTEGER DEFAULT 0,
-                    fallback_events   TEXT DEFAULT '[]',
-                    readability_score REAL DEFAULT 0,
-                    readability_grade TEXT DEFAULT 'N/A',
-                    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
-                    FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE SET NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS security_audit_logs (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id     INTEGER NULL,
-                    event_type  TEXT NOT NULL,
-                    details     TEXT NOT NULL,
-                    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-                );
-
-                CREATE TABLE IF NOT EXISTS system_cache (
-                    cache_key   TEXT PRIMARY KEY,
-                    namespace   TEXT NOT NULL,
-                    payload     TEXT NOT NULL,
-                    meta_info   TEXT NULL,
-                    user_id     INTEGER NULL,
-                    created_at  TEXT NOT NULL,
-                    expires_at  TEXT NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_cache_ns_exp ON system_cache(namespace, expires_at);
-                CREATE INDEX IF NOT EXISTS idx_cache_user ON system_cache(user_id);
-                CREATE INDEX IF NOT EXISTS idx_cache_created ON system_cache(created_at);
-
-                CREATE TABLE IF NOT EXISTS research_cache (
-                    url_hash        TEXT PRIMARY KEY,
-                    url             TEXT NOT NULL,
-                    compact_content TEXT NOT NULL,
-                    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
-                );
-
-                CREATE TABLE IF NOT EXISTS user_memory (
-                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id      INTEGER NULL,
-                    user_key     TEXT NOT NULL DEFAULT 'default_user',
-                    memory_type  TEXT NOT NULL DEFAULT 'preference',
-                    memory_key   TEXT NOT NULL,
-                    memory_value TEXT NOT NULL,
-                    updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
-                    UNIQUE(user_key, memory_key)
-                );
-
-                CREATE TABLE IF NOT EXISTS chat_sessions (
-                    article_id      INTEGER PRIMARY KEY,
-                    user_id         INTEGER NULL,
-                    running_summary TEXT,
-                    message_count   INTEGER DEFAULT 0,
-                    updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
-                    FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
-                );
-
-                CREATE TABLE IF NOT EXISTS article_revisions (
-                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id      INTEGER NULL,
-                    article_id   INTEGER NOT NULL,
-                    revision_num INTEGER NOT NULL,
-                    content      TEXT NOT NULL,
-                    summary      TEXT DEFAULT 'Copilot edit',
-                    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-                    FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE,
-                    UNIQUE(article_id, revision_num)
-                );
-
-                CREATE TABLE IF NOT EXISTS users (
-                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                    email         TEXT NOT NULL UNIQUE,
-                    password_hash TEXT NULL,
-                    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-                    last_login_at TEXT NULL,
-                    is_active     INTEGER NOT NULL DEFAULT 1
-                );
-
-                CREATE TABLE IF NOT EXISTS otp_codes (
-                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                    email      TEXT NOT NULL,
-                    code_hash  TEXT NOT NULL,
-                    expires_at TEXT NOT NULL,
-                    attempts   INTEGER NOT NULL DEFAULT 0,
-                    used       INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                    request_ip TEXT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS auth_sessions (
-                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id      INTEGER NOT NULL,
-                    token_hash   TEXT NOT NULL UNIQUE,
-                    expires_at   TEXT NOT NULL,
-                    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-                    last_seen_at TEXT NULL,
-                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-                );
-
-                CREATE TABLE IF NOT EXISTS research_jobs (
-                    run_id            TEXT PRIMARY KEY,
-                    user_id           INTEGER NULL,
-                    topic             TEXT NOT NULL,
-                    tone              TEXT NULL,
-                    audience          TEXT NULL,
-                    target_length     TEXT NULL,
-                    status            TEXT NOT NULL DEFAULT 'pending',
-                    result_article_id INTEGER NULL,
-                    error_message     TEXT NULL,
-                    trace_url         TEXT NULL,
-                    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
-                    updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
-                );
-
-                CREATE TABLE IF NOT EXISTS job_events (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    run_id      TEXT NOT NULL,
-                    seq_id      INTEGER NOT NULL,
-                    event_type  TEXT NOT NULL,
-                    payload     TEXT NOT NULL,
-                    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-                );
-
-                CREATE TABLE IF NOT EXISTS password_attempts (
-                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                    email        TEXT NOT NULL,
-                    ip           TEXT NULL,
-                    attempted_at TEXT NOT NULL DEFAULT (datetime('now'))
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_chat_article ON chat_history(article_id);
-                CREATE INDEX IF NOT EXISTS idx_articles_created ON articles(created_at DESC);
-                CREATE INDEX IF NOT EXISTS idx_telemetry_created ON telemetry_runs(created_at DESC);
-                CREATE INDEX IF NOT EXISTS idx_user_mem ON user_memory(user_key);
-                CREATE INDEX IF NOT EXISTS idx_rev_art ON article_revisions(article_id);
-                CREATE INDEX IF NOT EXISTS idx_otp_email ON otp_codes(email, created_at);
-                CREATE INDEX IF NOT EXISTS idx_sess_user ON auth_sessions(user_id);
-                CREATE INDEX IF NOT EXISTS idx_job_user ON research_jobs(user_id, status);
-                CREATE INDEX IF NOT EXISTS idx_pwd_attempt_email ON password_attempts(email, attempted_at);
-                CREATE INDEX IF NOT EXISTS idx_pwd_attempt_ip ON password_attempts(ip, attempted_at);
-            """)
-
-            # Ensure user_id column exists on pre-existing tables if created earlier
-            for tbl in ["articles", "chat_history", "telemetry_runs", "security_audit_logs", "user_memory", "chat_sessions", "article_revisions"]:
-                _ensure_column_exists(conn, is_tidb, tbl, "user_id", "INTEGER")
-            _ensure_column_exists(conn, is_tidb, "telemetry_runs", "trace_url", "TEXT")
-            _ensure_column_exists(conn, is_tidb, "research_jobs", "trace_url", "TEXT")
-            _ensure_column_exists(conn, is_tidb, "users", "password_hash", "TEXT")
-
-            conn.executescript("""
-                CREATE INDEX IF NOT EXISTS idx_art_user ON articles(user_id);
-                CREATE INDEX IF NOT EXISTS idx_chat_user ON chat_history(user_id);
-                CREATE INDEX IF NOT EXISTS idx_telem_user ON telemetry_runs(user_id);
-            """)
+            # Idempotent column migrations for pre-existing databases
+            for table, col, _tidb_type, sqlite_type in MIGRATION_COLUMNS:
+                _ensure_column_exists(conn, is_tidb, table, col, sqlite_type)
 
         _ensure_job_event_unique_index(conn, is_tidb)
 
@@ -937,19 +578,31 @@ def init_db():
 # ---------------------------------------------------------------------------
 
 def get_or_create_user(email: str) -> Dict[str, Any]:
-    """Retrieve existing user by normalized email, or create a new user on first verified login."""
+    """Retrieve existing user by normalized email, or create a new user on first verified login.
+
+    Uses INSERT OR IGNORE / INSERT IGNORE to eliminate the SELECT-then-INSERT
+    race condition where two concurrent OTP verifications for the same new email
+    could both see no existing row and both attempt an INSERT, causing a duplicate
+    key error on the unique email column.
+    """
     norm_email = email.strip().lower()
     with get_connection() as (conn, is_tidb):
-        cursor = _exec(conn, is_tidb, "SELECT id, email, password_hash, created_at, last_login_at, is_active FROM users WHERE email = ?", (norm_email,))
-        row = cursor.fetchone()
-        if row:
-            return _row_to_dict(row)
+        if is_tidb:
+            # MySQL / TiDB: INSERT IGNORE silently skips on duplicate key
+            _exec(conn, is_tidb, "INSERT IGNORE INTO users (email, is_active) VALUES (?, 1)", (norm_email,))
+        else:
+            # SQLite: INSERT OR IGNORE does the same
+            _exec(conn, is_tidb, "INSERT OR IGNORE INTO users (email, is_active) VALUES (?, 1)", (norm_email,))
 
-        cursor = _exec(conn, is_tidb, "INSERT INTO users (email, is_active) VALUES (?, 1)", (norm_email,))
-        user_id = cursor.lastrowid
-        cursor = _exec(conn, is_tidb, "SELECT id, email, password_hash, created_at, last_login_at, is_active FROM users WHERE id = ?", (user_id,))
-        new_row = cursor.fetchone()
-        return _row_to_dict(new_row)
+        # Always fetch the canonical row (works for both the newly inserted and
+        # the already-existing case).
+        cursor = _exec(
+            conn, is_tidb,
+            "SELECT id, email, password_hash, created_at, last_login_at, is_active FROM users WHERE email = ?",
+            (norm_email,),
+        )
+        row = cursor.fetchone()
+        return _row_to_dict(row)
 
 
 def get_user_by_id(user_id: int) -> Optional[Dict[str, Any]]:
@@ -1335,9 +988,69 @@ def get_articles(limit=50, user_id: Optional[int] = None, offset: int = 0, inclu
         return _rows_to_dicts(rows)
 
 
-def get_article_summaries(limit: int = 100, offset: int = 0, user_id: Optional[int] = None):
-    """Fetch lightweight article summaries (no ``content`` column) for list endpoints."""
-    return get_articles(limit=limit, user_id=user_id, offset=offset, include_content=False)
+def get_article_summaries(
+    limit: int = 20,
+    offset: int = 0,
+    user_id: Optional[int] = None,
+    before_id: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """Fetch lightweight article summaries (no ``content`` column) for list endpoints.
+
+    Supports keyset (cursor) pagination via ``before_id``: when supplied, only
+    rows with ``id < before_id`` are returned, ordered newest-first.  This is
+    O(1) regardless of page depth, unlike OFFSET which degrades linearly.
+    ``offset`` is still accepted for backward-compat callers but is ignored when
+    ``before_id`` is provided.
+    """
+    safe_limit = _clamp_limit(limit, default=20, maximum=101)  # +1 so caller can detect has_more
+    columns = (
+        "id, user_id, topic, word_count, tone, audience, target_length,"
+        " generation_time_sec, tokens_used, created_at, updated_at"
+    )
+    with get_connection() as (conn, is_tidb):
+        if before_id is not None:
+            if user_id is not None:
+                cursor = _exec(
+                    conn, is_tidb,
+                    f"SELECT {columns} FROM articles WHERE user_id = ? AND id < ?"
+                    f" ORDER BY id DESC LIMIT ?",
+                    (user_id, before_id, safe_limit),
+                )
+            else:
+                cursor = _exec(
+                    conn, is_tidb,
+                    f"SELECT {columns} FROM articles WHERE id < ?"
+                    f" ORDER BY id DESC LIMIT ?",
+                    (before_id, safe_limit),
+                )
+        else:
+            safe_offset = _clamp_offset(offset)
+            if user_id is not None:
+                cursor = _exec(
+                    conn, is_tidb,
+                    f"SELECT {columns} FROM articles WHERE user_id = ?"
+                    f" ORDER BY id DESC LIMIT ? OFFSET ?",
+                    (user_id, safe_limit, safe_offset),
+                )
+            else:
+                cursor = _exec(
+                    conn, is_tidb,
+                    f"SELECT {columns} FROM articles ORDER BY id DESC LIMIT ? OFFSET ?",
+                    (safe_limit, safe_offset),
+                )
+        rows = cursor.fetchall()
+        return _rows_to_dicts(rows)
+
+
+def count_articles(user_id: Optional[int] = None) -> int:
+    """Return the total number of articles owned by the given user (or all articles)."""
+    with get_connection() as (conn, is_tidb):
+        if user_id is not None:
+            cursor = _exec(conn, is_tidb, "SELECT COUNT(*) AS cnt FROM articles WHERE user_id = ?", (user_id,))
+        else:
+            cursor = _exec(conn, is_tidb, "SELECT COUNT(*) AS cnt FROM articles", ())
+        row = cursor.fetchone()
+        return int(_get_value(row, is_tidb, "cnt", 0) or 0)
 
 
 # Alias for backward compatibility
@@ -2492,5 +2205,12 @@ def get_job_events(run_id: str, after_seq_id: int = 0, limit: int = 2000) -> Lis
         return result
 
 
-# Auto-initialize database on import
-init_db()
+# init_db() is called explicitly by:
+#   - backend/main.py lifespan (production FastAPI startup)
+#   - tests/conftest.py isolated_database fixture (per-test reset)
+#   - crew.py / app.py entry points via their own startup paths
+# It is intentionally NOT called here at module level so that:
+#   1. Tests can set RESEARCH_STUDIO_DB_PATH in conftest before the first
+#      connection is opened, without racing module-level execution.
+#   2. Importing database.py in unit tests that don't need a DB doesn't
+#      create a stale file or fail when the path isn't writable yet.

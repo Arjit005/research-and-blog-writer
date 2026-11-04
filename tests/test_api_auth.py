@@ -159,13 +159,14 @@ def test_articles_crud_and_user_scoping():
     # User 1 can list their article
     list_resp1 = client.get("/api/v1/articles", headers={"Authorization": f"Bearer {u1_token}"})
     assert list_resp1.status_code == 200
-    assert len(list_resp1.json()) == 1
-    assert list_resp1.json()[0]["topic"] == "Quantum Computing"
+    data1 = list_resp1.json()
+    assert len(data1["items"]) == 1
+    assert data1["items"][0]["topic"] == "Quantum Computing"
 
     # User 2 cannot see User 1's article in listing
     list_resp2 = client.get("/api/v1/articles", headers={"Authorization": f"Bearer {u2_token}"})
     assert list_resp2.status_code == 200
-    assert len(list_resp2.json()) == 0
+    assert len(list_resp2.json()["items"]) == 0
 
     # User 2 cannot access User 1's article by ID
     get_resp2 = client.get(f"/api/v1/articles/{art_id}", headers={"Authorization": f"Bearer {u2_token}"})

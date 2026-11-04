@@ -245,14 +245,40 @@ class CitationGuard:
             anchor = match.group(1)
             url = match.group(2)
             try:
-                domain = urllib.parse.urlparse(url).netloc.lower()
-                if url not in self.verified_urls and domain not in self.verified_domains:
-                    flagged_urls.append(url)
-                    return f"{anchor} `[unverified citation: {url}]`"
+                parsed = urllib.parse.urlparse(url)
+                # Require an exact URL match first.  Domain-only matching was too
+                # permissive: visiting docs.python.org/3/library/os would allow
+                # the model to fabricate any link on docs.python.org and pass
+                # the audit.  We still fall back to domain matching as a
+                # reasonable allowance for URL-normalisation differences (e.g.
+                # trailing slashes, minor query-string variations), but only
+                # when the candidate URL shares a path *prefix* with at least
+                # one verified URL on the same domain — not for arbitrary paths.
+                domain = parsed.netloc.lower()
+                if url in self.verified_urls:
+                    return match.group(0)
+
+                # Build a normalised path prefix for the candidate.
+                candidate_path = parsed.path.rstrip("/")
+
+                for visited in self.verified_urls:
+                    try:
+                        v = urllib.parse.urlparse(visited)
+                        if v.netloc.lower() != domain:
+                            continue
+                        visited_path = v.path.rstrip("/")
+                        # Accept if the candidate path starts with the visited path
+                        # (covers paginated sub-paths of a visited root) or vice-versa.
+                        if candidate_path.startswith(visited_path) or visited_path.startswith(candidate_path):
+                            return match.group(0)
+                    except Exception:
+                        continue
+
+                flagged_urls.append(url)
+                return f"{anchor} `[unverified citation: {url}]`"
             except Exception:
                 flagged_urls.append(url)
                 return f"{anchor} `[invalid citation link]`"
-            return match.group(0)
 
         final_text = link_regex.sub(verify_link, cleaned_text)
         return final_text, flagged_urls, stripped_images

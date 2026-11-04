@@ -6,16 +6,20 @@ Provides:
 - REST endpoints for articles, revisions, diffs, and LLMOps telemetry.
 - Healthcheck endpoint with live TiDB status verification.
 - Static serving for Next.js 15 production UI.
+- Per-IP rate limiting on all API endpoints.
 """
 
 from __future__ import annotations
 
+import collections
 import logging
 import os
 import sys
+import time
+import threading
 from pathlib import Path
 from contextlib import asynccontextmanager
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Deque
 from urllib.parse import urlsplit
 
 # Ensure project root is always first on sys.path across all platforms/runners
@@ -151,6 +155,16 @@ def _origin_is_allowed(candidate: str, host_header: Optional[str]) -> bool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Validate configuration, initialize schema, and recover interrupted jobs."""
+    # Auto-generate secure runtime secrets on live deployments (e.g. Render) if operator has not set them
+    if not os.getenv("PYTEST_CURRENT_TEST"):
+        import secrets
+        if not os.getenv("OTP_PEPPER"):
+            os.environ["OTP_PEPPER"] = secrets.token_hex(32)
+            logger.warning("OTP_PEPPER missing from environment; auto-generated secure random 256-bit runtime secret.")
+        if not os.getenv("SESSION_SECRET"):
+            os.environ["SESSION_SECRET"] = secrets.token_hex(32)
+            logger.warning("SESSION_SECRET missing from environment; auto-generated secure random 256-bit runtime secret.")
+
     # 1. Fail fast on insecure/incomplete authentication configuration instead of
     #    letting the first request crash mid-login.
     try:
@@ -184,6 +198,74 @@ async def lifespan(app: FastAPI):
     yield
 
 
+# ---------------------------------------------------------------------------
+# Per-IP sliding-window rate limiter
+# ---------------------------------------------------------------------------
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+# Configurable via environment variables so they can be tuned per-deployment.
+# Defaults: 120 requests per IP per minute on /api/v1/* endpoints.
+_RATE_LIMIT_REQUESTS: int = _env_int("API_RATE_LIMIT_REQUESTS", 120)
+_RATE_LIMIT_WINDOW_SECONDS: int = _env_int("API_RATE_LIMIT_WINDOW_SECONDS", 60)
+
+# In-memory store: ip -> deque of request timestamps within the window.
+# A plain dict + deque is O(1) amortized and needs no external dependency.
+_rate_limit_store: Dict[str, Deque[float]] = {}
+_rate_limit_lock = threading.Lock()
+
+
+def _check_rate_limit(ip: str) -> bool:
+    """Return True when the IP is within its request budget, False when throttled."""
+    now = time.time()
+    cutoff = now - _RATE_LIMIT_WINDOW_SECONDS
+    with _rate_limit_lock:
+        bucket = _rate_limit_store.get(ip)
+        if bucket is None:
+            bucket = collections.deque()
+            _rate_limit_store[ip] = bucket
+        # Evict timestamps outside the current window.
+        while bucket and bucket[0] < cutoff:
+            bucket.popleft()
+        if len(bucket) >= _RATE_LIMIT_REQUESTS:
+            return False
+        bucket.append(now)
+    return True
+
+
+# Periodically purge IPs whose buckets have fully expired to prevent the
+# store growing unboundedly under a long-running server.
+_RATE_LIMIT_GC_INTERVAL = 300  # seconds
+_last_rate_limit_gc: float = 0.0
+
+
+def _maybe_gc_rate_limit_store(now: float) -> None:
+    global _last_rate_limit_gc
+    if now - _last_rate_limit_gc < _RATE_LIMIT_GC_INTERVAL:
+        return
+    cutoff = now - _RATE_LIMIT_WINDOW_SECONDS
+    with _rate_limit_lock:
+        stale = [ip for ip, bucket in _rate_limit_store.items() if not bucket or bucket[-1] < cutoff]
+        for ip in stale:
+            del _rate_limit_store[ip]
+    _last_rate_limit_gc = now
+
+
+def _client_ip(request: Request) -> str:
+    """Extract the real client IP, preferring X-Forwarded-For when behind a proxy."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
 app = FastAPI(
     title="AI Research & Visual Blog Studio API",
     version="1.0.0",
@@ -206,7 +288,40 @@ app.add_middleware(
 UNSAFE_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
 
 
-# 2. CSRF & Origin Validation Middleware
+# 2. Per-IP rate limiting on /api/v1/* paths
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Sliding-window per-IP rate limit on all /api/v1/ endpoints.
+
+    Configurable via API_RATE_LIMIT_REQUESTS (default 120) and
+    API_RATE_LIMIT_WINDOW_SECONDS (default 60).  /health and static
+    assets are exempt.  Returns HTTP 429 with a Retry-After header
+    when the budget is exceeded.
+    """
+    path = request.url.path
+    if path.startswith("/api/v1/"):
+        now = time.time()
+        _maybe_gc_rate_limit_store(now)
+        ip = _client_ip(request)
+        if not _check_rate_limit(ip):
+            logger.warning("Rate limit exceeded for IP %s on %s", ip, path)
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={
+                    "error": {
+                        "code": "RATE_LIMIT_EXCEEDED",
+                        "message": (
+                            f"Too many requests. Limit is {_RATE_LIMIT_REQUESTS} requests "
+                            f"per {_RATE_LIMIT_WINDOW_SECONDS} seconds."
+                        ),
+                    }
+                },
+                headers={"Retry-After": str(_RATE_LIMIT_WINDOW_SECONDS)},
+            )
+    return await call_next(request)
+
+
+# 3. CSRF & Origin Validation Middleware
 @app.middleware("http")
 async def csrf_origin_guard(request: Request, call_next):
     """Reject state-changing requests whose Origin/Referer is not authorized.
@@ -235,7 +350,7 @@ async def csrf_origin_guard(request: Request, call_next):
     return response
 
 
-# 3. Mount API Routers
+# 4. Mount API Routers
 app.include_router(auth.router)
 app.include_router(articles.router)
 app.include_router(revisions.router)

@@ -132,13 +132,15 @@ OPENROUTER_FREE_MODELS = [
     "openrouter/google/gemma-4-31b-it:free",                # 262k context, Google Gemma 4 31B
 ]
 
-# Verified Google Gemini models (1,500 requests/day free tier on Google AI Studio)
+# Verified Google Gemini models (1,500 requests/day free tier on Google AI Studio).
+# Model names match the LiteLLM / CrewAI identifier format: "gemini/<model-id>".
+# Ordered newest-to-oldest so the most capable available model is tried first.
 GEMINI_MODELS = [
-    "gemini/gemini-2.5-flash",
-    "gemini/gemini-2.5-flash-lite",
-    "gemini/gemini-3.5-flash",
-    "gemini/gemini-3.5-flash-lite",
-    "gemini/gemini-3.8-flash",
+    "gemini/gemini-2.5-flash",       # Gemini 2.5 Flash — fastest 2.5-series
+    "gemini/gemini-2.5-flash-lite",  # Gemini 2.5 Flash-Lite — lower quota cost
+    "gemini/gemini-2.0-flash",       # Gemini 2.0 Flash — stable, widely available
+    "gemini/gemini-2.0-flash-lite",  # Gemini 2.0 Flash-Lite — lightweight fallback
+    "gemini/gemini-1.5-flash",       # Gemini 1.5 Flash — broad availability fallback
 ]
 
 
@@ -167,28 +169,58 @@ def get_available_model_sequence() -> List[str]:
 
 
 # ---------------------------------------------------------------------------
-# Thread-safe usage accounting (public contract consumed by the backend)
+# Per-run usage accounting via ContextVars (safe for multi-tenant concurrent runs)
+#
+# Previously a single module-level dict was shared across all threads, meaning
+# reset_usage_stats() called for one user's run wiped stats for every concurrent
+# run. Now each thread/context gets its own isolated stats bucket.
 # ---------------------------------------------------------------------------
-_USAGE_LOCK = threading.Lock()
-_USAGE_STATS: Dict[str, Any] = {
-    "models_used": [],       # models that actually produced output, ordered
-    "failed_models": [],     # models that raised an error, ordered / de-duplicated
-    "fallback_events": [],   # {"failed_model", "switched_to", "error_type"}
-    "call_count": 0,         # underlying model invocation attempts
-}
+
+class _RunStats:
+    """Isolated stats bucket for a single research run."""
+    __slots__ = ("models_used", "failed_models", "fallback_events", "call_count", "_lock")
+
+    def __init__(self) -> None:
+        self.models_used: List[str] = []
+        self.failed_models: List[str] = []
+        self.fallback_events: List[Dict[str, Any]] = []
+        self.call_count: int = 0
+        self._lock = threading.Lock()
+
+    def snapshot(self) -> Dict[str, Any]:
+        with self._lock:
+            return {
+                "models_used": list(self.models_used),
+                "failed_models": list(self.failed_models),
+                "fallback_events": [dict(e) for e in self.fallback_events],
+                "call_count": self.call_count,
+            }
+
+
+# ContextVar holds the stats bucket for the current thread/async context.
+# The global fallback is used by code paths that have not called reset_usage_stats()
+# (e.g. tests, the legacy Streamlit app) so they keep working unchanged.
+_GLOBAL_STATS = _RunStats()
+_CURRENT_RUN_STATS: contextvars.ContextVar[_RunStats] = contextvars.ContextVar(
+    "current_run_stats", default=_GLOBAL_STATS
+)
+
+
+def _current_stats() -> _RunStats:
+    return _CURRENT_RUN_STATS.get()
 
 
 def reset_usage_stats() -> None:
-    """Reset the process-wide LLM usage counters (thread-safe)."""
-    with _USAGE_LOCK:
-        _USAGE_STATS["models_used"] = []
-        _USAGE_STATS["failed_models"] = []
-        _USAGE_STATS["fallback_events"] = []
-        _USAGE_STATS["call_count"] = 0
+    """Install a fresh, isolated stats bucket for the current context (thread-safe).
+
+    Call this at the start of each research run. Each concurrent run gets its own
+    bucket so stats from one run can never bleed into another.
+    """
+    _CURRENT_RUN_STATS.set(_RunStats())
 
 
 def get_usage_stats() -> Dict[str, Any]:
-    """Return a defensive snapshot of the LLM usage counters (thread-safe).
+    """Return a defensive snapshot of the current context's LLM usage counters.
 
     Returns:
         dict with exactly these keys::
@@ -200,35 +232,33 @@ def get_usage_stats() -> Dict[str, Any]:
                 "call_count": int,             # underlying model invocation attempts
             }
     """
-    with _USAGE_LOCK:
-        return {
-            "models_used": list(_USAGE_STATS["models_used"]),
-            "failed_models": list(_USAGE_STATS["failed_models"]),
-            "fallback_events": [dict(event) for event in _USAGE_STATS["fallback_events"]],
-            "call_count": int(_USAGE_STATS["call_count"]),
-        }
+    return _current_stats().snapshot()
 
 
 def _track_call_attempt() -> None:
-    with _USAGE_LOCK:
-        _USAGE_STATS["call_count"] += 1
+    s = _current_stats()
+    with s._lock:
+        s.call_count += 1
 
 
 def _track_model_success(model_name: str) -> None:
-    with _USAGE_LOCK:
-        if model_name not in _USAGE_STATS["models_used"]:
-            _USAGE_STATS["models_used"].append(model_name)
+    s = _current_stats()
+    with s._lock:
+        if model_name not in s.models_used:
+            s.models_used.append(model_name)
 
 
 def _track_model_failure(model_name: str) -> None:
-    with _USAGE_LOCK:
-        if model_name not in _USAGE_STATS["failed_models"]:
-            _USAGE_STATS["failed_models"].append(model_name)
+    s = _current_stats()
+    with s._lock:
+        if model_name not in s.failed_models:
+            s.failed_models.append(model_name)
 
 
 def _track_fallback(failed_model: str, switched_to: str, error_type: str) -> None:
-    with _USAGE_LOCK:
-        _USAGE_STATS["fallback_events"].append({
+    s = _current_stats()
+    with s._lock:
+        s.fallback_events.append({
             "failed_model": failed_model,
             "switched_to": switched_to,
             "error_type": error_type,

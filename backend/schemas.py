@@ -85,6 +85,19 @@ class ArticleDetail(ArticleSummary):
     user_id: Optional[int] = None
 
 
+class ArticleListResponse(BaseModel):
+    """Paginated article list with a cursor for the next page.
+
+    ``next_cursor`` is the ``id`` of the last item returned.  Pass it as
+    ``?cursor=<value>`` on the next request to fetch the following page.
+    ``None`` means there are no more pages.
+    """
+    items: List[ArticleSummary]
+    total: int
+    limit: int
+    next_cursor: Optional[int] = None
+
+
 class ArticleCreateRequest(BaseModel):
     topic: str = Field(..., min_length=3, max_length=500, description="Article topic")
     content: str = Field(..., min_length=10, max_length=500_000, description="Article markdown content (max 500KB)")

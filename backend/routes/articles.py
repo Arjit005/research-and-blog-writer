@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -12,6 +12,7 @@ from backend.deps import get_current_user
 from backend.schemas import (
     ArticleSummary,
     ArticleDetail,
+    ArticleListResponse,
     ArticleCreateRequest,
     CopilotEditRequest,
     CopilotEditResponse,
@@ -49,29 +50,41 @@ def _rewrite_with_copilot(content: str, instruction: str) -> str:
     return rewritten
 
 
-@router.get("", response_model=List[ArticleSummary])
+@router.get("", response_model=ArticleListResponse)
 def list_articles(
-    limit: int = Query(100, ge=1, le=500, description="Maximum articles to return"),
-    offset: int = Query(0, ge=0, description="Pagination offset"),
+    limit: int = Query(20, ge=1, le=100, description="Maximum articles to return per page"),
+    cursor: Optional[int] = Query(None, ge=1, description="Cursor (article id) for the next page"),
     user: Dict[str, Any] = Depends(get_current_user),
-) -> List[ArticleSummary]:
+) -> ArticleListResponse:
     """Retrieve paginated article summaries authored by the current user.
 
-    Only summary columns are selected (no full article content) so listing up to
-    500 rows never ships megabytes of markdown that ``ArticleSummary`` drops anyway.
+    Uses keyset (cursor) pagination: pass the ``next_cursor`` from a previous
+    response as ``?cursor=<value>`` to fetch the next page.  Only summary
+    columns are selected — no full article content.
     """
-    articles = db.get_article_summaries(limit=limit, offset=offset, user_id=user["id"])
-    return [
-        ArticleSummary(
-            id=a["id"],
-            topic=a["topic"],
-            word_count=a["word_count"],
-            tone=a.get("tone"),
-            audience=a.get("audience"),
-            created_at=str(a.get("created_at", "")),
-        )
-        for a in articles
-    ]
+    articles = db.get_article_summaries(limit=limit + 1, offset=0, user_id=user["id"], before_id=cursor)
+    has_more = len(articles) > limit
+    page = articles[:limit]
+
+    total = db.count_articles(user_id=user["id"])
+    next_cursor = page[-1]["id"] if has_more and page else None
+
+    return ArticleListResponse(
+        items=[
+            ArticleSummary(
+                id=a["id"],
+                topic=a["topic"],
+                word_count=a["word_count"],
+                tone=a.get("tone"),
+                audience=a.get("audience"),
+                created_at=str(a.get("created_at", "")),
+            )
+            for a in page
+        ],
+        total=total,
+        limit=limit,
+        next_cursor=next_cursor,
+    )
 
 
 @router.get("/{article_id}", response_model=ArticleDetail)

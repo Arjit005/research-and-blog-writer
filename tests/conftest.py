@@ -13,11 +13,12 @@ Environment variables are set at import time, before any test module imports
 from __future__ import annotations
 
 import os
-import shutil
-import tempfile
 
-_TMP_DIR = tempfile.mkdtemp(prefix="research_studio_tests_")
-_TEST_DB_PATH = os.path.join(_TMP_DIR, "research_studio_test.db")
+# Use a flat file directly in the project root.  tempfile.mkdtemp() creates
+# subdirectories that cannot be written to inside the DSH file sandbox, but
+# direct paths in the workspace are writable.
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_TEST_DB_PATH = os.path.join(_PROJECT_ROOT, "research_studio_test.db")
 
 # --- Pin the database to an isolated temp file (must precede database import) ---
 os.environ["RESEARCH_STUDIO_DB_PATH"] = _TEST_DB_PATH
@@ -53,24 +54,37 @@ import pytest  # noqa: E402
 
 
 def _remove_test_db_files() -> None:
+    import gc
+    gc.collect()
     for suffix in ("", "-wal", "-shm"):
         try:
-            os.remove(_TEST_DB_PATH + suffix)
-        except FileNotFoundError:
+            target = _TEST_DB_PATH + suffix
+            if os.path.exists(target):
+                os.remove(target)
+        except (FileNotFoundError, PermissionError, OSError):
             pass
 
 
 @pytest.fixture(autouse=True)
 def isolated_database():
-    """Give every test a fresh, empty database (no order dependence)."""
+    """Give every test a fresh, empty database and reset in-process state."""
     import database as db
 
     _remove_test_db_files()
     db.init_db()
+
+    # Reset the API rate-limit store so tests don't exhaust the budget
+    # from prior tests sharing the same process.
+    try:
+        import backend.main as _bm
+        with _bm._rate_limit_lock:
+            _bm._rate_limit_store.clear()
+    except Exception:
+        pass
+
     yield
-    _remove_test_db_files()
 
 
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
-    """Clean up the temporary test database directory."""
-    shutil.rmtree(_TMP_DIR, ignore_errors=True)
+    """Clean up the test database file after the whole suite finishes."""
+    _remove_test_db_files()
