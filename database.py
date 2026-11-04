@@ -1048,18 +1048,85 @@ def rollback_article_revision_transaction(article_id: int, target_revision_id: i
         return True
 
 
-def delete_article(article_id: int, user_id: Optional[int] = None):
+def save_article_revision(
+    article_id: int,
+    content: str,
+    summary: str = "Revision",
+    author: str = "User",
+    user_id: Optional[int] = None,
+) -> int:
+    """Save an explicit revision snapshot for an article."""
+    with get_connection() as (conn, is_tidb):
+        cursor = _exec(
+            conn, is_tidb,
+            "SELECT COALESCE(MAX(revision_num), 0) + 1 AS next_rev FROM article_revisions WHERE article_id = ?",
+            (article_id,),
+        )
+        rev_row = cursor.fetchone()
+        next_rev = (rev_row["next_rev"] if is_tidb else rev_row[0]) or 1
+
+        _exec(
+            conn, is_tidb,
+            "INSERT INTO article_revisions (article_id, revision_num, content, summary, user_id) VALUES (?, ?, ?, ?, ?)",
+            (article_id, next_rev, content, summary, user_id),
+        )
+        return next_rev
+
+
+def get_article_revision(
+    article_id: int,
+    revision_num: int,
+    user_id: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """Retrieve a single revision by article_id and revision_num."""
+    with get_connection() as (conn, is_tidb):
+        if user_id is not None:
+            cursor = _exec(
+                conn, is_tidb,
+                """SELECT id, article_id, revision_num, content, summary, created_at, user_id
+                   FROM article_revisions
+                   WHERE article_id = ? AND revision_num = ? AND (user_id = ? OR user_id IS NULL)""",
+                (article_id, revision_num, user_id),
+            )
+        else:
+            cursor = _exec(
+                conn, is_tidb,
+                """SELECT id, article_id, revision_num, content, summary, created_at, user_id
+                   FROM article_revisions
+                   WHERE article_id = ? AND revision_num = ?""",
+                (article_id, revision_num),
+            )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def restore_article_revision(
+    article_id: int,
+    revision_num: int,
+    user_id: Optional[int] = None,
+) -> bool:
+    """Restore target revision by revision_num, snapshotting current state."""
+    rev = get_article_revision(article_id, revision_num, user_id=user_id)
+    if not rev:
+        return False
+    return rollback_article_revision_transaction(article_id, rev["id"], user_id=user_id)
+
+
+def delete_article(article_id: int, user_id: Optional[int] = None) -> bool:
     """Delete an article and its associated chat history, respecting user ownership."""
     with get_connection() as (conn, is_tidb):
         if user_id is not None:
-            _exec(conn, is_tidb, "DELETE FROM articles WHERE id = ? AND user_id = ?", (article_id, user_id))
+            cursor = _exec(conn, is_tidb, "DELETE FROM articles WHERE id = ? AND user_id = ?", (article_id, user_id))
+            affected = cursor.rowcount if hasattr(cursor, "rowcount") else 1
             _exec(conn, is_tidb, "DELETE FROM chat_history WHERE article_id = ? AND (user_id = ? OR user_id IS NULL)", (article_id, user_id))
             _exec(conn, is_tidb, "DELETE FROM article_revisions WHERE article_id = ? AND (user_id = ? OR user_id IS NULL)", (article_id, user_id))
+            return bool(affected and affected > 0)
         else:
-            _exec(conn, is_tidb, "DELETE FROM articles WHERE id = ?", (article_id,))
-            if is_tidb:
-                _exec(conn, is_tidb, "DELETE FROM chat_history WHERE article_id = ?", (article_id,))
-                _exec(conn, is_tidb, "DELETE FROM article_revisions WHERE article_id = ?", (article_id,))
+            cursor = _exec(conn, is_tidb, "DELETE FROM articles WHERE id = ?", (article_id,))
+            affected = cursor.rowcount if hasattr(cursor, "rowcount") else 1
+            _exec(conn, is_tidb, "DELETE FROM chat_history WHERE article_id = ?", (article_id,))
+            _exec(conn, is_tidb, "DELETE FROM article_revisions WHERE article_id = ?", (article_id,))
+            return bool(affected and affected > 0)
 
 
 # ---------------------------------------------------------------------------
