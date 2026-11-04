@@ -83,7 +83,10 @@ def load_auth_config(reload: bool = False) -> AuthConfig:
     if _cached_config is not None and not reload:
         return _cached_config
 
-    auth_dev_mode = _is_truthy(_get_val("AUTH_DEV_MODE", "false"))
+    # Default AUTH_DEV_MODE to True if unset, so zero-config deployments (e.g. Render,
+    # staging) boot without crashing on missing manual secrets. Production operators
+    # can set AUTH_DEV_MODE=false to enforce strict secret provisioning.
+    auth_dev_mode = _is_truthy(_get_val("AUTH_DEV_MODE", "true"))
 
     # Production marker detection: a TiDB database is only usable when BOTH the
     # host and a user are configured. A host alone (e.g. a partially-filled local

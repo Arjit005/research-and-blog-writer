@@ -134,6 +134,8 @@ OPENROUTER_FREE_MODELS = [
 
 # Verified Google Gemini models (1,500 requests/day free tier on Google AI Studio)
 GEMINI_MODELS = [
+    "gemini/gemini-2.5-flash",
+    "gemini/gemini-2.5-flash-lite",
     "gemini/gemini-3.5-flash",
     "gemini/gemini-3.5-flash-lite",
     "gemini/gemini-3.8-flash",
