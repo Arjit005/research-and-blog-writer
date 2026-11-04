@@ -9,9 +9,9 @@
 [![TiDB Cloud](https://img.shields.io/badge/TiDB_Cloud-Serverless_SQL-E30C34?logo=mysql&logoColor=white)](https://tidbcloud.com)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Next.js-15%20App%20Router-black?logo=next.js&logoColor=white)](https://nextjs.org)
-[![Streamlit](https://img.shields.io/badge/Streamlit-Web_Studio-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io)
+[![LangSmith](https://img.shields.io/badge/LangSmith-Observability_%26_Tracing-2563EB?logo=langchain&logoColor=white)](https://smith.langchain.com)
 [![OWASP LLM](https://img.shields.io/badge/OWASP-LLM_Top_10_Protected-0284C7)](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
-[![Tests](https://img.shields.io/badge/Tests-101%20Passed-success)](https://pytest.org)
+[![Tests](https://img.shields.io/badge/Tests-105%20Passed-success)](https://pytest.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 ---
@@ -396,24 +396,30 @@ uv run pytest tests/test_red_team.py -v
 
 ## 🚢 Cloud Deployment (Render & Streamlit Cloud)
 
-### Deploying on Render:
+### Deploying on Render (FastAPI + Next.js 15):
 1. Link your GitHub repository in [Render Dashboard](https://dashboard.render.com/).
 2. Select **Web Service**, runtime: **Python 3**.
 3. Set **Build Command**:
    ```bash
-   pip install -r requirements.txt
+   pip install -r requirements.txt && cd frontend && npm install && npm run build
    ```
 4. Set **Start Command**:
    ```bash
-   streamlit run app.py --server.port $PORT --server.address 0.0.0.0
+   uvicorn backend.main:app --host 0.0.0.0 --port $PORT
    ```
 5. Add your Environment Variables:
-   - `OPENROUTER_API_KEY`
-   - `TIDB_HOST`
-   - `TIDB_PORT`
-   - `TIDB_USER`
-   - `TIDB_PASSWORD`
-   - `TIDB_DATABASE`
+   - `OPENROUTER_API_KEY`: Your OpenRouter API key
+   - `TIDB_HOST`: e.g. `gateway01.ap-northeast-1.prod.aws.tidbcloud.com`
+   - `TIDB_PORT`: `4000`
+   - `TIDB_USER`: TiDB user
+   - `TIDB_PASSWORD`: TiDB password
+   - `TIDB_DATABASE`: `research_studio` (or `test`)
+   - `OTP_PEPPER`: 32-byte hex secret for HMAC hashing
+   - `SESSION_SECRET`: 32-byte hex secret for cookie signing
+   - `AUTH_DEV_MODE`: `false` (or `true` if bypassing SMTP in staging)
+   - `LANGSMITH_API_KEY`: Your LangSmith API key for end-to-end tracing
+   - `LANGSMITH_TRACING`: `true`
+   - `LANGSMITH_PROJECT`: `research-and-blog-writer`
 
 ---
 
