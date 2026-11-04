@@ -168,6 +168,7 @@ class ResearchAndBlogWriter:
                 "Entity & Verified Source Registry with full URLs."
             ),
             agent=self.research(),
+            async_execution=True,
         )
 
     @task
@@ -187,7 +188,7 @@ class ResearchAndBlogWriter:
                 "curated citations."
             ),
             agent=self.content_analyst(),
-            context=[self.research_the_given_topic_task()],
+            async_execution=True,
         )
 
     @task

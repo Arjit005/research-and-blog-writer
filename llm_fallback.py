@@ -37,22 +37,32 @@ OPENROUTER_FREE_MODELS = [
     "openrouter/google/gemma-4-31b-it:free",                # 262k context, Google Gemma 4 31B
 ]
 
+# Verified Google Gemini models (1,500 requests/day free tier on Google AI Studio)
+GEMINI_MODELS = [
+    "gemini/gemini-3.5-flash",
+    "gemini/gemini-3.5-flash-lite",
+    "gemini/gemini-3.8-flash",
+]
+
 def get_available_model_sequence() -> List[str]:
-    """Build the fallback sequence based on available API keys."""
+    """Build the fallback sequence, prioritizing high-quota Gemini first, then OpenRouter."""
     seq: List[str] = []
     
-    or_key = get_openrouter_key()
     gemini_key = get_gemini_key()
+    or_key = get_openrouter_key()
+
+    # Prioritize Google Gemini first (1,500 req/day free vs OpenRouter 50 req/day)
+    if gemini_key:
+        os.environ["GEMINI_API_KEY"] = gemini_key
+        seq.extend(GEMINI_MODELS)
 
     if or_key:
-        # Ensure OPENROUTER_API_KEY is normalized in environment for CrewAI / LiteLLM
         os.environ["OPENROUTER_API_KEY"] = or_key
+        os.environ["OPEN_ROUTER_API_KEY"] = or_key
         seq.extend(OPENROUTER_FREE_MODELS)
 
-    if gemini_key:
-        seq.append("gemini/gemini-2.5-flash")
-
     if not seq:
+        seq.extend(GEMINI_MODELS)
         seq.extend(OPENROUTER_FREE_MODELS)
 
     return seq
@@ -91,17 +101,24 @@ class FallbackLLM(BaseLLM):
 
         def _execute_network_call() -> str:
             last_error = None
+            skip_openrouter = False
             for model_name in self.models:
+                if skip_openrouter and model_name.startswith("openrouter/"):
+                    continue
                 try:
                     inst = self._get_instance(model_name)
                     result = inst.call(messages=messages, callbacks=callbacks, **kwargs)
                     return str(result)
                 except Exception as e:
+                    err_lower = str(e).lower()
                     print(
                         f"⚠️ [FallbackLLM] Model '{model_name}' failed ({e}). "
                         f"Automatically switching to next fallback..."
                     )
                     last_error = e
+                    if model_name.startswith("openrouter/") and ("free-models-per-day" in err_lower or "rate limit exceeded" in err_lower):
+                        skip_openrouter = True
+                        print("⚠️ [FallbackLLM] OpenRouter account hit daily 50 request quota. Switching directly to Gemini models...")
 
             raise RuntimeError(
                 f"All models in the fallback sequence failed. Last error: {last_error}"
