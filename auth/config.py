@@ -9,9 +9,13 @@ production secrets: deterministic secrets derived from public deployment context
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 # Fixed, clearly-named secrets used ONLY when AUTH_DEV_MODE=true and the operator
 # has not provided real values. They are public knowledge and must never be used

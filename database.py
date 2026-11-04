@@ -489,11 +489,13 @@ def _ensure_job_event_unique_index(conn: Any, is_tidb: bool) -> None:
                 column = row["COLUMN_NAME"] if isinstance(row, dict) else row[3]
                 entry = indexes.setdefault(name, {"non_unique": non_unique, "columns": []})
                 entry["columns"].append(column)
-            if any(e["non_unique"] == 0 and e["columns"] == ["run_id", "seq_id"] for e in indexes.values()):
+            if "uk_event_run_seq" in indexes or any(e["columns"] == ["run_id", "seq_id"] for e in indexes.values()):
                 return
             try:
                 cursor.execute("ALTER TABLE job_events ADD UNIQUE KEY uk_event_run_seq (run_id, seq_id)")
-            except Exception as exc:  # duplicate key name or pre-existing duplicate rows
+            except Exception as exc:
+                if "1061" in str(exc) or "Duplicate key name" in str(exc):
+                    return
                 logger.warning("Could not add UNIQUE(run_id, seq_id) to job_events: %s", exc)
         else:
             cursor = conn.execute("PRAGMA index_list(job_events)")
