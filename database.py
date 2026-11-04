@@ -374,6 +374,7 @@ def init_db():
                     status            VARCHAR(30) NOT NULL DEFAULT 'pending',
                     result_article_id INT NULL,
                     error_message     TEXT NULL,
+                    trace_url         VARCHAR(512) NULL,
                     created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                     INDEX idx_job_user (user_id, status)
@@ -391,9 +392,11 @@ def init_db():
                 );
             """)
 
-            # Ensure user_id column exists on pre-existing tables if created earlier
+            # Ensure user_id and trace_url columns exist on pre-existing tables
             for tbl in ["articles", "chat_history", "telemetry_runs", "security_audit_logs", "user_memory", "chat_sessions", "article_revisions"]:
                 _ensure_column_exists(conn, is_tidb, tbl, "user_id", "INT NULL")
+            _ensure_column_exists(conn, is_tidb, "telemetry_runs", "trace_url", "VARCHAR(512) NULL")
+            _ensure_column_exists(conn, is_tidb, "research_jobs", "trace_url", "VARCHAR(512) NULL")
 
         else:
             # SQLite Backend
@@ -544,6 +547,7 @@ def init_db():
                     status            TEXT NOT NULL DEFAULT 'pending',
                     result_article_id INTEGER NULL,
                     error_message     TEXT NULL,
+                    trace_url         TEXT NULL,
                     created_at        TEXT NOT NULL DEFAULT (datetime('now')),
                     updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
                 );
@@ -571,6 +575,8 @@ def init_db():
             # Ensure user_id column exists on pre-existing tables if created earlier
             for tbl in ["articles", "chat_history", "telemetry_runs", "security_audit_logs", "user_memory", "chat_sessions", "article_revisions"]:
                 _ensure_column_exists(conn, is_tidb, tbl, "user_id", "INTEGER")
+            _ensure_column_exists(conn, is_tidb, "telemetry_runs", "trace_url", "TEXT")
+            _ensure_column_exists(conn, is_tidb, "research_jobs", "trace_url", "TEXT")
 
             conn.executescript("""
                 CREATE INDEX IF NOT EXISTS idx_art_user ON articles(user_id);
@@ -1099,8 +1105,8 @@ def save_telemetry_run(article_id: Optional[int], telemetry_data: Dict[str, Any]
             conn, is_tidb,
             """INSERT INTO telemetry_runs
                (article_id, topic, duration_sec, tokens_estimated, models_used,
-                fallback_count, fallback_events, readability_score, readability_grade, user_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                fallback_count, fallback_events, readability_score, readability_grade, trace_url, user_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 article_id,
                 telemetry_data.get("topic", "Unknown"),
@@ -1111,6 +1117,7 @@ def save_telemetry_run(article_id: Optional[int], telemetry_data: Dict[str, Any]
                 json.dumps(telemetry_data.get("fallback_events", [])),
                 telemetry_data.get("readability", {}).get("score", 0.0),
                 telemetry_data.get("readability", {}).get("grade", "N/A"),
+                telemetry_data.get("trace_url"),
                 user_id,
             ),
         )
@@ -1136,7 +1143,7 @@ def get_telemetry_history(limit=10, user_id: Optional[int] = None):
                 conn, is_tidb,
                 """SELECT id, user_id, article_id, topic, duration_sec, tokens_estimated,
                           models_used, fallback_count, fallback_events,
-                          readability_score, readability_grade, created_at
+                          readability_score, readability_grade, trace_url, created_at
                    FROM telemetry_runs WHERE user_id = ? OR user_id IS NULL ORDER BY created_at DESC LIMIT ?""",
                 (user_id, limit),
             )
@@ -1145,7 +1152,7 @@ def get_telemetry_history(limit=10, user_id: Optional[int] = None):
                 conn, is_tidb,
                 """SELECT id, user_id, article_id, topic, duration_sec, tokens_estimated,
                           models_used, fallback_count, fallback_events,
-                          readability_score, readability_grade, created_at
+                          readability_score, readability_grade, trace_url, created_at
                    FROM telemetry_runs ORDER BY created_at DESC LIMIT ?""",
                 (limit,),
             )
@@ -1687,8 +1694,9 @@ def update_research_job(
     status: Optional[str] = None,
     result_article_id: Optional[int] = None,
     error_message: Optional[str] = None,
+    trace_url: Optional[str] = None,
 ) -> None:
-    """Update status, article reference, or error message of an existing research job."""
+    """Update status, article reference, error message, or LangSmith trace URL of an existing research job."""
     updates = []
     params = []
     if status is not None:
@@ -1700,6 +1708,9 @@ def update_research_job(
     if error_message is not None:
         updates.append("error_message = ?")
         params.append(error_message)
+    if trace_url is not None:
+        updates.append("trace_url = ?")
+        params.append(trace_url)
 
     if not updates:
         return

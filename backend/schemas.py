@@ -56,23 +56,21 @@ class ArticleSummary(BaseModel):
     created_at: str
 
 
-class ArticleCreateRequest(BaseModel):
-    topic: str
-    content: str
-    tone: Optional[str] = None
-    audience: Optional[str] = None
-    target_length: Optional[str] = None
-    mermaid_code: Optional[str] = None
-    research_notes: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
-
-
 class ArticleDetail(ArticleSummary):
     content: str
     target_length: Optional[str] = None
-    generation_time_sec: Optional[float] = None
-    tokens_used: Optional[int] = None
+    generation_time_sec: Optional[float] = 0.0
+    tokens_used: Optional[int] = 0
+    updated_at: Optional[str] = None
     user_id: Optional[int] = None
+
+
+class ArticleCreateRequest(BaseModel):
+    topic: str = Field(..., min_length=3, description="Article topic")
+    content: str = Field(..., min_length=10, description="Article markdown content")
+    tone: Optional[str] = "Professional & Authoritative"
+    audience: Optional[str] = "Software Engineers & Developers"
+    target_length: Optional[str] = "Standard Blog (1,500 - 2,000 words)"
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +95,7 @@ class RunStatusResponse(BaseModel):
     topic: str
     result_article_id: Optional[int] = None
     error_message: Optional[str] = None
+    trace_url: Optional[str] = None
     created_at: str
     updated_at: str
 

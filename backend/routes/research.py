@@ -17,6 +17,8 @@ from fastapi.responses import StreamingResponse
 import database as db
 from backend.deps import get_current_user
 from backend.schemas import CreateRunRequest, RunResponse, RunStatusResponse
+from llmops.tracing import LangSmithJobTracer, export_failure_to_dataset
+from llmops.telemetry import calculate_readability, estimate_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,24 @@ def _execute_run_worker(
     target_length: Optional[str],
 ):
     """Background worker executing CrewAI pipeline and storing sequenced events."""
+    tracer = LangSmithJobTracer(
+        run_id=run_id,
+        topic=topic,
+        user_id=user_id,
+        tone=tone,
+        audience=audience,
+        target_length=target_length,
+    )
+
+    stage_names = [
+        "Senior Research Analyst",
+        "Content Strategist & Outliner",
+        "Technical Writer & Storyteller",
+        "Senior Editor & Visual Architect",
+    ]
+    current_stage_idx = 0
+    tracer.start_span("stage_0", f"CrewAI Stage: {stage_names[0]}", run_type="chain")
+
     try:
         db.update_research_job(run_id, status="running")
         db.append_job_event(run_id, "status", {"status": "running", "stage": "Initializing multi-agent squad..."})
@@ -55,7 +75,12 @@ def _execute_run_worker(
                 db.append_job_event(run_id, "step", {"detail": detail, "timestamp": time.time()})
 
         def on_task(task_output: Any) -> None:
+            nonlocal current_stage_idx
             db.append_job_event(run_id, "task_done", {"timestamp": time.time()})
+            tracer.end_span(f"stage_{current_stage_idx}")
+            current_stage_idx += 1
+            if current_stage_idx < len(stage_names):
+                tracer.start_span(f"stage_{current_stage_idx}", f"CrewAI Stage: {stage_names[current_stage_idx]}", run_type="chain")
 
         start_time = time.time()
         crew_instance = ResearchAndBlogWriter()
@@ -65,6 +90,7 @@ def _execute_run_worker(
         # Check if cancelled while kickoff was executing
         current_job = db.get_research_job(run_id)
         if current_job and current_job.get("status") == "cancelled":
+            tracer.end_job(outputs={"status": "cancelled"})
             return
 
         elapsed = round(time.time() - start_time, 2)
@@ -89,16 +115,41 @@ def _execute_run_worker(
             user_id=user_id,
         )
 
-        db.update_research_job(run_id, status="completed", result_article_id=art_id)
+        readability = calculate_readability(clean_content)
+        tracer.log_evaluation("flesch_reading_ease", readability.get("score", 0.0), comment=readability.get("grade"))
+
+        trace_url = tracer.end_job(outputs={
+            "article_id": art_id,
+            "word_count": len(clean_content.split()),
+            "elapsed_sec": elapsed,
+            "readability_score": readability.get("score", 0.0),
+        })
+
+        telemetry_data = {
+            "topic": topic,
+            "duration_sec": elapsed,
+            "tokens_estimated": estimate_tokens(clean_content),
+            "models_used": ["openrouter/google/gemini-2.5-flash"],
+            "fallback_count": 0,
+            "fallback_events": [],
+            "readability": readability,
+            "trace_url": trace_url,
+        }
+        db.save_telemetry_run(article_id=art_id, telemetry_data=telemetry_data, user_id=user_id)
+
+        db.update_research_job(run_id, status="completed", result_article_id=art_id, trace_url=trace_url)
         db.append_job_event(run_id, "completed", {
             "status": "completed",
             "article_id": art_id,
             "topic": topic,
             "word_count": len(clean_content.split()),
             "elapsed_sec": elapsed,
+            "trace_url": trace_url,
         })
     except Exception as e:
         logger.exception(f"Run worker error on run {run_id}: {e}")
+        tracer.end_job(error=str(e))
+        export_failure_to_dataset("production_failures", topic, str(e), metadata={"run_id": run_id, "user_id": user_id})
         db.update_research_job(run_id, status="failed", error_message=str(e))
         db.append_job_event(run_id, "error", {"message": str(e), "timestamp": time.time()})
 
@@ -157,6 +208,7 @@ def get_run_status(
         topic=job["topic"],
         result_article_id=job.get("result_article_id"),
         error_message=job.get("error_message"),
+        trace_url=job.get("trace_url"),
         created_at=str(job.get("created_at", "")),
         updated_at=str(job.get("updated_at", "")),
     )

@@ -36,6 +36,7 @@ export interface RunStatus {
   topic: string;
   result_article_id?: number | null;
   error_message?: string | null;
+  trace_url?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -49,10 +50,16 @@ export interface RevisionSummary {
 }
 
 export interface DiffResult {
-  article_id: number;
+  article_id?: number;
   from_revision: number;
   to_revision: number;
   diff_patch: string;
+  diff_html?: string;
+  stats?: {
+    additions: number;
+    deletions: number;
+    modifications: number;
+  };
 }
 
 async function fetchJson<T>(url: string, options: RequestInit = {}): Promise<T> {
@@ -113,12 +120,8 @@ export const api = {
     return fetchJson(`/api/v1/articles/${id}`);
   },
 
-  async deleteArticle(id: number): Promise<{ success: boolean }> {
-    return fetchJson(`/api/v1/articles/${id}`, { method: "DELETE" });
-  },
-
   // Research Runs
-  async createRun(data: {
+  async startRun(params: {
     topic: string;
     tone?: string;
     audience?: string;
@@ -126,11 +129,20 @@ export const api = {
   }): Promise<RunResponse> {
     return fetchJson("/api/v1/runs", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: JSON.stringify(params),
     });
   },
 
-  async getRun(runId: string): Promise<RunStatus> {
+  async createRun(params: {
+    topic: string;
+    tone?: string;
+    audience?: string;
+    target_length?: string;
+  }): Promise<RunResponse> {
+    return this.startRun(params);
+  },
+
+  async getRunStatus(runId: string): Promise<RunStatus> {
     return fetchJson(`/api/v1/runs/${runId}`);
   },
 
@@ -140,23 +152,47 @@ export const api = {
 
   // Revisions & Diffs
   async listRevisions(articleId: number): Promise<RevisionSummary[]> {
-    return fetchJson(`/api/v1/revisions/articles/${articleId}`);
+    return fetchJson(`/api/v1/articles/${articleId}/revisions`);
+  },
+
+  async getDiff(articleId: number, fromRev: number, toRev: number): Promise<DiffResult> {
+    const res = await fetchJson<any>(`/api/v1/articles/${articleId}/revisions/diff/${fromRev}/${toRev}`);
+    return {
+      article_id: articleId,
+      from_revision: res.old_revision_num ?? fromRev,
+      to_revision: res.new_revision_num ?? toRev,
+      diff_patch: res.diff_html || "",
+      diff_html: res.diff_html,
+      stats: res.stats,
+    };
   },
 
   async getRevisionDiff(articleId: number, fromRev: number, toRev: number): Promise<DiffResult> {
-    return fetchJson(`/api/v1/revisions/articles/${articleId}/diff?from_rev=${fromRev}&to_rev=${toRev}`);
+    return this.getDiff(articleId, fromRev, toRev);
   },
 
-  async restoreRevision(articleId: number, revisionId: number): Promise<{ success: boolean; message: string }> {
-    return fetchJson(`/api/v1/revisions/articles/${articleId}/restore/${revisionId}`, { method: "POST" });
+  async restoreRevision(articleId: number, revisionNum: number): Promise<{ success: boolean; message: string }> {
+    return fetchJson(`/api/v1/articles/${articleId}/revisions/${revisionNum}/restore`, {
+      method: "POST",
+    });
   },
 
-  // Telemetry & Cache
+  async applyCopilotEdit(params: {
+    article_id: number;
+    instruction: string;
+  }): Promise<{ success: boolean; new_revision_num: number; content: string }> {
+    return fetchJson(`/api/v1/articles/${params.article_id}/edit`, {
+      method: "POST",
+      body: JSON.stringify(params),
+    });
+  },
+
+  // Telemetry
+  async getTelemetry(): Promise<any> {
+    return fetchJson("/api/v1/telemetry/latest");
+  },
+
   async getTelemetryStats(): Promise<any> {
-    return fetchJson("/api/v1/telemetry/stats");
-  },
-
-  async pruneCache(): Promise<{ success: boolean; pruned_count: number }> {
-    return fetchJson("/api/v1/telemetry/cache/prune", { method: "POST" });
+    return this.getTelemetry();
   },
 };

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Search, PenTool, GitFork, CheckCircle, Loader2, XCircle, Clock, Zap } from "lucide-react";
+import { Search, PenTool, GitFork, CheckCircle, Loader2, XCircle, Clock, Zap, ExternalLink } from "lucide-react";
 
 interface LiveStepperProps {
   runId: string;
@@ -9,6 +9,7 @@ interface LiveStepperProps {
   onCancel?: () => void;
   logs: Array<{ type: string; detail?: string; timestamp?: number }>;
   stage: number;
+  traceUrl?: string | null;
 }
 
 const STAGES = [
@@ -18,7 +19,7 @@ const STAGES = [
   { id: 4, name: "Editorial Director", desc: "Polishing tone, readability & structure", icon: CheckCircle },
 ];
 
-export function LiveStepper({ topic, onCancel, logs, stage }: LiveStepperProps) {
+export function LiveStepper({ topic, onCancel, logs, stage, traceUrl }: LiveStepperProps) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -43,7 +44,7 @@ export function LiveStepper({ topic, onCancel, logs, stage }: LiveStepperProps) 
           <h3 className="text-lg font-bold text-slate-100 line-clamp-1">{topic}</h3>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800/80 rounded-lg text-xs font-mono text-slate-300">
             <Clock className="w-3.5 h-3.5 text-slate-400" />
             <span>{elapsed}s elapsed</span>
@@ -53,6 +54,18 @@ export function LiveStepper({ topic, onCancel, logs, stage }: LiveStepperProps) 
             <Zap className="w-3.5 h-3.5 text-amber-400" />
             <span>~{Math.round(elapsed * 45)} tokens</span>
           </div>
+
+          {traceUrl && (
+            <a
+              href={traceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-950/70 hover:bg-cyan-900 text-cyan-300 border border-cyan-800 rounded-lg text-xs font-medium transition"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              <span>LangSmith Trace</span>
+            </a>
+          )}
 
           {onCancel && (
             <button

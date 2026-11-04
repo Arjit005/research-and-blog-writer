@@ -44,6 +44,7 @@ export default function Home() {
   const [runStage, setRunStage] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  const [activeTraceUrl, setActiveTraceUrl] = useState<string | null>(null);
 
   // Copilot Drawer
   const [isCopilotOpen, setIsCopilotOpen] = useState(false);
@@ -115,6 +116,7 @@ export default function Home() {
     setIsSubmitting(true);
     setRunLogs([]);
     setRunStage(1);
+    setActiveTraceUrl(null);
 
     try {
       const runRes = await api.createRun({
@@ -148,6 +150,7 @@ export default function Home() {
         },
         async (completedData) => {
           setRunStage(4);
+          if (completedData.trace_url) setActiveTraceUrl(completedData.trace_url);
           setActiveRunId(null);
           await loadArticles();
           if (completedData.article_id) {
@@ -394,6 +397,7 @@ export default function Home() {
               onCancel={handleCancelRun}
               logs={runLogs}
               stage={runStage}
+              traceUrl={activeTraceUrl}
             />
           )}
 
