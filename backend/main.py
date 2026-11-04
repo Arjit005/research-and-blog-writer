@@ -28,10 +28,16 @@ logger = logging.getLogger(__name__)
 ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
 ]
 custom_origin = os.getenv("FRONTEND_ORIGIN")
 if custom_origin:
-    ALLOWED_ORIGINS.append(custom_origin)
+    ALLOWED_ORIGINS.append(custom_origin.rstrip("/"))
+
+render_external_url = os.getenv("RENDER_EXTERNAL_URL")
+if render_external_url:
+    ALLOWED_ORIGINS.append(render_external_url.rstrip("/"))
 
 
 @asynccontextmanager
@@ -56,6 +62,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"^https://.*\.onrender\.com$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -68,13 +75,19 @@ async def csrf_origin_guard(request: Request, call_next):
     """Verify Origin / Referer header on state-changing requests when cookies are present."""
     if request.method in ("POST", "PUT", "DELETE", "PATCH"):
         origin = request.headers.get("origin")
-        referer = request.headers.get("referer")
+        host = request.headers.get("host")
 
-        # In production, verify Origin against allowed origins
-        if os.getenv("RENDER") and origin:
+        if origin:
             clean_origin = origin.rstrip("/")
-            if not any(clean_origin.startswith(allowed.rstrip("/")) for allowed in ALLOWED_ORIGINS):
-                logger.warning(f"Rejected cross-origin request from origin: {origin}")
+            # Check 1: Host header matches origin (Same-Origin)
+            is_same_host = bool(host and (clean_origin == f"https://{host}" or clean_origin == f"http://{host}"))
+            # Check 2: Render domain (*.onrender.com)
+            is_render_domain = clean_origin.endswith(".onrender.com")
+            # Check 3: Explicit allowed origins
+            is_explicit_allowed = any(clean_origin.startswith(allowed) for allowed in ALLOWED_ORIGINS)
+
+            if not (is_same_host or is_render_domain or is_explicit_allowed):
+                logger.warning(f"Rejected cross-origin request from origin: {origin} (host: {host})")
                 return JSONResponse(
                     status_code=status.HTTP_403_FORBIDDEN,
                     content={"error": {"code": "CSRF_ORIGIN_INVALID", "message": "Cross-origin request rejected."}},
