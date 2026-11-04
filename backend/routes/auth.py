@@ -7,7 +7,7 @@ from typing import Dict, Any, Optional
 from fastapi import APIRouter, Request, Response, Depends, HTTPException, status
 
 import auth.service as auth_service
-from backend.schemas import OTPRequest, OTPVerifyRequest, AuthResponse, UserResponse
+from backend.schemas import OTPRequest, OTPVerifyRequest, PasswordAuthRequest, AuthResponse, UserResponse
 from backend.deps import get_current_user, get_token_from_request, security_bearer
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
@@ -23,6 +23,39 @@ def _get_client_ip(request: Request) -> str:
     if forwarded:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else "127.0.0.1"
+
+
+@router.post("/login", response_model=AuthResponse)
+def login_with_password_endpoint(body: PasswordAuthRequest, request: Request, response: Response) -> AuthResponse:
+    """Authenticate or register user with Password (and optional OTP 2FA)."""
+    client_ip = _get_client_ip(request)
+    success, msg, session_token, user_data = auth_service.login_or_register_with_password(
+        email=body.email,
+        password=body.password,
+        otp_code=body.otp_code,
+        request_ip=client_ip,
+    )
+
+    if not success or not session_token or not user_data:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=msg)
+
+    # Set hardened HttpOnly cookie
+    response.set_cookie(
+        key=COOKIE_NAME,
+        value=session_token,
+        max_age=COOKIE_MAX_AGE,
+        httponly=True,
+        secure=bool(IS_PROD),
+        samesite="lax",
+        path="/",
+    )
+
+    return AuthResponse(
+        success=True,
+        message=msg,
+        user=UserResponse(id=user_data["id"], email=user_data["email"]),
+        token=session_token,
+    )
 
 
 @router.post("/otp/request", response_model=AuthResponse)

@@ -164,3 +164,43 @@ def test_telemetry_routes():
     cdata = cache_resp.json()
     assert "total_hits" in cdata
     assert "db_stats" in cdata
+
+
+def test_password_auth_flow():
+    """Verify registration, login, and validation using email and password."""
+    email = f"pwd_user_{uuid.uuid4().hex[:8]}@example.com"
+    pwd = "SecurePassword123!"
+
+    # 1. Register / login initial user with password
+    reg_resp = client.post("/api/v1/auth/login", json={"email": email, "password": pwd})
+    assert reg_resp.status_code == 200
+    reg_data = reg_resp.json()
+    assert reg_data["success"] is True
+    assert reg_data["user"]["email"] == email
+    token = reg_data["token"]
+    assert token is not None
+
+    # Verify access to /me with this token
+    me_resp = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert me_resp.status_code == 200
+    assert me_resp.json()["email"] == email
+
+    # 2. Login again with correct password
+    login_resp = client.post("/api/v1/auth/login", json={"email": email, "password": pwd})
+    assert login_resp.status_code == 200
+    assert login_resp.json()["success"] is True
+
+    # 3. Wrong password should fail with 401
+    bad_resp = client.post("/api/v1/auth/login", json={"email": email, "password": "WrongPassword!"})
+    assert bad_resp.status_code == 401
+
+    # 4. Password login with OTP check
+    otp_req = client.post("/api/v1/auth/otp/request", json={"email": email})
+    assert otp_req.status_code == 200
+    dev_code = otp_req.json().get("dev_code")
+    assert dev_code is not None
+
+    otp_pwd_resp = client.post("/api/v1/auth/login", json={"email": email, "password": pwd, "otp_code": dev_code})
+    assert otp_pwd_resp.status_code == 200
+    assert otp_pwd_resp.json()["success"] is True
+

@@ -89,6 +89,13 @@ async function fetchJson<T>(url: string, options: RequestInit = {}): Promise<T> 
 
 export const api = {
   // Auth
+  async loginWithPassword(email: string, password: string, otpCode?: string): Promise<{ success: boolean; message: string; user?: User; token?: string }> {
+    return fetchJson("/api/v1/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password, otp_code: otpCode || null }),
+    });
+  },
+
   async requestOtp(email: string): Promise<{ success: boolean; message: string; dev_code?: string }> {
     return fetchJson("/api/v1/auth/otp/request", {
       method: "POST",

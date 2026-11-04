@@ -334,6 +334,7 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS users (
                     id            INT AUTO_INCREMENT PRIMARY KEY,
                     email         VARCHAR(255) NOT NULL UNIQUE,
+                    password_hash VARCHAR(255) NULL,
                     created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
                     last_login_at DATETIME NULL,
                     is_active     TINYINT(1) NOT NULL DEFAULT 1
@@ -397,6 +398,7 @@ def init_db():
                 _ensure_column_exists(conn, is_tidb, tbl, "user_id", "INT NULL")
             _ensure_column_exists(conn, is_tidb, "telemetry_runs", "trace_url", "VARCHAR(512) NULL")
             _ensure_column_exists(conn, is_tidb, "research_jobs", "trace_url", "VARCHAR(512) NULL")
+            _ensure_column_exists(conn, is_tidb, "users", "password_hash", "VARCHAR(255) NULL")
 
         else:
             # SQLite Backend
@@ -511,6 +513,7 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS users (
                     id            INTEGER PRIMARY KEY AUTOINCREMENT,
                     email         TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NULL,
                     created_at    TEXT NOT NULL DEFAULT (datetime('now')),
                     last_login_at TEXT NULL,
                     is_active     INTEGER NOT NULL DEFAULT 1
@@ -577,6 +580,7 @@ def init_db():
                 _ensure_column_exists(conn, is_tidb, tbl, "user_id", "INTEGER")
             _ensure_column_exists(conn, is_tidb, "telemetry_runs", "trace_url", "TEXT")
             _ensure_column_exists(conn, is_tidb, "research_jobs", "trace_url", "TEXT")
+            _ensure_column_exists(conn, is_tidb, "users", "password_hash", "TEXT")
 
             conn.executescript("""
                 CREATE INDEX IF NOT EXISTS idx_art_user ON articles(user_id);
@@ -593,14 +597,14 @@ def get_or_create_user(email: str) -> Dict[str, Any]:
     """Retrieve existing user by normalized email, or create a new user on first verified login."""
     norm_email = email.strip().lower()
     with get_connection() as (conn, is_tidb):
-        cursor = _exec(conn, is_tidb, "SELECT id, email, created_at, last_login_at, is_active FROM users WHERE email = ?", (norm_email,))
+        cursor = _exec(conn, is_tidb, "SELECT id, email, password_hash, created_at, last_login_at, is_active FROM users WHERE email = ?", (norm_email,))
         row = cursor.fetchone()
         if row:
             return dict(row)
 
         cursor = _exec(conn, is_tidb, "INSERT INTO users (email, is_active) VALUES (?, 1)", (norm_email,))
         user_id = cursor.lastrowid
-        cursor = _exec(conn, is_tidb, "SELECT id, email, created_at, last_login_at, is_active FROM users WHERE id = ?", (user_id,))
+        cursor = _exec(conn, is_tidb, "SELECT id, email, password_hash, created_at, last_login_at, is_active FROM users WHERE id = ?", (user_id,))
         new_row = cursor.fetchone()
         return dict(new_row)
 
@@ -608,7 +612,7 @@ def get_or_create_user(email: str) -> Dict[str, Any]:
 def get_user_by_id(user_id: int) -> Optional[Dict[str, Any]]:
     """Retrieve user record by user_id."""
     with get_connection() as (conn, is_tidb):
-        cursor = _exec(conn, is_tidb, "SELECT id, email, created_at, last_login_at, is_active FROM users WHERE id = ?", (user_id,))
+        cursor = _exec(conn, is_tidb, "SELECT id, email, password_hash, created_at, last_login_at, is_active FROM users WHERE id = ?", (user_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
 
@@ -617,9 +621,15 @@ def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
     """Retrieve user record by email, or None if non-existent."""
     norm_email = email.strip().lower()
     with get_connection() as (conn, is_tidb):
-        cursor = _exec(conn, is_tidb, "SELECT id, email, created_at, last_login_at, is_active FROM users WHERE email = ?", (norm_email,))
+        cursor = _exec(conn, is_tidb, "SELECT id, email, password_hash, created_at, last_login_at, is_active FROM users WHERE email = ?", (norm_email,))
         row = cursor.fetchone()
         return dict(row) if row else None
+
+
+def set_user_password(user_id: int, password_hash: str) -> None:
+    """Store or update PBKDF2 hashed password for a user."""
+    with get_connection() as (conn, is_tidb):
+        _exec(conn, is_tidb, "UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user_id))
 
 
 def update_user_last_login(user_id: int):

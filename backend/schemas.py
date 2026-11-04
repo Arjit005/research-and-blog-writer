@@ -18,6 +18,12 @@ class OTPVerifyRequest(BaseModel):
     code: str = Field(..., min_length=6, max_length=6, description="6-digit verification code")
 
 
+class PasswordAuthRequest(BaseModel):
+    email: str = Field(..., description="User email address")
+    password: str = Field(..., min_length=6, description="Password (min 6 characters)")
+    otp_code: Optional[str] = Field(None, description="Optional 6-digit OTP code")
+
+
 class UserResponse(BaseModel):
     id: int
     email: str
