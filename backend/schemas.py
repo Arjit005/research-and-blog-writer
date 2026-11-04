@@ -1,0 +1,116 @@
+"""Pydantic schemas for FastAPI endpoints."""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+from pydantic import BaseModel, EmailStr, Field
+
+
+# ---------------------------------------------------------------------------
+# Auth Schemas
+# ---------------------------------------------------------------------------
+class OTPRequest(BaseModel):
+    email: str = Field(..., description="User email address")
+
+
+class OTPVerifyRequest(BaseModel):
+    email: str = Field(..., description="User email address")
+    code: str = Field(..., min_length=6, max_length=6, description="6-digit verification code")
+
+
+class UserResponse(BaseModel):
+    id: int
+    email: str
+
+
+class AuthResponse(BaseModel):
+    success: bool
+    message: str
+    user: Optional[UserResponse] = None
+    token: Optional[str] = None
+    dev_code: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Standard Error Response
+# ---------------------------------------------------------------------------
+class ErrorDetail(BaseModel):
+    code: str
+    message: str
+    details: Optional[Any] = None
+
+
+class StandardErrorResponse(BaseModel):
+    error: ErrorDetail
+
+
+# ---------------------------------------------------------------------------
+# Article Schemas
+# ---------------------------------------------------------------------------
+class ArticleSummary(BaseModel):
+    id: int
+    topic: str
+    word_count: int
+    tone: Optional[str] = None
+    audience: Optional[str] = None
+    created_at: str
+
+
+class ArticleCreateRequest(BaseModel):
+    topic: str
+    content: str
+    tone: Optional[str] = None
+    audience: Optional[str] = None
+    target_length: Optional[str] = None
+    mermaid_code: Optional[str] = None
+    research_notes: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class ArticleDetail(ArticleSummary):
+    content: str
+    target_length: Optional[str] = None
+    generation_time_sec: Optional[float] = None
+    tokens_used: Optional[int] = None
+    user_id: Optional[int] = None
+
+
+# ---------------------------------------------------------------------------
+# Run / Execution Schemas
+# ---------------------------------------------------------------------------
+class CreateRunRequest(BaseModel):
+    topic: str = Field(..., min_length=3, max_length=500, description="Research topic or brief")
+    tone: Optional[str] = "Professional & Authoritative"
+    audience: Optional[str] = "Software Engineers & Developers"
+    target_length: Optional[str] = "Standard Blog (1,500 - 2,000 words)"
+
+
+class RunResponse(BaseModel):
+    run_id: str
+    status: str
+    topic: str
+
+
+class RunStatusResponse(BaseModel):
+    run_id: str
+    status: str
+    topic: str
+    result_article_id: Optional[int] = None
+    error_message: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+# ---------------------------------------------------------------------------
+# Revision Schemas
+# ---------------------------------------------------------------------------
+class RevisionSummary(BaseModel):
+    id: int
+    revision_num: int
+    summary: str
+    created_at: str
+
+
+class RevisionDetail(RevisionSummary):
+    article_id: int
+    content: str

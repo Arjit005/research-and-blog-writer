@@ -48,4 +48,11 @@ crew.log                # Execution logs
 
 # --- Misc ---
 *.bak
+
+# --- Frontend (Next.js / Node) ---
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+.pytest_cache/
+
 *.tmp

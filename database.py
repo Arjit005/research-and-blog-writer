@@ -337,6 +337,33 @@ def init_db():
                     INDEX idx_sess_user (user_id)
                 );
             """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS research_jobs (
+                    run_id            VARCHAR(64) PRIMARY KEY,
+                    user_id           INT NULL,
+                    topic             TEXT NOT NULL,
+                    tone              VARCHAR(100) NULL,
+                    audience          VARCHAR(100) NULL,
+                    target_length     VARCHAR(100) NULL,
+                    status            VARCHAR(30) NOT NULL DEFAULT 'pending',
+                    result_article_id INT NULL,
+                    error_message     TEXT NULL,
+                    created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_job_user (user_id, status)
+                );
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS job_events (
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    run_id      VARCHAR(64) NOT NULL,
+                    seq_id      INT NOT NULL,
+                    event_type  VARCHAR(50) NOT NULL,
+                    payload     MEDIUMTEXT NOT NULL,
+                    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_event_run_seq (run_id, seq_id)
+                );
+            """)
 
             # Ensure user_id column exists on pre-existing tables if created earlier
             for tbl in ["articles", "chat_history", "telemetry_runs", "security_audit_logs", "user_memory", "chat_sessions", "article_revisions"]:
@@ -481,6 +508,29 @@ def init_db():
                     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS research_jobs (
+                    run_id            TEXT PRIMARY KEY,
+                    user_id           INTEGER NULL,
+                    topic             TEXT NOT NULL,
+                    tone              TEXT NULL,
+                    audience          TEXT NULL,
+                    target_length     TEXT NULL,
+                    status            TEXT NOT NULL DEFAULT 'pending',
+                    result_article_id INTEGER NULL,
+                    error_message     TEXT NULL,
+                    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
+                CREATE TABLE IF NOT EXISTS job_events (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id      TEXT NOT NULL,
+                    seq_id      INTEGER NOT NULL,
+                    event_type  TEXT NOT NULL,
+                    payload     TEXT NOT NULL,
+                    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_chat_article ON chat_history(article_id);
                 CREATE INDEX IF NOT EXISTS idx_articles_created ON articles(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_telemetry_created ON telemetry_runs(created_at DESC);
@@ -488,6 +538,8 @@ def init_db():
                 CREATE INDEX IF NOT EXISTS idx_rev_art ON article_revisions(article_id);
                 CREATE INDEX IF NOT EXISTS idx_otp_email ON otp_codes(email, created_at);
                 CREATE INDEX IF NOT EXISTS idx_sess_user ON auth_sessions(user_id);
+                CREATE INDEX IF NOT EXISTS idx_job_user ON research_jobs(user_id, status);
+                CREATE INDEX IF NOT EXISTS idx_event_run_seq ON job_events(run_id, seq_id);
             """)
 
             # Ensure user_id column exists on pre-existing tables if created earlier
@@ -1579,6 +1631,124 @@ def get_stats(user_id: Optional[int] = None):
             """)
         row = cursor.fetchone()
         return dict(row) if row else {}
+
+
+# ---------------------------------------------------------------------------
+# Research Job Model & Event Ledger (SSE Resumption & Durable Executions)
+# ---------------------------------------------------------------------------
+
+def create_research_job(
+    run_id: str,
+    topic: str,
+    user_id: Optional[int] = None,
+    tone: Optional[str] = None,
+    audience: Optional[str] = None,
+    target_length: Optional[str] = None,
+) -> None:
+    """Create a new research job in 'pending' status."""
+    with get_connection() as (conn, is_tidb):
+        _exec(
+            conn, is_tidb,
+            """INSERT INTO research_jobs
+               (run_id, user_id, topic, tone, audience, target_length, status)
+               VALUES (?, ?, ?, ?, ?, ?, 'pending')""",
+            (run_id, user_id, topic, tone, audience, target_length),
+        )
+
+
+def update_research_job(
+    run_id: str,
+    status: Optional[str] = None,
+    result_article_id: Optional[int] = None,
+    error_message: Optional[str] = None,
+) -> None:
+    """Update status, article reference, or error message of an existing research job."""
+    updates = []
+    params = []
+    if status is not None:
+        updates.append("status = ?")
+        params.append(status)
+    if result_article_id is not None:
+        updates.append("result_article_id = ?")
+        params.append(result_article_id)
+    if error_message is not None:
+        updates.append("error_message = ?")
+        params.append(error_message)
+
+    if not updates:
+        return
+
+    params.append(run_id)
+    with get_connection() as (conn, is_tidb):
+        sql = f"UPDATE research_jobs SET {', '.join(updates)} WHERE run_id = ?"
+        _exec(conn, is_tidb, sql, tuple(params))
+
+
+def get_research_job(run_id: str, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """Retrieve research job details, optionally verifying user ownership."""
+    with get_connection() as (conn, is_tidb):
+        if user_id is not None:
+            cursor = _exec(
+                conn, is_tidb,
+                "SELECT * FROM research_jobs WHERE run_id = ? AND (user_id = ? OR user_id IS NULL)",
+                (run_id, user_id),
+            )
+        else:
+            cursor = _exec(conn, is_tidb, "SELECT * FROM research_jobs WHERE run_id = ?", (run_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def get_active_user_job(user_id: int) -> Optional[Dict[str, Any]]:
+    """Check if the user already has an active research job ('pending' or 'running')."""
+    with get_connection() as (conn, is_tidb):
+        cursor = _exec(
+            conn, is_tidb,
+            "SELECT * FROM research_jobs WHERE user_id = ? AND status IN ('pending', 'running') ORDER BY created_at DESC LIMIT 1",
+            (user_id,),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def append_job_event(run_id: str, event_type: str, payload: Any) -> int:
+    """Append a sequenced event to the durable job event ledger."""
+    payload_str = json.dumps(payload) if not isinstance(payload, str) else payload
+    with get_connection() as (conn, is_tidb):
+        cursor = _exec(
+            conn, is_tidb,
+            "SELECT COALESCE(MAX(seq_id), 0) + 1 AS next_seq FROM job_events WHERE run_id = ?",
+            (run_id,),
+        )
+        row = cursor.fetchone()
+        next_seq = row["next_seq"] if isinstance(row, dict) else row[0]
+
+        _exec(
+            conn, is_tidb,
+            "INSERT INTO job_events (run_id, seq_id, event_type, payload) VALUES (?, ?, ?, ?)",
+            (run_id, next_seq, event_type, payload_str),
+        )
+        return next_seq
+
+
+def get_job_events(run_id: str, after_seq_id: int = 0) -> List[Dict[str, Any]]:
+    """Retrieve sequenced events for a job with seq_id > after_seq_id."""
+    with get_connection() as (conn, is_tidb):
+        cursor = _exec(
+            conn, is_tidb,
+            "SELECT seq_id, event_type, payload, created_at FROM job_events WHERE run_id = ? AND seq_id > ? ORDER BY seq_id ASC",
+            (run_id, after_seq_id),
+        )
+        rows = cursor.fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["payload"] = json.loads(d["payload"])
+            except Exception:
+                pass
+            result.append(d)
+        return result
 
 
 # Auto-initialize database on import

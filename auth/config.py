@@ -10,24 +10,11 @@ import os
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-try:
-    import streamlit as st
-    _HAS_STREAMLIT = True
-except ImportError:
-    _HAS_STREAMLIT = False
-
-
 def _get_val(key: str, default: Optional[str] = None) -> Optional[str]:
-    """Retrieve configuration from env var or st.secrets."""
+    """Retrieve configuration from environment variable."""
     val = os.getenv(key)
     if val is not None and val != "":
         return val
-    if _HAS_STREAMLIT:
-        try:
-            if hasattr(st, "secrets") and key in st.secrets:
-                return str(st.secrets[key])
-        except Exception:
-            pass
     return default
 
 
