@@ -9,7 +9,7 @@
 [![TiDB Cloud](https://img.shields.io/badge/TiDB_Cloud-Serverless_SQL-E30C34?logo=mysql&logoColor=white)](https://tidbcloud.com)
 [![Streamlit](https://img.shields.io/badge/Streamlit-Web_Studio-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io)
 [![OWASP LLM](https://img.shields.io/badge/OWASP-LLM_Top_10_Protected-0284C7)](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
-[![Tests](https://img.shields.io/badge/Tests-71%20Passed-success)](https://pytest.org)
+[![Tests](https://img.shields.io/badge/Tests-81%20Passed-success)](https://pytest.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 ---
@@ -270,17 +270,24 @@ oreply@research-studio.local |
 This project supports **TiDB Cloud Serverless** on AWS / GCP:
 
 1. Log into your [TiDB Cloud Console](https://tidbcloud.com/).
-2. Navigate to your cluster (e.g. `research-and-blog-db` in Tokyo `ap-northeast-1`).
-3. Click **Connect** in the top right.
-4. Select **General Connection** $\to$ **PyMySQL**.
-5. Copy your connection parameters:
-   - **Host**: `gateway01.ap-northeast-1.prod.aws.tidbcloud.com` (or your regional gateway)
-   - **Port**: `4000`
-   - **User**: `<cluster_id>.root`
-   - **Password**: *(Password set during cluster creation)*
-   - **Database**: `research_studio`
-6. Add these into `.env` or paste them into the **Streamlit Sidebar $\to$ ⚙️ TiDB Cloud Configuration** panel.
-7. The system will automatically initialize tables: `articles`, `chat_history`, `telemetry_runs`, `security_audit_logs`, `research_cache`, `user_memory`, and `chat_sessions`.
+2. Under **My TiDB**, click on **Resource View** (or expand your project folder, e.g. `research_and_blog`) to locate your instance (e.g. `research-and-blog-db`).
+3. If the status says **Creating**, wait ~30-60 seconds until it turns green (**Available**).
+4. Click **Connect** in the top-right corner of the cluster dashboard:
+   - Connection Type: **General**
+   - Tool/Language: **PyMySQL** (or standard MySQL client)
+   - Generate or set a secure password for your user (e.g. `<prefix>.root`).
+5. Copy your connection parameters into `.env`:
+   ```ini
+   TIDB_HOST=gateway01.ap-northeast-1.prod.aws.tidbcloud.com
+   TIDB_PORT=4000
+   TIDB_USER=your_prefix.root
+   TIDB_PASSWORD=your_cluster_password
+   TIDB_DATABASE=research_studio
+   ```
+6. **Automatic Reconnection & SSL**:
+   - The studio connects over TLS/SSL with pre-ping validation (`pool_pre_ping=True`).
+   - If a connection dropped due to serverless idle sleep, it transparently reconnects on the first retry.
+   - The Studio UI displays an honest real-time status pill (**TiDB Cloud Live** vs **Local SQLite Fallback**) and allows one-click database re-testing.
 
 ---
 
@@ -306,25 +313,29 @@ uv run python crew.py --topic "LLMOps in 2026: Architectures, Guardrails, and Ob
 
 ---
 
-## 🧪 Automated Test Suite
+## 🧪 Automated Test Suite & Red-Team Attack Pack
 
-Run all 32 unit tests validating tools, fallback LLMs, memory management, and security guardrails:
+The project includes an enterprise-grade automated test suite featuring **81 passing unit, integration, and red-team security tests**:
+
 ```bash
-uv run pytest tests -v
+# Run all tests
+uv run pytest -q
+
+# Run red-team adversarial injection & SSRF pack only
+uv run pytest tests/test_red_team.py -v
 ```
 
-Output:
-```
-tests/test_crew.py::test_crew_structure PASSED
-tests/test_fallback_llm.py::test_fallback_switches_on_error PASSED
-tests/test_llmops.py::test_readability_metrics PASSED
-tests/test_memory.py::test_chat_memory_sliding_window_and_summarization PASSED
-tests/test_memory.py::test_scrape_tool_uses_cache PASSED
-tests/test_security.py::test_prompt_injection_detection PASSED
-tests/test_security.py::test_ssrf_ip_blocking PASSED
-tests/test_tools.py::test_search_tool_duckduckgo PASSED
-============================== 32 passed in 16.10s ==============================
-```
+### 10-Fixture Red-Team Attack Pack (`tests/test_red_team.py`)
+1. **Hidden CSS Prompt Injection**: Strips obfuscated instructions hidden via `display:none`, `visibility:hidden`, `opacity:0`, and zero-point fonts.
+2. **Adversarial Comment Injections**: Identifies and drops prompt overrides embedded in HTML comments `<!-- [System Note: ...] -->`.
+3. **Delimiter / Fence Escapes**: Defeats closing delimiter breakout attempts (`</untrusted_source>`).
+4. **SSRF Redirect Hops**: Blocks redirect chains attempting to pivot from allowed public URLs into `127.0.0.1` or internal networks.
+5. **Cloud Metadata Trapping**: Completely rejects AWS/GCP/Azure link-local metadata queries (`http://169.254.169.254/`).
+6. **Huge Webpage DoS Defense**: Enforces streaming abort when response bodies exceed 2 MB.
+7. **PII & Credential Redaction**: Automatically sanitizes emails, phone numbers, credit card sequences, and API keys.
+8. **Hallucinated Citation Verification**: Uses `CitationGuard` to flag unvisited URLs and enforce the strict **"Diagrams Only (Mermaid)"** visual policy.
+9. **Resilient Mermaid Syntax Handling**: Extracts and sandboxes diagram segments, gracefully displaying code blocks if rendering fails.
+10. **Multi-Tenant Memory Poisoning**: Enforces 500-char per-preference caps (2,000 chars total) and isolates memory inside `<user_preferences>` non-executable XML delimiters.
 
 ---
 

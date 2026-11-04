@@ -91,14 +91,49 @@ def get_connection():
 
 
 def _exec(conn: Any, is_tidb: bool, sql: str, params: Tuple = ()) -> Any:
-    """Execute SQL query handling placeholder differences (? for SQLite, %s for TiDB)."""
+    """Execute SQL query handling placeholder differences (? for SQLite, %s for TiDB) with auto-reconnect retry."""
     if is_tidb:
         tidb_sql = sql.replace("?", "%s")
+        # Pre-ping reconnection to defeat idle serverless drops
+        try:
+            conn.ping(reconnect=True)
+        except Exception:
+            pass
         cursor = conn.cursor()
-        cursor.execute(tidb_sql, params)
+        try:
+            cursor.execute(tidb_sql, params)
+        except Exception:
+            # Reconnect-once retry for idle serverless drops
+            try:
+                conn.ping(reconnect=True)
+                cursor = conn.cursor()
+                cursor.execute(tidb_sql, params)
+            except Exception:
+                raise
         return cursor
     else:
         return conn.execute(sql, params)
+
+
+def check_tidb_live_status() -> Tuple[bool, str]:
+    """Test TiDB connectivity with an explicit SELECT 1 ping.
+
+    Returns:
+        (is_connected, status_message)
+    """
+    if not is_tidb_configured():
+        return False, "TiDB credentials not configured. Running on local SQLite."
+    try:
+        with get_connection() as (conn, is_tidb):
+            if not is_tidb:
+                return False, "Connection to TiDB failed. Falling back to local SQLite."
+            cursor = _exec(conn, True, "SELECT 1 AS alive")
+            row = cursor.fetchone()
+            if row:
+                return True, "TiDB Cloud Serverless connected and healthy."
+            return False, "TiDB returned empty response to ping."
+    except Exception as e:
+        return False, f"TiDB connection error: {e}"
 
 
 def _ensure_column_exists(conn: Any, is_tidb: bool, table: str, col: str, col_type: str):

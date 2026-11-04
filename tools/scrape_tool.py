@@ -19,11 +19,12 @@ import urllib.request
 import urllib.error
 from urllib.parse import urlparse, urljoin
 from typing import Any, Dict, List, Optional, Tuple, Type
+from bs4 import BeautifulSoup, Comment
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
 from crewai_tools import ScrapeWebsiteTool
 
-from security.guardrails import sanitize_scraped_content, mask_pii_and_secrets
+from security.guardrails import sanitize_scraped_content, mask_pii_and_secrets, fence_untrusted_content
 
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024  # 2 MB limit
 MAX_REDIRECTS = 3
@@ -126,7 +127,16 @@ def safe_fetch(url: str, max_redirects: int = MAX_REDIRECTS) -> Tuple[str, str]:
         try:
             with opener.open(req, timeout=CONNECT_TIMEOUT + READ_TIMEOUT) as resp:
                 status_code = resp.getcode()
-                content_type = resp.headers.get_content_type()
+                if status_code in (301, 302, 303, 307, 308):
+                    location = resp.headers.get("Location")
+                    if not location:
+                        raise ValueError(f"HTTP {status_code} missing Location header.")
+                    next_url = urljoin(current_url, location)
+                    resolve_safe(next_url)
+                    current_url = next_url
+                    continue
+
+                content_type = resp.headers.get_content_type() if hasattr(resp.headers, "get_content_type") else "text/html"
 
                 if content_type not in ("text/html", "text/plain", "application/xhtml+xml"):
                     raise ValueError(f"Unsupported content type '{content_type}'. Only text pages permitted.")
@@ -166,19 +176,27 @@ def safe_fetch(url: str, max_redirects: int = MAX_REDIRECTS) -> Tuple[str, str]:
 
 
 def strip_html_and_scripts(raw_html: str) -> str:
-    """Strip script tags, style tags, comments, and HTML markup cleanly."""
-    # Remove scripts, styles, and comments
-    text = re.sub(r"<script[\s\S]*?</script>", " ", raw_html, flags=re.IGNORECASE)
-    text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.IGNORECASE)
-    text = re.sub(r"<!--[\s\S]*?-->", " ", text)
-    # Strip HTML tags
-    text = re.sub(r"<[^>]+>", " ", text)
-    # Decode entities
-    text = re.sub(r"&nbsp;", " ", text)
-    text = re.sub(r"&amp;", "&", text)
-    text = re.sub(r"&lt;", "<", text)
-    text = re.sub(r"&gt;", ">", text)
-    return text
+    """Strip script tags, style tags, comments, and hidden elements while preserving paragraphs."""
+    soup = BeautifulSoup(raw_html, "html.parser")
+    # 1. Remove comments
+    for comment in soup.find_all(string=lambda s: isinstance(s, Comment)):
+        comment.extract()
+    # 2. Remove script, style, and noscript elements
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+    # 3. Remove elements explicitly styled as hidden
+    for tag in soup.find_all(style=True):
+        style = tag.get("style", "").lower().replace(" ", "")
+        if any(h in style for h in ["display:none", "visibility:hidden", "opacity:0", "font-size:0"]):
+            tag.decompose()
+    # 4. Extract text preserving paragraph breaks
+    text = soup.get_text(separator="\n\n")
+    # 5. Clean up whitespace
+    text = re.sub(r"\r\n|\r", "\n", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n\s*\n", "\n\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def scrub_instruction_like_passages(text: str) -> str:
@@ -266,11 +284,12 @@ def execute_scrape_pipeline(url: str, max_words: int = 1500) -> str:
     # 7. Word budgeting & compaction
     words = deduped_text.split()
     if len(words) > max_words:
-        compacted = " ".join(words[:max_words]) + f"\n\n[... Truncated to {max_words} words for context optimization ...]"
+        compacted = " ".join(words[:max_words]) + f"\n\n[... truncated to {max_words} words for context optimization ...]"
     else:
         compacted = deduped_text
 
-    return compacted
+    # 8. Data Fencing (Delimited Untrusted Context)
+    return fence_untrusted_content(compacted, source_id=1, url=final_url)
 
 
 class ScrapeInput(BaseModel):

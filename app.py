@@ -12,7 +12,7 @@ import streamlit as st
 
 import database as db
 from auth import require_login
-from security.guardrails import validate_user_input, mask_pii_and_secrets, verify_citations
+from security.guardrails import validate_user_input, mask_pii_and_secrets, verify_citations, format_fenced_preferences
 from llmops.telemetry import TelemetryTracker
 from llm_fallback import get_fallback_llm
 
@@ -181,6 +181,14 @@ with st.sidebar:
     if stats.get("total_tokens", 0) > 0:
         st.caption(f"⚡ Tokens Processed: **{stats['total_tokens']:,}**")
 
+    is_db_live, _ = db.check_tidb_live_status()
+    if is_db_live:
+        st.caption("🟢 **TiDB Cloud:** Connected")
+    elif db.get_active_backend() == "tidb":
+        st.caption("🟡 **TiDB Cloud:** Reconnecting...")
+    else:
+        st.caption("💾 **Database:** Local SQLite (Fallback)")
+
     # 6. Article History
     st.markdown("---")
     st.markdown("### 📚 Article History")
@@ -296,16 +304,10 @@ with main_tab1:
                 stepper_state = init_stepper_state()
                 stepper_placeholder.markdown(render_stepper_html(stepper_state), unsafe_allow_html=True)
 
-                # Construct composite prompt with steering instructions & persistent memory
+                # Construct composite prompt with steering instructions & fenced memory
                 user_mems = db.get_user_memories(user_id=current_user_id)
-                mem_guidance = []
-                if user_mems.get("prohibited_words"):
-                    mem_guidance.append(f"Prohibited Jargon: {user_mems['prohibited_words']}")
-                if user_mems.get("preferred_diagram"):
-                    mem_guidance.append(f"Preferred Diagram Style: {user_mems['preferred_diagram']}")
-
-                mem_suffix = f" [Author Preferences: {', '.join(mem_guidance)}]" if mem_guidance else ""
-                effective_topic = f"{topic_input} (Target Audience: {audience}, Tone: {tone}, Length: {length}){mem_suffix}"
+                fenced_mem = format_fenced_preferences(user_mems)
+                effective_topic = f"{topic_input} (Target Audience: {audience}, Tone: {tone}, Length: {length}){fenced_mem}"
 
                 # Decoupled thread & event queue execution
                 event_queue = queue.Queue()
@@ -532,10 +534,18 @@ with main_tab3:
         else:
             st.info("Gemini: Optional", icon="ℹ️")
     with hm4:
-        if db.get_active_backend() == "tidb":
-            st.success("Database: TiDB Cloud Serverless", icon="☁️")
+        is_live, tidb_msg = db.check_tidb_live_status()
+        if is_live:
+            st.success("Database: TiDB Cloud Live", icon="☁️")
+            st.caption(f"⚡ {tidb_msg}")
+        elif db.get_active_backend() == "tidb":
+            st.warning("Database: TiDB Reconnecting", icon="⚠️")
+            with st.expander("Connection Details"):
+                st.caption(tidb_msg)
         else:
             st.info("Database: Local SQLite (Fallback)", icon="💾")
+            with st.expander("TiDB Status"):
+                st.caption(tidb_msg)
 
     st.markdown("---")
     st.markdown("#### 📊 Recent Execution Telemetry Runs")
