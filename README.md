@@ -9,7 +9,7 @@
 [![TiDB Cloud](https://img.shields.io/badge/TiDB_Cloud-Serverless_SQL-E30C34?logo=mysql&logoColor=white)](https://tidbcloud.com)
 [![Streamlit](https://img.shields.io/badge/Streamlit-Web_Studio-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io)
 [![OWASP LLM](https://img.shields.io/badge/OWASP-LLM_Top_10_Protected-0284C7)](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
-[![Tests](https://img.shields.io/badge/Tests-81%20Passed-success)](https://pytest.org)
+[![Tests](https://img.shields.io/badge/Tests-90%20Passed-success)](https://pytest.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 ---
@@ -98,6 +98,14 @@ flowchart TD
 - **Tier 3 (Long-Term Memory)**: Persistent author style, custom tone, and banned jargon stored in `user_memory`.
 - **Tier 4 (Entity & Citation Memory)**: Pinned immutable JSON/Markdown registry from research tasks to eliminate citation hallucinations.
 - **Research Cache**: Web scrapes cached by SHA-256 hash in `research_cache` to eliminate redundant network fetches.
+
+### 8. ⚡ Hybrid Two-Tier Caching Architecture (L1 RAM + L2 TiDB)
+- **Zero Third-Party Infra**: Bypasses the operational overhead and failure points of Redis by pairing in-process Python memory with TiDB Cloud Serverless.
+- **L1 In-Memory Fast Cache**: Thread-safe LRU with byte ceiling (~25 MB) and 500-item cap answering hot lookups in **< 0.1ms**.
+- **L2 Durable TiDB/SQLite Cache**: Dialect-aware `system_cache` table partitioned by namespace (`web_scrape`, `llm_eval`) with indexed `expires_at` and TLS/SSL encryption.
+- **Deterministic LLM Memoization**: Caches deterministic evaluations and reviews (temperature $\le$ 0.2) for 7 days, conserving OpenRouter/Gemini token quotas.
+- **Anti-Stampede Locks**: Granular per-key thread mutexes ensure multiple concurrent agent workers never issue duplicate fetches for the same external URL.
+- **Fail-Open & Stale-on-Error**: The application never crashes if database or upstream connectivity degrades; automatically serves stale cache data with failover flags.
 
 ### 7. 🛡️ Enterprise LLMOps & AI Security Governance
 - **OWASP LLM Top 10 Protection**:
@@ -315,7 +323,7 @@ uv run python crew.py --topic "LLMOps in 2026: Architectures, Guardrails, and Ob
 
 ## 🧪 Automated Test Suite & Red-Team Attack Pack
 
-The project includes an enterprise-grade automated test suite featuring **81 passing unit, integration, and red-team security tests**:
+The project includes an enterprise-grade automated test suite featuring **90 passing unit, integration, red-team, and cache tests**:
 
 ```bash
 # Run all tests

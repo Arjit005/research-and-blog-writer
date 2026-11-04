@@ -230,6 +230,34 @@ def init_db():
                 );
             """)
             cursor.execute("""
+                CREATE TABLE IF NOT EXISTS system_cache (
+                    cache_key   VARCHAR(64) PRIMARY KEY,
+                    namespace   VARCHAR(32) NOT NULL,
+                    payload     LONGTEXT NOT NULL,
+                    meta_info   JSON NULL,
+                    user_id     INT NULL,
+                    created_at  DATETIME NOT NULL,
+                    expires_at  DATETIME NOT NULL,
+                    INDEX idx_cache_ns_exp (namespace, expires_at),
+                    INDEX idx_cache_user (user_id),
+                    INDEX idx_cache_created (created_at)
+                );
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS system_cache (
+                    cache_key   TEXT PRIMARY KEY,
+                    namespace   TEXT NOT NULL,
+                    payload     TEXT NOT NULL,
+                    meta_info   TEXT NULL,
+                    user_id     INTEGER NULL,
+                    created_at  TEXT NOT NULL,
+                    expires_at  TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_cache_ns_exp ON system_cache(namespace, expires_at);
+                CREATE INDEX IF NOT EXISTS idx_cache_user ON system_cache(user_id);
+                CREATE INDEX IF NOT EXISTS idx_cache_created ON system_cache(created_at);
+
                 CREATE TABLE IF NOT EXISTS research_cache (
                     url_hash        VARCHAR(64) PRIMARY KEY,
                     url             TEXT NOT NULL,
@@ -370,6 +398,20 @@ def init_db():
                     details     TEXT NOT NULL,
                     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
                 );
+
+                CREATE TABLE IF NOT EXISTS system_cache (
+                    cache_key   TEXT PRIMARY KEY,
+                    namespace   TEXT NOT NULL,
+                    payload     TEXT NOT NULL,
+                    meta_info   TEXT NULL,
+                    user_id     INTEGER NULL,
+                    created_at  TEXT NOT NULL,
+                    expires_at  TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_cache_ns_exp ON system_cache(namespace, expires_at);
+                CREATE INDEX IF NOT EXISTS idx_cache_user ON system_cache(user_id);
+                CREATE INDEX IF NOT EXISTS idx_cache_created ON system_cache(created_at);
 
                 CREATE TABLE IF NOT EXISTS research_cache (
                     url_hash        TEXT PRIMARY KEY,
@@ -1067,15 +1109,282 @@ def get_security_audit_logs(limit=20, user_id: Optional[int] = None):
 
 
 # ---------------------------------------------------------------------------
+# Unified Hybrid System Cache CRUD (L2 Persistence with Fail-Open Safety)
+# ---------------------------------------------------------------------------
+
+def _format_datetime(dt: Optional[datetime]) -> str:
+    """Format datetime to standard UTC string format."""
+    if dt is None:
+        dt = datetime.now(timezone.utc)
+    elif dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc)
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _parse_datetime(val: Any) -> datetime:
+    """Safely parse string or datetime to UTC datetime."""
+    if isinstance(val, datetime):
+        if val.tzinfo is None:
+            return val.replace(tzinfo=timezone.utc)
+        return val.astimezone(timezone.utc)
+    if isinstance(val, str):
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ"):
+            try:
+                return datetime.strptime(val.split(".")[0], fmt).replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
+    return datetime.now(timezone.utc)
+
+
+def set_cache_entry(
+    cache_key: str,
+    namespace: str,
+    payload: str,
+    expires_at: datetime,
+    meta_info: Optional[Dict[str, Any]] = None,
+    user_id: Optional[int] = None,
+    created_at: Optional[datetime] = None,
+) -> bool:
+    """Store or update an entry in system_cache with fail-open safety.
+
+    Enforces 1 MB payload limit.
+    """
+    if len(payload.encode("utf-8")) > 1024 * 1024:
+        logger.warning(f"Payload for cache_key {cache_key} exceeds 1 MB limit; skipping cache.")
+        return False
+
+    created_str = _format_datetime(created_at)
+    expires_str = _format_datetime(expires_at)
+    meta_json = json.dumps(meta_info) if meta_info is not None else None
+
+    try:
+        with get_connection() as (conn, is_tidb):
+            if is_tidb:
+                sql = """
+                    INSERT INTO system_cache (cache_key, namespace, payload, meta_info, user_id, created_at, expires_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        namespace = VALUES(namespace),
+                        payload = VALUES(payload),
+                        meta_info = VALUES(meta_info),
+                        user_id = VALUES(user_id),
+                        created_at = VALUES(created_at),
+                        expires_at = VALUES(expires_at)
+                """
+                cursor = conn.cursor()
+                cursor.execute(sql, (cache_key, namespace, payload, meta_json, user_id, created_str, expires_str))
+            else:
+                sql = """
+                    INSERT INTO system_cache (cache_key, namespace, payload, meta_info, user_id, created_at, expires_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(cache_key) DO UPDATE SET
+                        namespace = excluded.namespace,
+                        payload = excluded.payload,
+                        meta_info = excluded.meta_info,
+                        user_id = excluded.user_id,
+                        created_at = excluded.created_at,
+                        expires_at = excluded.expires_at
+                """
+                conn.execute(sql, (cache_key, namespace, payload, meta_json, user_id, created_str, expires_str))
+            return True
+    except Exception as e:
+        logger.warning(f"Failed to set cache entry for {cache_key} (fail-open): {e}")
+        return False
+
+
+def get_cache_entry(
+    cache_key: str,
+    namespace: Optional[str] = None,
+    allow_stale: bool = False,
+    now: Optional[datetime] = None,
+) -> Optional[Dict[str, Any]]:
+    """Retrieve an entry from system_cache with fail-open safety.
+
+    Args:
+        cache_key: Unique SHA-256 key.
+        namespace: Optional namespace filter.
+        allow_stale: If True, returns expired entry flagged with is_stale=True.
+        now: Injectable current UTC datetime for testing.
+
+    Returns:
+        Dict with keys: cache_key, namespace, payload, meta_info, user_id, created_at, expires_at, is_stale.
+        Returns None on miss or error.
+    """
+    curr_time = now or datetime.now(timezone.utc)
+    try:
+        with get_connection() as (conn, is_tidb):
+            if namespace:
+                sql = "SELECT cache_key, namespace, payload, meta_info, user_id, created_at, expires_at FROM system_cache WHERE cache_key = ? AND namespace = ?"
+                cursor = _exec(conn, is_tidb, sql, (cache_key, namespace))
+            else:
+                sql = "SELECT cache_key, namespace, payload, meta_info, user_id, created_at, expires_at FROM system_cache WHERE cache_key = ?"
+                cursor = _exec(conn, is_tidb, sql, (cache_key,))
+
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            if is_tidb and isinstance(row, dict):
+                r_key = row["cache_key"]
+                r_ns = row["namespace"]
+                r_payload = row["payload"]
+                r_meta = row["meta_info"]
+                r_uid = row["user_id"]
+                r_created = _parse_datetime(row["created_at"])
+                r_expires = _parse_datetime(row["expires_at"])
+            else:
+                r_key = row[0]
+                r_ns = row[1]
+                r_payload = row[2]
+                r_meta = row[3]
+                r_uid = row[4]
+                r_created = _parse_datetime(row[5])
+                r_expires = _parse_datetime(row[6])
+
+            if isinstance(r_meta, str):
+                try:
+                    r_meta = json.loads(r_meta)
+                except Exception:
+                    pass
+
+            is_stale = r_expires < curr_time
+            if is_stale and not allow_stale:
+                return None
+
+            return {
+                "cache_key": r_key,
+                "namespace": r_ns,
+                "payload": r_payload,
+                "meta_info": r_meta,
+                "user_id": r_uid,
+                "created_at": r_created,
+                "expires_at": r_expires,
+                "is_stale": is_stale,
+            }
+    except Exception as e:
+        logger.warning(f"Failed to read cache entry {cache_key} (fail-open): {e}")
+        return None
+
+
+def delete_cache_entry(cache_key: str) -> bool:
+    """Delete a single entry from system_cache."""
+    try:
+        with get_connection() as (conn, is_tidb):
+            _exec(conn, is_tidb, "DELETE FROM system_cache WHERE cache_key = ?", (cache_key,))
+            return True
+    except Exception as e:
+        logger.warning(f"Failed to delete cache entry {cache_key}: {e}")
+        return False
+
+
+def prune_expired_cache(namespace: Optional[str] = None, limit: int = 500, now: Optional[datetime] = None) -> int:
+    """Prune expired cache entries in batches with dual-dialect SQL."""
+    curr_str = _format_datetime(now)
+    try:
+        with get_connection() as (conn, is_tidb):
+            if is_tidb:
+                if namespace:
+                    sql = "DELETE FROM system_cache WHERE namespace = %s AND expires_at < %s LIMIT %s"
+                    cursor = conn.cursor()
+                    cursor.execute(sql, (namespace, curr_str, limit))
+                    return cursor.rowcount
+                else:
+                    sql = "DELETE FROM system_cache WHERE expires_at < %s LIMIT %s"
+                    cursor = conn.cursor()
+                    cursor.execute(sql, (curr_str, limit))
+                    return cursor.rowcount
+            else:
+                if namespace:
+                    sql = """
+                        DELETE FROM system_cache 
+                        WHERE rowid IN (
+                            SELECT rowid FROM system_cache 
+                            WHERE namespace = ? AND expires_at < ? 
+                            LIMIT ?
+                        )
+                    """
+                    cursor = conn.execute(sql, (namespace, curr_str, limit))
+                    return cursor.rowcount
+                else:
+                    sql = """
+                        DELETE FROM system_cache 
+                        WHERE rowid IN (
+                            SELECT rowid FROM system_cache 
+                            WHERE expires_at < ? 
+                            LIMIT ?
+                        )
+                    """
+                    cursor = conn.execute(sql, (curr_str, limit))
+                    return cursor.rowcount
+    except Exception as e:
+        logger.warning(f"Failed to prune expired cache: {e}")
+        return 0
+
+
+def get_cache_stats() -> Dict[str, Any]:
+    """Retrieve aggregate cache statistics."""
+    now_str = _format_datetime(None)
+    stats: Dict[str, Any] = {"total_entries": 0, "active_entries": 0, "expired_entries": 0, "by_namespace": {}}
+    try:
+        with get_connection() as (conn, is_tidb):
+            c1 = _exec(conn, is_tidb, "SELECT COUNT(*) AS total, SUM(CASE WHEN expires_at < ? THEN 1 ELSE 0 END) AS expired FROM system_cache", (now_str,))
+            r1 = c1.fetchone()
+            if r1:
+                total = (r1["total"] if is_tidb else r1[0]) or 0
+                expired = (r1["expired"] if is_tidb else r1[1]) or 0
+                stats["total_entries"] = total
+                stats["expired_entries"] = expired
+                stats["active_entries"] = max(0, total - expired)
+
+            c2 = _exec(conn, is_tidb, "SELECT namespace, COUNT(*) AS cnt FROM system_cache GROUP BY namespace")
+            rows = c2.fetchall()
+            for r in rows:
+                ns = r["namespace"] if is_tidb else r[0]
+                cnt = r["cnt"] if is_tidb else r[1]
+                stats["by_namespace"][ns] = cnt
+    except Exception as e:
+        logger.warning(f"Failed to get cache stats: {e}")
+    return stats
+
+
+def clear_cache(namespace: Optional[str] = None, user_id: Optional[int] = None) -> int:
+    """Clear cache entries filtered optionally by namespace and user_id."""
+    try:
+        with get_connection() as (conn, is_tidb):
+            if namespace and user_id is not None:
+                cursor = _exec(conn, is_tidb, "DELETE FROM system_cache WHERE namespace = ? AND user_id = ?", (namespace, user_id))
+            elif namespace:
+                cursor = _exec(conn, is_tidb, "DELETE FROM system_cache WHERE namespace = ?", (namespace,))
+            elif user_id is not None:
+                cursor = _exec(conn, is_tidb, "DELETE FROM system_cache WHERE user_id = ?", (user_id,))
+            else:
+                cursor = _exec(conn, is_tidb, "DELETE FROM system_cache")
+            return cursor.rowcount if hasattr(cursor, "rowcount") else 0
+    except Exception as e:
+        logger.warning(f"Failed to clear cache: {e}")
+        return 0
+
+
+
+# ---------------------------------------------------------------------------
 # Context & Memory Layer CRUD (Global Research Cache, Per-User Preferences)
 # ---------------------------------------------------------------------------
 
 def get_cached_scrape_with_ttl(url: str, ttl_hours: int = 24) -> Optional[str]:
-    """Retrieve compact scraped text from cache if created within ttl_hours.
+    """Retrieve compact scraped text from hybrid cache or legacy research_cache."""
+    try:
+        from cache import HybridCacheManager, normalize_url, make_cache_key
+        clean_url = normalize_url(url)
+        key = make_cache_key("web_scrape", clean_url)
+        mgr = HybridCacheManager.get_instance()
+        entry = mgr.get(key, namespace="web_scrape")
+        if entry and not entry.get("is_stale"):
+            return entry["payload"]
+    except Exception:
+        clean_url = url.strip()
+        key = None
 
-    Global cache: holds scrubbed public summaries without user PII.
-    """
-    url_hash = hashlib.sha256(url.strip().encode("utf-8")).hexdigest()
+    url_hash = hashlib.sha256(clean_url.encode("utf-8")).hexdigest()
     with get_connection() as (conn, is_tidb):
         if is_tidb:
             cursor = _exec(
@@ -1093,7 +1402,13 @@ def get_cached_scrape_with_ttl(url: str, ttl_hours: int = 24) -> Optional[str]:
             )
         row = cursor.fetchone()
         if row:
-            return row["compact_content"] if is_tidb else row[0]
+            content = row["compact_content"] if is_tidb else row[0]
+            if key:
+                try:
+                    mgr.set(key, "web_scrape", content, ttl_seconds=ttl_hours * 3600)
+                except Exception:
+                    pass
+            return content
         return None
 
 
@@ -1103,8 +1418,17 @@ def get_cached_scrape(url: str) -> Optional[str]:
 
 
 def set_cached_scrape(url: str, compact_content: str):
-    """Store or update compact scraped text in cache."""
-    url_hash = hashlib.sha256(url.strip().encode("utf-8")).hexdigest()
+    """Store or update compact scraped text in hybrid cache and legacy research_cache."""
+    try:
+        from cache import HybridCacheManager, normalize_url, make_cache_key
+        clean_url = normalize_url(url)
+        key = make_cache_key("web_scrape", clean_url)
+        mgr = HybridCacheManager.get_instance()
+        mgr.set(key, "web_scrape", compact_content, ttl_seconds=24 * 3600)
+    except Exception:
+        clean_url = url.strip()
+
+    url_hash = hashlib.sha256(clean_url.encode("utf-8")).hexdigest()
     with get_connection() as (conn, is_tidb):
         if is_tidb:
             sql = """
@@ -1113,14 +1437,14 @@ def set_cached_scrape(url: str, compact_content: str):
                 ON DUPLICATE KEY UPDATE compact_content = VALUES(compact_content)
             """
             cursor = conn.cursor()
-            cursor.execute(sql, (url_hash, url, compact_content))
+            cursor.execute(sql, (url_hash, clean_url, compact_content))
         else:
             sql = """
                 INSERT INTO research_cache (url_hash, url, compact_content)
                 VALUES (?, ?, ?)
                 ON CONFLICT(url_hash) DO UPDATE SET compact_content = excluded.compact_content
             """
-            conn.execute(sql, (url_hash, url, compact_content))
+            conn.execute(sql, (url_hash, clean_url, compact_content))
 
 
 def get_user_memories(user_id: Optional[int] = None, user_key: Optional[str] = None) -> Dict[str, str]:

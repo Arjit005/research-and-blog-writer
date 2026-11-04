@@ -323,7 +323,7 @@ class ScrapeTool(BaseTool):
                 pass
             return f"Security Warning: Blocked potentially unsafe URL. Reason: {error_msg}"
 
-        # 1. Check database research cache for instant retrieval & zero redundant calls
+        # 1. Check cache (delegates to HybridCacheManager L1/L2 and research_cache)
         try:
             from database import get_cached_scrape
             cached = get_cached_scrape(target_url)

@@ -282,6 +282,7 @@ with main_tab1:
             "Comprehensive Blog (1,500 - 2,200 words with 1 Mermaid Diagram)",
             "Executive Technical Summary (1,000 - 1,500 words)",
         ])
+        bypass_cache = st.checkbox("⚡ Bypass Cache (Force Fresh Crawl)", value=False, help="Skip cached scrapes and memoized evaluations, forcing a live crawl and generation.")
 
     generate_btn = st.button("🚀 Launch Autonomous Research Squad", type="primary", use_container_width=True, disabled=st.session_state.run_in_progress)
 
@@ -546,6 +547,29 @@ with main_tab3:
             st.info("Database: Local SQLite (Fallback)", icon="💾")
             with st.expander("TiDB Status"):
                 st.caption(tidb_msg)
+
+    st.markdown("---")
+    st.markdown("#### ⚡ Hybrid Two-Tier Cache Telemetry & Health")
+    from cache import HybridCacheManager
+    cache_mgr = HybridCacheManager.get_instance()
+    cm = cache_mgr.get_metrics()
+    c_stats = db.get_cache_stats()
+
+    cc1, cc2, cc3, cc4, cc5 = st.columns(5)
+    cc1.metric("L1 Hits (RAM)", cm["l1_hits"], help="Sub-millisecond memory hits (<0.1ms)")
+    cc2.metric("L2 Hits (TiDB)", cm["l2_hits"], help="Durable persistent database hits")
+    cc3.metric("Hit Ratio", f"{cm['hit_ratio_percent']}%", help="Total hits / total requests")
+    cc4.metric("Latency Saved", f"{cm['latency_saved_ms'] / 1000:.1f}s", help="Cumulative network & model latency eliminated")
+    cc5.metric("Active Entries", c_stats.get("active_entries", 0), help=f"L1 items in RAM: {cm['l1_items']} ({cm['l1_bytes'] // 1024} KB)")
+
+    col_purge1, col_purge2 = st.columns([4, 1])
+    with col_purge1:
+        st.caption(f"Namespaces: {', '.join([f'{k}: {v}' for k, v in c_stats.get('by_namespace', {}).items()]) or 'None active yet'}")
+    with col_purge2:
+        if st.button("🗑️ Prune Expired", key="btn_prune_cache", use_container_width=True):
+            pruned_count = db.prune_expired_cache()
+            st.success(f"Pruned {pruned_count} expired entries!", icon="✅")
+            st.rerun()
 
     st.markdown("---")
     st.markdown("#### 📊 Recent Execution Telemetry Runs")

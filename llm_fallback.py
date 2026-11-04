@@ -76,23 +76,60 @@ class FallbackLLM(BaseLLM):
         return self._llm_instances[model_name]
 
     def call(self, messages: Any, callbacks: Any = None, **kwargs: Any) -> str:
-        """Call models sequentially until one succeeds."""
-        last_error = None
-        for model_name in self.models:
-            try:
-                inst = self._get_instance(model_name)
-                result = inst.call(messages=messages, callbacks=callbacks, **kwargs)
-                return str(result)
-            except Exception as e:
-                print(
-                    f"⚠️ [FallbackLLM] Model '{model_name}' failed ({e}). "
-                    f"Automatically switching to next fallback..."
-                )
-                last_error = e
+        """Call models sequentially until one succeeds, with deterministic hybrid caching."""
+        raw_temp = kwargs.get("temperature")
+        if raw_temp is None:
+            raw_temp = getattr(self, "temperature", None)
+        if raw_temp is None:
+            raw_temp = 0.7
+        temperature = float(raw_temp)
+        bypass_cache = bool(kwargs.get("bypass_cache", False))
+        user_id = kwargs.get("user_id")
 
-        raise RuntimeError(
-            f"All models in the fallback sequence failed. Last error: {last_error}"
-        )
+        def _execute_network_call() -> str:
+            last_error = None
+            for model_name in self.models:
+                try:
+                    inst = self._get_instance(model_name)
+                    result = inst.call(messages=messages, callbacks=callbacks, **kwargs)
+                    return str(result)
+                except Exception as e:
+                    print(
+                        f"⚠️ [FallbackLLM] Model '{model_name}' failed ({e}). "
+                        f"Automatically switching to next fallback..."
+                    )
+                    last_error = e
+
+            raise RuntimeError(
+                f"All models in the fallback sequence failed. Last error: {last_error}"
+            )
+
+        # Only memoize deterministic calls (temperature <= 0.2)
+        if temperature <= 0.2:
+            try:
+                from cache import HybridCacheManager, make_cache_key
+                cache_key = make_cache_key(
+                    "llm_eval",
+                    self.models[0] if self.models else "default",
+                    messages,
+                    temperature,
+                    user_id=user_id,
+                )
+                mgr = HybridCacheManager.get_instance()
+                res, _ = mgr.fetch_or_compute(
+                    key=cache_key,
+                    namespace="llm_eval",
+                    fetch_fn=_execute_network_call,
+                    ttl_seconds=7 * 24 * 3600,
+                    user_id=user_id,
+                    bypass=bypass_cache,
+                    allow_stale_on_error=True,
+                )
+                return res
+            except Exception as e:
+                logger.debug(f"LLM cache bypassed due to error: {e}")
+
+        return _execute_network_call()
 
     def supports_stop_words(self) -> bool:
         return True
