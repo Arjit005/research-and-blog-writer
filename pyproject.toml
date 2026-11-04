@@ -14,6 +14,7 @@ dependencies = [
     "cryptography>=43.0.0",
     "markdown>=3.6.0",
     "textstat>=0.7.3",
+    "beautifulsoup4>=4.12.0",
 ]
 
 [build-system]
@@ -22,7 +23,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 # Include these directories/files in the built package
-only-include = ["agents", "crew.jsonc", "tools", "knowledge", "security", "llmops", "memory", "ui", "core", "llm_fallback.py", "database.py"]
+only-include = ["agents", "crew.jsonc", "tools", "knowledge", "security", "llmops", "memory", "ui", "core", "auth", "cache", "llm_fallback.py", "database.py"]
 
 [tool.crewai]
 # Tells crewAI CLI this is a crew project using JSON-first config
