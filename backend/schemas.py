@@ -10,18 +10,18 @@ from pydantic import BaseModel, EmailStr, Field
 # Auth Schemas
 # ---------------------------------------------------------------------------
 class OTPRequest(BaseModel):
-    email: str = Field(..., description="User email address")
+    email: str = Field(..., max_length=254, description="User email address")
 
 
 class OTPVerifyRequest(BaseModel):
-    email: str = Field(..., description="User email address")
+    email: str = Field(..., max_length=254, description="User email address")
     code: str = Field(..., min_length=6, max_length=6, description="6-digit verification code")
 
 
 class PasswordAuthRequest(BaseModel):
-    email: str = Field(..., description="User email address")
-    password: str = Field(..., min_length=6, description="Password (min 6 characters)")
-    otp_code: Optional[str] = Field(None, description="Optional 6-digit OTP code")
+    email: str = Field(..., max_length=254, description="User email address")
+    password: str = Field(..., min_length=6, max_length=128, description="Password (min 6 characters, max 128)")
+    otp_code: Optional[str] = Field(None, max_length=6, description="Optional 6-digit OTP code")
 
 
 class UserResponse(BaseModel):
@@ -72,8 +72,8 @@ class ArticleDetail(ArticleSummary):
 
 
 class ArticleCreateRequest(BaseModel):
-    topic: str = Field(..., min_length=3, description="Article topic")
-    content: str = Field(..., min_length=10, description="Article markdown content")
+    topic: str = Field(..., min_length=3, max_length=500, description="Article topic")
+    content: str = Field(..., min_length=10, max_length=500_000, description="Article markdown content (max 500KB)")
     tone: Optional[str] = "Professional & Authoritative"
     audience: Optional[str] = "Software Engineers & Developers"
     target_length: Optional[str] = "Standard Blog (1,500 - 2,000 words)"

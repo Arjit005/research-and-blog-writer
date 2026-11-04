@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import logging
+import threading
 from typing import Any, List, Optional
 
 from crewai import LLM
@@ -69,11 +70,13 @@ class FallbackLLM(BaseLLM):
         super().__init__(model=model_list[0], **kwargs)
         self.models = model_list
         self._llm_instances = {}
+        self._lock = threading.Lock()
 
     def _get_instance(self, model_name: str) -> Any:
-        if model_name not in self._llm_instances:
-            self._llm_instances[model_name] = LLM(model=model_name)
-        return self._llm_instances[model_name]
+        with self._lock:
+            if model_name not in self._llm_instances:
+                self._llm_instances[model_name] = LLM(model=model_name)
+            return self._llm_instances[model_name]
 
     def call(self, messages: Any, callbacks: Any = None, **kwargs: Any) -> str:
         """Call models sequentially until one succeeds, with deterministic hybrid caching."""

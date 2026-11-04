@@ -27,7 +27,7 @@ from ui import (
     get_article_filename,
     generate_standalone_html,
 )
-from core import PipelineRunner, generate_inline_diff_html
+from core import PipelineRunner, generate_inline_diff_html, calculate_diff_stats
 
 # Load environment variables
 load_dotenv()

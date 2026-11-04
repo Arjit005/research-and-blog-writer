@@ -59,10 +59,10 @@ app = FastAPI(
 )
 
 # 1. CORS Configuration
+# Restricts origins strictly to same-host, localhost development ports, and configured service URL
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=r"^https://.*\.onrender\.com$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -81,13 +81,11 @@ async def csrf_origin_guard(request: Request, call_next):
             clean_origin = origin.rstrip("/")
             # Check 1: Host header matches origin (Same-Origin)
             is_same_host = bool(host and (clean_origin == f"https://{host}" or clean_origin == f"http://{host}"))
-            # Check 2: Render domain (*.onrender.com)
-            is_render_domain = clean_origin.endswith(".onrender.com")
-            # Check 3: Explicit allowed origins
-            is_explicit_allowed = any(clean_origin.startswith(allowed) for allowed in ALLOWED_ORIGINS)
+            # Check 2: Explicit configured allowed origins (localhost, RENDER_EXTERNAL_URL)
+            is_explicit_allowed = any(clean_origin == allowed.rstrip("/") or clean_origin.startswith(allowed) for allowed in ALLOWED_ORIGINS)
 
-            if not (is_same_host or is_render_domain or is_explicit_allowed):
-                logger.warning(f"Rejected cross-origin request from origin: {origin} (host: {host})")
+            if not (is_same_host or is_explicit_allowed):
+                logger.warning(f"Rejected cross-origin request from unauthorized origin: {origin} (host: {host})")
                 return JSONResponse(
                     status_code=status.HTTP_403_FORBIDDEN,
                     content={"error": {"code": "CSRF_ORIGIN_INVALID", "message": "Cross-origin request rejected."}},

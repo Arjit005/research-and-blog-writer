@@ -8,4 +8,4 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: AUTH_DEV_MODE
-        value: "true"
+        value: "false"

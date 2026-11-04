@@ -70,7 +70,7 @@ def request_otp_endpoint(body: OTPRequest, request: Request) -> AuthResponse:
     return AuthResponse(
         success=True,
         message=msg,
-        dev_code=dev_code if os.getenv("AUTH_DEV_MODE", "").lower() in ("true", "1") else None,
+        dev_code=dev_code if (not IS_PROD and os.getenv("AUTH_DEV_MODE", "").lower() in ("true", "1")) else None,
     )
 
 

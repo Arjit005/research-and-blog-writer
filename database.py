@@ -8,6 +8,8 @@ Otherwise, it falls back to local SQLite (research_studio.db) with WAL mode.
 from __future__ import annotations
 
 import os
+import re
+import time
 import json
 import sqlite3
 import hashlib
@@ -32,6 +34,64 @@ def get_active_backend() -> str:
     return "tidb" if is_tidb_configured() else "sqlite"
 
 
+def _get_tidb_ssl() -> Dict[str, Any]:
+    """Build secure SSL parameters for TiDB Cloud connections."""
+    ca_file = os.getenv("TIDB_SSL_CA")
+    if ca_file and os.path.exists(ca_file):
+        return {"ca": ca_file, "check_hostname": True}
+
+    if os.getenv("TIDB_SSL_INSECURE", "").lower() in ("true", "1"):
+        return {"check_hostname": False}
+
+    try:
+        import certifi
+        return {"ca": certifi.where(), "check_hostname": True}
+    except Exception:
+        return {"check_hostname": False}
+
+
+class TiDBConnectionPool:
+    """Thread-safe connection pool for TiDB Cloud Serverless to eliminate per-query TLS handshakes."""
+
+    def __init__(self, max_size: int = 8):
+        import queue
+        self.max_size = max_size
+        self._pool: queue.Queue = queue.Queue(maxsize=max_size)
+
+    def get_connection(self) -> Any:
+        import queue
+        try:
+            conn = self._pool.get_nowait()
+            try:
+                conn.ping(reconnect=True)
+                return conn
+            except Exception:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        except queue.Empty:
+            pass
+
+        return _connect_tidb()
+
+    def release_connection(self, conn: Any) -> None:
+        import queue
+        if conn is None:
+            return
+        try:
+            conn.rollback()
+            self._pool.put_nowait(conn)
+        except (queue.Full, Exception):
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+_tidb_pool = TiDBConnectionPool(max_size=8)
+
+
 def _connect_tidb():
     """Attempt to establish a connection to TiDB Cloud."""
     import pymysql
@@ -42,6 +102,7 @@ def _connect_tidb():
     user = os.getenv("TIDB_USER")
     password = os.getenv("TIDB_PASSWORD", "")
     database = os.getenv("TIDB_DATABASE", "test")
+    ssl_config = _get_tidb_ssl()
 
     try:
         return pymysql.connect(
@@ -51,7 +112,7 @@ def _connect_tidb():
             password=password,
             database=database,
             cursorclass=DictCursor,
-            ssl={"check_hostname": False},
+            ssl=ssl_config,
             connect_timeout=10,
             autocommit=False,
         )
@@ -66,7 +127,7 @@ def _connect_tidb():
                 user=user,
                 password=password,
                 cursorclass=DictCursor,
-                ssl={"check_hostname": False},
+                ssl=ssl_config,
                 connect_timeout=10,
                 autocommit=True,
             )
@@ -83,7 +144,7 @@ def _connect_tidb():
                 password=password,
                 database=database,
                 cursorclass=DictCursor,
-                ssl={"check_hostname": False},
+                ssl=ssl_config,
                 connect_timeout=10,
                 autocommit=False,
             )
@@ -94,15 +155,17 @@ def _connect_tidb():
 def get_connection():
     """Yield a database connection and a helper execute wrapper.
 
-    Ensures a single, clean yield to prevent generator RuntimeError after exceptions.
+    Uses thread-safe connection pooling for TiDB Cloud to minimize latency.
     """
     conn = None
     is_tidb = False
+    from_pool = False
 
     if is_tidb_configured():
         try:
-            conn = _connect_tidb()
+            conn = _tidb_pool.get_connection()
             is_tidb = True
+            from_pool = True
         except Exception as e:
             logger.warning(f"Failed to connect to TiDB Cloud ({e}). Falling back to local SQLite.")
             conn = None
@@ -124,10 +187,13 @@ def get_connection():
             pass
         raise
     finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+        if is_tidb and from_pool:
+            _tidb_pool.release_connection(conn)
+        else:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def _exec(conn: Any, is_tidb: bool, sql: str, params: Tuple = ()) -> Any:
@@ -176,8 +242,26 @@ def check_tidb_live_status() -> Tuple[bool, str]:
         return False, f"TiDB connection error: {e}"
 
 
+def _validate_sql_identifier(identifier: str) -> str:
+    """Validate SQL identifier (table/column) contains only safe alphanumeric characters and underscores."""
+    if not identifier or not re.match(r"^[a-zA-Z0-9_]+$", identifier):
+        raise ValueError(f"Unsafe SQL identifier: {identifier!r}")
+    return identifier
+
+
+def _validate_sql_col_type(col_type: str) -> str:
+    """Validate column type definition contains only safe type syntax."""
+    if not col_type or not re.match(r"^[a-zA-Z0-9_(),\s]+$", col_type) or ";" in col_type or "--" in col_type:
+        raise ValueError(f"Unsafe SQL column type: {col_type!r}")
+    return col_type
+
+
 def _ensure_column_exists(conn: Any, is_tidb: bool, table: str, col: str, col_type: str):
-    """Safely and idempotently ensure a column exists in a table across TiDB and SQLite."""
+    """Safely and idempotently ensure a column exists in a table across TiDB and SQLite with identifier sanitization."""
+    safe_table = _validate_sql_identifier(table)
+    safe_col = _validate_sql_identifier(col)
+    safe_type = _validate_sql_col_type(col_type)
+
     if is_tidb:
         cursor = conn.cursor()
         cursor.execute(
@@ -186,17 +270,17 @@ def _ensure_column_exists(conn: Any, is_tidb: bool, table: str, col: str, col_ty
             FROM information_schema.COLUMNS 
             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = %s
             """,
-            (table, col),
+            (safe_table, safe_col),
         )
         res = cursor.fetchone()
         cnt = res["cnt"] if isinstance(res, dict) else res[0]
         if cnt == 0:
-            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+            cursor.execute(f"ALTER TABLE `{safe_table}` ADD COLUMN `{safe_col}` {safe_type}")
     else:
-        cursor = conn.execute(f"PRAGMA table_info({table})")
+        cursor = conn.execute(f"PRAGMA table_info({safe_table})")
         existing_cols = [row[1] for row in cursor.fetchall()]
-        if col not in existing_cols:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+        if safe_col not in existing_cols:
+            conn.execute(f"ALTER TABLE {safe_table} ADD COLUMN {safe_col} {safe_type}")
 
 
 def init_db():
@@ -1826,23 +1910,32 @@ def get_active_user_job(user_id: int) -> Optional[Dict[str, Any]]:
 
 
 def append_job_event(run_id: str, event_type: str, payload: Any) -> int:
-    """Append a sequenced event to the durable job event ledger."""
+    """Append a sequenced event to the durable job event ledger with concurrency retry protection."""
     payload_str = json.dumps(payload) if not isinstance(payload, str) else payload
     with get_connection() as (conn, is_tidb):
-        cursor = _exec(
-            conn, is_tidb,
-            "SELECT COALESCE(MAX(seq_id), 0) + 1 AS next_seq FROM job_events WHERE run_id = ?",
-            (run_id,),
-        )
-        row = cursor.fetchone()
-        next_seq = row["next_seq"] if isinstance(row, dict) else row[0]
+        for attempt in range(5):
+            cursor = _exec(
+                conn, is_tidb,
+                "SELECT COALESCE(MAX(seq_id), 0) + 1 AS next_seq FROM job_events WHERE run_id = ?",
+                (run_id,),
+            )
+            row = cursor.fetchone()
+            next_seq = row["next_seq"] if isinstance(row, dict) else row[0]
 
-        _exec(
-            conn, is_tidb,
-            "INSERT INTO job_events (run_id, seq_id, event_type, payload) VALUES (?, ?, ?, ?)",
-            (run_id, next_seq, event_type, payload_str),
-        )
-        return next_seq
+            try:
+                _exec(
+                    conn, is_tidb,
+                    "INSERT INTO job_events (run_id, seq_id, event_type, payload) VALUES (?, ?, ?, ?)",
+                    (run_id, next_seq, event_type, payload_str),
+                )
+                return next_seq
+            except Exception as e:
+                err_str = str(e).upper()
+                if attempt < 4 and ("UNIQUE" in err_str or "DUPLICATE" in err_str):
+                    time.sleep(0.02 * (attempt + 1))
+                    continue
+                raise
+        return 1
 
 
 def get_job_events(run_id: str, after_seq_id: int = 0) -> List[Dict[str, Any]]:

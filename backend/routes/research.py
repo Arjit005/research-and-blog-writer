@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/runs", tags=["Research Runs"])
 
+_CANCELLATION_EVENTS: Dict[str, threading.Event] = {}
+
 
 def _execute_run_worker(
     run_id: str,
@@ -34,6 +36,9 @@ def _execute_run_worker(
     target_length: Optional[str],
 ):
     """Background worker executing CrewAI pipeline and storing sequenced events."""
+    cancel_event = threading.Event()
+    _CANCELLATION_EVENTS[run_id] = cancel_event
+
     tracer = LangSmithJobTracer(
         run_id=run_id,
         topic=topic,
@@ -61,6 +66,8 @@ def _execute_run_worker(
         from core.mermaid_split import extract_mermaid
 
         def on_step(step_output: Any) -> None:
+            if cancel_event.is_set():
+                raise InterruptedError("Research run was cancelled by user.")
             detail = ""
             if hasattr(step_output, "tool"):
                 tool_name = getattr(step_output, "tool", "Tool")
@@ -75,6 +82,8 @@ def _execute_run_worker(
                 db.append_job_event(run_id, "step", {"detail": detail, "timestamp": time.time()})
 
         def on_task(task_output: Any) -> None:
+            if cancel_event.is_set():
+                raise InterruptedError("Research run was cancelled by user.")
             nonlocal current_stage_idx
             db.append_job_event(run_id, "task_done", {"timestamp": time.time()})
             tracer.end_span(f"stage_{current_stage_idx}")
@@ -152,6 +161,8 @@ def _execute_run_worker(
         export_failure_to_dataset("production_failures", topic, str(e), metadata={"run_id": run_id, "user_id": user_id})
         db.update_research_job(run_id, status="failed", error_message=str(e))
         db.append_job_event(run_id, "error", {"message": str(e), "timestamp": time.time()})
+    finally:
+        _CANCELLATION_EVENTS.pop(run_id, None)
 
 
 @router.post("", response_model=RunResponse)
@@ -241,7 +252,7 @@ async def stream_run_events(
             if await request.is_disconnected():
                 break
 
-            events = db.get_job_events(run_id, after_seq_id=current_seq)
+            events = await asyncio.to_thread(db.get_job_events, run_id, after_seq_id=current_seq)
             if events:
                 for ev in events:
                     seq_id = ev["seq_id"]
@@ -252,10 +263,10 @@ async def stream_run_events(
                 last_heartbeat = time.time()
 
             # Check job terminal status
-            j = db.get_research_job(run_id)
+            j = await asyncio.to_thread(db.get_research_job, run_id)
             if j and j.get("status") in ("completed", "failed", "cancelled"):
                 # Deliver any remaining events then close stream
-                more = db.get_job_events(run_id, after_seq_id=current_seq)
+                more = await asyncio.to_thread(db.get_job_events, run_id, after_seq_id=current_seq)
                 if not more:
                     break
 
@@ -289,6 +300,11 @@ def cancel_research_run(
 
     if job["status"] in ("completed", "failed", "cancelled"):
         return {"success": False, "message": f"Run already in terminal state: {job['status']}"}
+
+    # Signal active background worker to halt immediately
+    cancel_event = _CANCELLATION_EVENTS.get(run_id)
+    if cancel_event:
+        cancel_event.set()
 
     db.update_research_job(run_id, status="cancelled")
     db.append_job_event(run_id, "cancelled", {"message": "Run was cancelled by user."})
