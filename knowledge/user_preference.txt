@@ -1,29 +1,26 @@
-# User Preferences for Blog Post Output
-# =======================================
+# User Preferences for Deep Technical Blog Post Output
+# ========================================================
 # These preferences guide the Report Writer and Quality Reviewer agents
-# when crafting the final blog post.
-#
-# Tone & Style:
-# - Use a professional yet approachable tone
-# - Avoid overly technical jargon unless the topic requires it
-# - Write in active voice whenever possible
-# - Keep sentences concise and paragraphs short (3-5 sentences)
-#
-# Formatting:
-# - Use Markdown formatting throughout
-# - Include a compelling H1 title at the top
-# - Use H2 for main sections and H3 for sub-sections
-# - Use bullet points or numbered lists for key takeaways
-# - Add horizontal rules (---) between major sections if helpful
-#
-# Content Guidelines:
-# - Always cite sources where possible
-# - Include relevant statistics and data points
-# - End with a "Key Takeaways" or "Conclusion" section
-# - Target length: 1500-2500 words
-# - No fabricated facts or unsupported claims
-#
-# Audience:
-# - General tech-savvy readers
-# - Assume intermediate familiarity with the topic
-# - Explain acronyms on first use
+# when crafting the authoritative deep-dive blog post.
+
+Tone & Style:
+- Professional, deeply technical, and authoritative yet highly engaging
+- Avoid hand-waving generalities and superficial overviews
+- Dive into inner mechanics, data structures, algorithm complexities, and failure modes
+- Include real-world benchmarks, latency/throughput metrics, and production trade-offs
+
+Visuals & Diagrams:
+- Embed at least 1-2 native Mermaid.js diagrams (```mermaid flowchart LR ... ``` or ```mermaid sequenceDiagram ... ```)
+- Use contextual, high-resolution royalty-free imagery with descriptive captions and figure numbering:
+  `![Figure 1: Architecture](https://images.unsplash.com/photo-1558494949-ef010cbdcc31?w=1200&auto=format&fit=crop "Figure 1: System Topology")`
+  `*Figure 1: Detailed explanation of component interactions and state synchronization.*`
+- Use comparative Markdown matrix tables to contrast alternatives and benchmarks
+
+Structure & Formatting:
+- Compelling H1 Title followed by an Executive Summary / TL;DR callout block
+- Clear H2 and H3 deep-dive sections explaining how systems function under the hood
+- Code blocks with syntax highlighting for configurations or algorithm implementations
+- Bulleted breakdowns for key technical takeaways and anti-patterns
+- Dedicated "📚 References & Verified Sources" section with numbered, clickable links
+- Target length: 2,000 - 3,500 words
+- Strict groundness: All facts, statistics, and citations must be backed by verified research

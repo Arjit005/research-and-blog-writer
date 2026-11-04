@@ -11,11 +11,23 @@ Requirements:
 
 import ipaddress
 import socket
+import re
 from typing import Any, Optional, Type
 from urllib.parse import urlparse
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
 from crewai_tools import ScrapeWebsiteTool
+from security.guardrails import sanitize_scraped_content
+
+
+def compact_scraped_text(text: str, max_words: int = 1500) -> str:
+    """Compact scraped webpage text by normalizing whitespace and budgeting max words."""
+    cleaned = re.sub(r"\n{3,}", "\n\n", text).strip()
+    words = cleaned.split()
+    if len(words) > max_words:
+        truncated = " ".join(words[:max_words])
+        return f"{truncated}\n\n[... Content truncated to {max_words} words for context optimization ...]"
+    return cleaned
 
 
 def is_safe_url(url: str) -> tuple[bool, str]:
@@ -60,7 +72,7 @@ class ScrapeTool(BaseTool):
 
     Given a URL, this tool fetches the page and returns its readable
     text content (HTML tags stripped). Includes SSRF protection against
-    internal network scanning.
+    internal network scanning and indirect prompt injection sanitization.
     """
 
     name: str = "scrape_tool"
@@ -72,7 +84,7 @@ class ScrapeTool(BaseTool):
     args_schema: Type[BaseModel] = ScrapeInput
 
     def _run(self, url: str = "", **kwargs: Any) -> str:
-        """Fetch and extract text content from a webpage with SSRF guard."""
+        """Fetch and extract text content from a webpage with SSRF and injection guards."""
         target_url = url or kwargs.get("website_url", "") or kwargs.get("url", "")
         if not target_url:
             return "Error: No URL provided."
@@ -82,11 +94,26 @@ class ScrapeTool(BaseTool):
         if not is_safe:
             return f"Security Warning: Blocked potentially unsafe URL. Reason: {error_msg}"
 
+        # Check database research cache for instant retrieval & zero redundant calls
+        try:
+            from database import get_cached_scrape, set_cached_scrape
+            cached = get_cached_scrape(target_url)
+            if cached:
+                return cached
+        except Exception:
+            pass
+
         try:
             scraper = ScrapeWebsiteTool(website_url=target_url)
             content = str(scraper._run(website_url=target_url))
             if not content.strip():
                 return f"Notice: No readable text content could be extracted from {target_url}."
-            return content
+            sanitized = sanitize_scraped_content(content)
+            compacted = compact_scraped_text(sanitized, max_words=1500)
+            try:
+                set_cached_scrape(target_url, compacted)
+            except Exception:
+                pass
+            return compacted
         except Exception as e:
             return f"Notice: Failed to fetch webpage content from {target_url} (Error: {e}). Proceed with other available sources."

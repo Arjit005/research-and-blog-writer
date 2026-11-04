@@ -1,3 +1,6 @@
+from security.guardrails import validate_user_input, mask_pii_and_secrets, verify_citations
+from llmops.telemetry import TelemetryTracker, calculate_readability
+from llm_fallback import get_fallback_llm
 import io
 import os
 import sys
@@ -142,13 +145,20 @@ with st.sidebar:
     st.markdown("### 🎛️ Control Panel")
 
     # API Keys Configuration
+    openrouter_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPEN_ROUTER_API_KEY", "")
     gemini_key = os.getenv("GEMINI_API_KEY", "")
     serper_key = os.getenv("SERPER_API_KEY", "")
 
-    with st.expander("🔑 API Keys & Settings", expanded=not (gemini_key and serper_key)):
-        user_gemini = st.text_input("Gemini API Key", value=gemini_key, type="password")
-        user_serper = st.text_input("Serper.dev API Key", value=serper_key, type="password")
+    has_any_llm = bool(openrouter_key or gemini_key)
 
+    with st.expander("🔑 API Keys & Settings", expanded=not has_any_llm):
+        user_openrouter = st.text_input("OpenRouter API Key (Supports Free Fallbacks)", value=openrouter_key, type="password")
+        user_gemini = st.text_input("Gemini API Key (Optional)", value=gemini_key, type="password")
+        user_serper = st.text_input("Serper.dev API Key (Optional)", value=serper_key, type="password", help="DuckDuckGo is used by default for free searching.")
+
+        if user_openrouter:
+            os.environ["OPENROUTER_API_KEY"] = user_openrouter
+            os.environ["OPEN_ROUTER_API_KEY"] = user_openrouter
         if user_gemini:
             os.environ["GEMINI_API_KEY"] = user_gemini
         if user_serper:
@@ -156,15 +166,60 @@ with st.sidebar:
 
         c1, c2 = st.columns(2)
         with c1:
-            if os.getenv("GEMINI_API_KEY"):
+            if os.getenv("OPENROUTER_API_KEY") or os.getenv("OPEN_ROUTER_API_KEY"):
+                st.success("OpenRouter Fallback Ready", icon="🔄")
+            elif os.getenv("GEMINI_API_KEY"):
                 st.success("Gemini Ready", icon="✅")
             else:
-                st.error("Gemini Missing", icon="❌")
+                st.error("LLM Key Missing", icon="❌")
         with c2:
             if os.getenv("SERPER_API_KEY"):
-                st.success("Serper Ready", icon="✅")
+                st.success("Serper (Active)", icon="✅")
             else:
-                st.error("Serper Missing", icon="❌")
+                st.info("DuckDuckGo (Free)", icon="🦆")
+
+        # TiDB Cloud Configuration
+        st.markdown("---")
+        st.caption("☁️ **Database Engine:**")
+        backend = db.get_active_backend()
+        if backend == "tidb":
+            st.success(f"TiDB Cloud ({os.getenv('TIDB_DATABASE', 'research_studio')})", icon="☁️")
+        else:
+            st.info("SQLite Local (Auto-Fallback)", icon="💾")
+
+        with st.expander("⚙️ TiDB Cloud Configuration", expanded=False):
+            tidb_h = st.text_input("TiDB Host", value=os.getenv("TIDB_HOST", ""), placeholder="gateway01.ap-southeast-1.prod.aws.tidbcloud.com")
+            tidb_u = st.text_input("TiDB User", value=os.getenv("TIDB_USER", ""), placeholder="xxxxxx.root")
+            tidb_p = st.text_input("TiDB Password", value=os.getenv("TIDB_PASSWORD", ""), type="password")
+            tidb_d = st.text_input("TiDB Database", value=os.getenv("TIDB_DATABASE", "research_studio"))
+            if tidb_h and tidb_u:
+                os.environ["TIDB_HOST"] = tidb_h
+                os.environ["TIDB_USER"] = tidb_u
+                if tidb_p:
+                    os.environ["TIDB_PASSWORD"] = tidb_p
+                if tidb_d:
+                    os.environ["TIDB_DATABASE"] = tidb_d
+
+        # --- Long-Term Memory & Persistent Preferences ---
+        st.markdown("---")
+        with st.expander("🧠 Persistent Memory & Author Style", expanded=False):
+            st.caption("Custom preferences saved to TiDB/SQLite across sessions:")
+            existing_mems = db.get_user_memories()
+
+            p_tone = st.text_input("Preferred Tone", value=existing_mems.get("preferred_tone", "Professional & Authoritative"))
+            p_audience = st.text_input("Target Audience", value=existing_mems.get("target_audience", "Software Engineers & Developers"))
+            p_prohibited = st.text_input("Prohibited Fluff", value=existing_mems.get("prohibited_words", "delve, tapestry, game-changer, revolutionizing"))
+            diagram_options = ["flowchart TD", "sequenceDiagram", "stateDiagram-v2"]
+            curr_diag = existing_mems.get("preferred_diagram", "flowchart TD")
+            diag_idx = diagram_options.index(curr_diag) if curr_diag in diagram_options else 0
+            p_diagram = st.selectbox("Preferred Diagram Type", diagram_options, index=diag_idx)
+
+            if st.button("💾 Save Preferences to Memory", use_container_width=True):
+                db.set_user_memory("preferred_tone", p_tone)
+                db.set_user_memory("target_audience", p_audience)
+                db.set_user_memory("prohibited_words", p_prohibited)
+                db.set_user_memory("preferred_diagram", p_diagram)
+                st.success("Memory Updated in TiDB/SQLite!", icon="🧠")
 
     # --- Database Stats ---
     st.markdown("---")
@@ -211,7 +266,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 👥 Agent Squad Architecture")
     st.markdown("""
-    - 🔍 **Senior Researcher**: Live Serper web queries
+    - 🔍 **Senior Researcher**: Live DuckDuckGo web queries
     - 📊 **Content Analyst**: Claim verification & synthesis
     - ✍️ **Blog Writer**: Structured narrative drafting
     - ✨ **Quality Reviewer**: Fact-checking & citations
@@ -226,7 +281,7 @@ st.markdown('<div class="main-title">AI Research Studio & Blog Copilot</div>', u
 st.markdown('<div class="subtitle">Autonomous 4-Agent Research Squad + Interactive Post-Generation AI Editorial Copilot</div>', unsafe_allow_html=True)
 
 # Main Navigation Tabs: 1. Generate New Blog, 2. Studio & Copilot Chat
-main_tab1, main_tab2 = st.tabs(["🚀 Autonomous Research & Generation", "💬 Interactive Copilot & Chat"])
+main_tab1, main_tab2, main_tab3 = st.tabs(["🚀 Autonomous Research & Generation", "💬 Interactive Copilot & Chat", "🛡️ LLMOps & Security Governance"])
 
 # ==============================================================================
 # TAB 1: AUTONOMOUS GENERATION
@@ -280,11 +335,16 @@ with main_tab1:
     launch_btn = st.button("🚀 Launch Autonomous Multi-Agent Crew", type="primary", use_container_width=True)
 
     if launch_btn:
+        is_safe, sec_msg = validate_user_input(topic_input)
         if not topic_input.strip():
             st.error("⚠️ Please specify a research topic before launching.")
-        elif not os.getenv("GEMINI_API_KEY") or not os.getenv("SERPER_API_KEY"):
-            st.error("⚠️ Missing API keys! Please fill in your Gemini and Serper.dev keys in the sidebar.")
+        elif not is_safe:
+            st.error(f"🚨 {sec_msg}")
+            db.save_security_event("PROMPT_INJECTION_BLOCKED", f"Topic: '{topic_input[:100]}' | {sec_msg}")
+        elif not (os.getenv("OPENROUTER_API_KEY") or os.getenv("OPEN_ROUTER_API_KEY") or os.getenv("GEMINI_API_KEY")):
+            st.error("⚠️ Missing LLM API key! Please fill in your OpenRouter or Gemini API key in the sidebar.")
         else:
+            telemetry_tracker = TelemetryTracker(topic=topic_input.strip())
             st.markdown("---")
             st.subheader(f"🔄 Active Pipeline: *{topic_input}*")
 
@@ -304,7 +364,7 @@ with main_tab1:
             log_box.code("\n".join(logs_history), language="plaintext")
 
             task_stages = [
-                "1/4: Web Research (Serper)",
+                "1/4: Web Research (DuckDuckGo)",
                 "2/4: Content Analysis",
                 "3/4: Drafting Blog",
                 "4/4: Quality Review & Polish",
@@ -338,8 +398,16 @@ with main_tab1:
             try:
                 from crew import ResearchAndBlogWriter
 
-                # Construct composite prompt with steering instructions
-                effective_topic = f"{topic_input} (Target Audience: {audience}, Tone: {tone}, Length: {length})"
+                # Construct composite prompt with steering instructions & persistent memory
+                user_mems = db.get_user_memories()
+                mem_guidance = []
+                if user_mems.get("prohibited_words"):
+                    mem_guidance.append(f"Prohibited Jargon: {user_mems['prohibited_words']}")
+                if user_mems.get("preferred_diagram"):
+                    mem_guidance.append(f"Preferred Diagram Style: {user_mems['preferred_diagram']}")
+
+                mem_suffix = f" [Author Preferences: {', '.join(mem_guidance)}]" if mem_guidance else ""
+                effective_topic = f"{topic_input} (Target Audience: {audience}, Tone: {tone}, Length: {length}){mem_suffix}"
 
                 start_time = time.time()
                 with st.spinner("AI agents are researching, analyzing sources, and drafting the article..."):
@@ -361,6 +429,12 @@ with main_tab1:
                 if token_usage:
                     tokens_used = getattr(token_usage, "total_tokens", 0)
 
+                # Mask sensitive secrets/PII in report
+                report_content = mask_pii_and_secrets(report_content)
+
+                # Finalize telemetry metrics
+                telemetry_data = telemetry_tracker.finalize(report_content)
+
                 # Save to database
                 article_id = db.save_article(
                     topic=topic_input.strip(),
@@ -369,8 +443,11 @@ with main_tab1:
                     audience=audience,
                     target_length=length,
                     generation_time_sec=elapsed,
-                    tokens_used=tokens_used,
+                    tokens_used=tokens_used or telemetry_data.get("tokens_estimated", 0),
                 )
+
+                # Persist LLMOps telemetry run
+                db.save_telemetry_run(article_id, telemetry_data)
 
                 # Update session state
                 st.session_state.current_report = report_content
@@ -459,26 +536,19 @@ with main_tab2:
             with st.chat_message("assistant"):
                 with st.spinner("Copilot is analyzing the report and drafting your response..."):
                     try:
-                        system_prompt = (
-                            "You are the Senior Editorial Copilot for this multi-agent research team. "
-                            "You have full access to the generated report below. "
-                            "Assist the user with high precision, engaging writing, exact citations, "
-                            "and thoughtful revisions based on the report.\n\n"
-                            f"=== GENERATED REPORT CONTEXT ===\n{st.session_state.current_report}\n"
-                            "=================================\n"
+                        from memory.chat_memory import ChatMemoryManager
+
+                        chat_mem = ChatMemoryManager(max_turns=6)
+                        user_mems = db.get_user_memories()
+                        messages = chat_mem.build_bounded_context(
+                            chat_history=st.session_state.chat_history,
+                            current_report=st.session_state.current_report,
+                            active_query=active_query,
+                            article_id=st.session_state.current_article_id,
+                            user_memories=user_mems,
                         )
 
-                        messages = [{"role": "system", "content": system_prompt}]
-                        for m in st.session_state.chat_history:
-                            messages.append({"role": m["role"], "content": m["content"]})
-
-                        response = completion(
-                            model="gemini/gemini-2.5-flash",
-                            messages=messages,
-                            temperature=0.7,
-                        )
-
-                        reply_text = response.choices[0].message.content
+                        reply_text = get_fallback_llm().call(messages=messages)
                         st.markdown(reply_text)
 
                         st.session_state.chat_history.append({"role": "assistant", "content": reply_text})
@@ -489,3 +559,73 @@ with main_tab2:
 
                     except Exception as err:
                         st.error(f"Error communicating with Gemini Copilot: {err}")
+
+
+# ==============================================================================
+# TAB 3: LLMOPS & SECURITY GOVERNANCE
+# ==============================================================================
+with main_tab3:
+    st.markdown("### 🛡️ Enterprise LLMOps, AI Security & Governance")
+    st.markdown("Real-time telemetry, model failover health, and OWASP Top 10 for LLMs defense metrics.")
+
+    dash_stats = db.get_stats()
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Pipeline Runs", dash_stats.get("total_runs", 0))
+    c2.metric("Total Tokens Processed", f"{dash_stats.get('total_tokens', 0):,}")
+    c3.metric("Auto-Fallbacks Handled", dash_stats.get("total_fallbacks", 0), help="Automatic model switches without error")
+    c4.metric("Security Events Monitored", dash_stats.get("total_security_events", 0))
+
+    st.markdown("---")
+    st.markdown("#### 🔄 Model Failover & Database Matrix")
+    hm1, hm2, hm3, hm4 = st.columns(4)
+    with hm1:
+        st.success("OpenRouter Fallback Chain: ACTIVE (5 Models)", icon="✅")
+    with hm2:
+        st.success("Web Search: DuckDuckGo Native", icon="🦆")
+    with hm3:
+        if os.getenv("GEMINI_API_KEY"):
+            st.success("Gemini: AVAILABLE", icon="✅")
+        else:
+            st.info("Gemini: Optional", icon="ℹ️")
+    with hm4:
+        if db.get_active_backend() == "tidb":
+            st.success("Database: TiDB Cloud Serverless", icon="☁️")
+        else:
+            st.info("Database: Local SQLite (Fallback)", icon="💾")
+
+    st.markdown("---")
+    st.markdown("#### 📊 Recent Execution Telemetry Runs")
+    telemetry_runs = db.get_telemetry_history(limit=10)
+    if not telemetry_runs:
+        st.info("No telemetry runs recorded yet. Launch a research crew to collect live metrics.")
+    else:
+        for run in telemetry_runs:
+            with st.expander(f"🕒 Run #{run['id']}: {run['topic']} ({run['duration_sec']}s)"):
+                tc1, tc2, tc3 = st.columns(3)
+                tc1.metric("Duration", f"{run['duration_sec']} sec")
+                tc2.metric("Estimated Tokens", f"{run['tokens_estimated']:,}")
+                tc3.metric("Readability", f"{run['readability_score']}/100 ({run['readability_grade']})")
+
+                models = run.get("models_used", [])
+                if models:
+                    st.markdown(f"**Models Utilized:** `{', '.join(models)}`")
+                if run.get("fallback_events"):
+                    st.markdown("**Fallback Incidents Handled:**")
+                    st.json(run["fallback_events"])
+
+    st.markdown("---")
+    st.markdown("#### 🔒 Security Guardrails & Audit Logs (OWASP LLM Defense)")
+    sec_logs = db.get_security_audit_logs(limit=10)
+    if not sec_logs:
+        st.success("✅ Clean security state: No prompt injection or SSRF anomalies detected.")
+    else:
+        for slog in sec_logs:
+            st.warning(f"🚨 **[{slog['event_type']}]** {slog['details']} *(Logged at {slog['created_at']})*")
+
+    st.markdown("""
+    **Active AI Security Controls:**
+    - 🛡️ **LLM01 - Prompt Injection Defense**: Input pattern sanitization blocking jailbreak attempts.
+    - 🛡️ **LLM01 - Indirect Injection Defense**: Web scraper sanitizes hidden system cues and HTML comments.
+    - 🛡️ **LLM02 - SSRF Defense**: Blocking RFC 1918 private subnets and `169.254.169.254` cloud metadata IPs.
+    - 🛡️ **LLM06 - Sensitive Information Masking**: Auto-redacting API keys, personal emails, and secrets.
+    """)

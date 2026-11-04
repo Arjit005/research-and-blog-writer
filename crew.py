@@ -1,29 +1,19 @@
 """Research_and_Blog_writer crew — complete, self-contained crewAI implementation.
 
-Code-first version of the JSON-first configuration in ``crew.jsonc``:
+Code-first version of the JSON-first configuration in crew.jsonc:
 four agents (research, content_analyst, report_writer, quality_reviewer)
-running four sequential tasks that research a topic and produce a
-quality-checked blog-ready report.
-
-Pipeline:
-    1. Research       → gathers raw facts from the web
-    2. Content Analyst → distills and organises the research
-    3. Report Writer   → writes a polished, structured blog post
-    4. Quality Reviewer→ fact-checks and finalises the output
-
-Usage:
-    crewai run                                         # JSON-first mode (crew.jsonc)
-    python crew.py                                     # prompts for topic interactively
-    python crew.py --topic "Latest AI agents trends"   # supply topic directly
+running four sequential tasks that perform deep, minute research on a topic
+and produce an authoritative, visual, deeply technical blog post with
+native Mermaid diagrams, curated figures, and comprehensive references.
 """
 
 from __future__ import annotations
 
-import argparse  # stdlib — used for the CLI entry point
-import os        # stdlib — used for output file path handling
+import argparse
+import os
 import sys
 
-# Ensure UTF-8 output on Windows consoles to prevent UnicodeEncodeError with emojis
+# Ensure UTF-8 output on Windows consoles
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -34,15 +24,14 @@ if sys.platform == "win32":
 from crewai import Agent, Crew, Process, Task
 from crewai.project import CrewBase, agent, crew, task
 from dotenv import load_dotenv
+from llm_fallback import get_fallback_llm
 
 load_dotenv()
 
-# ---------------------------------------------------------------------------
-# Custom tools — imported so agents can use them
-# ---------------------------------------------------------------------------
-from tools.search_tool import SearchTool       # web search via SerperDev API
-from tools.scrape_tool import ScrapeTool       # scrapes full webpage content
-from tools.file_tool import SaveReportTool     # saves final report to disk
+# Custom tools
+from tools.search_tool import SearchTool
+from tools.scrape_tool import ScrapeTool
+from tools.file_tool import SaveReportTool
 
 
 @CrewBase
@@ -50,87 +39,56 @@ class ResearchAndBlogWriter:
     """Research_and_Blog_writer crew.
 
     Researches a user-supplied topic and produces a quality-checked,
-    well-structured blog post through four sequential steps.  Each agent
-    hands its output to the next via crewAI's built-in context passing.
+    deeply technical, visual blog post through four sequential steps.
     """
 
     # ------------------------------------------------------------------
-    # AGENTS — one method per agent, decorated with @agent
-    # Each returns a configured crewai.Agent instance.
+    # AGENTS
     # ------------------------------------------------------------------
 
     @agent
     def research(self) -> Agent:
-        """Agent 1 — Researcher.
-
-        Searches the web for up-to-date, relevant information about the
-        given topic.  Uses the custom SearchTool to query external sources.
-        """
+        """Agent 1 — Deep-Tech Researcher."""
         return Agent(
-            # The role appears in internal prompts and execution logs
             role="Senior Researcher",
-
-            # The goal drives the agent's decision-making
             goal=(
-                "Search the internet for comprehensive, accurate, and "
-                "up-to-date information about the given topic"
+                "Perform exhaustive, deep-dive internet research on '{topic}'. Gather "
+                "minute technical details, architectural mechanisms, quantitative benchmarks, "
+                "underlying protocol specs, and verified authoritative source URLs."
             ),
-
-            # The backstory shapes the agent's personality and approach
             backstory=(
-                "You are a seasoned research specialist with years of "
-                "experience finding reliable information online.  You know "
-                "how to cross-reference multiple sources and identify the "
-                "most credible data.  You always cite your sources."
+                "You are an elite research scientist and investigative technologist. You never "
+                "settle for surface-level summaries, generic overviews, or marketing fluff. You "
+                "drill down into primary whitepapers, technical documentation, GitHub repos, "
+                "low-level protocols, memory/latency benchmarks, and production failure post-mortems. "
+                "You rigorously catalog exact numbers, code patterns, and live source URLs."
             ),
-
-            # LLM to power this agent (Gemini Flash — fast & free tier)
-            llm="gemini/gemini-2.5-flash",
-
-            # Tools this agent can use during execution
+            llm=get_fallback_llm(),
             tools=[SearchTool()],
-
-            # Keep logs clean — set True for debugging
             verbose=False,
-
-            # Allow this agent to ask other agents for help if needed
             allow_delegation=False,
-
-            # Enable step-by-step planning before execution
             planning=False,
             max_rpm=10,
         )
 
     @agent
     def content_analyst(self) -> Agent:
-        """Agent 2 — Content Analyst.
-
-        Reviews the raw research from Agent 1, removes noise, verifies
-        key claims, and organises findings into a structured analysis.
-        """
+        """Agent 2 — Systems Analyst & Architect."""
         return Agent(
             role="Content Analyst",
-
             goal=(
-                "Analyze the research provided by the Researcher and "
-                "create a clear, accurate summary with the most important "
-                "findings organised by theme"
+                "Deconstruct the raw research on '{topic}', analyze low-level architectural layers, "
+                "construct comparative benchmark matrices, and specify native Mermaid diagrams."
             ),
-
             backstory=(
-                "You are an expert analyst who reviews large volumes of "
-                "research, identifies the signal in the noise, removes "
-                "duplicates and irrelevant details, and organises the "
-                "remaining findings into a logical structure that a writer "
-                "can easily follow."
+                "You are a distinguished systems architect and technical strategist. You excel at "
+                "extracting the signal from massive technical corpora, identifying non-obvious engineering "
+                "trade-offs, and formulating comparative evaluation matrices. You design clean Mermaid "
+                "diagram topologies (flowcharts, state machines, sequence diagrams) that explain complex "
+                "system interactions under the hood."
             ),
-
-            # Same fast LLM — analysis is mostly text processing
-            llm="gemini/gemini-2.5-flash",
-
-            # Analyst can scrape pages to verify claims found by Researcher
+            llm=get_fallback_llm(),
             tools=[ScrapeTool()],
-
             verbose=False,
             allow_delegation=False,
             planning=False,
@@ -139,33 +97,23 @@ class ResearchAndBlogWriter:
 
     @agent
     def report_writer(self) -> Agent:
-        """Agent 3 — Report/Blog Writer.
-
-        Takes the structured analysis and turns it into a polished,
-        reader-friendly blog post with clear headings and flow.
-        """
+        """Agent 3 — Lead Technical Author & Visual Content Engineer."""
         return Agent(
             role="Blog Post Writer",
-
             goal=(
-                "Convert the analysed research into a well-structured, "
-                "engaging, and accurate blog post that is ready to publish"
+                "Draft an authoritative, visual, deeply technical blog post (2,000 - 3,500 words) on "
+                "'{topic}' with native Mermaid architecture diagrams, curated contextual imagery, "
+                "detailed figure callouts, and structured comparison tables."
             ),
-
             backstory=(
-                "You are a skilled technical writer and blogger.  You "
-                "take complex research and turn it into concise, logically "
-                "structured, and easy-to-read articles.  You use clear "
-                "headings, bullet points where helpful, and a professional "
-                "yet approachable tone."
+                "You are a world-class principal technical author whose work is celebrated on premier "
+                "engineering publications like Google DeepMind, OpenAI Research, Stripe, and Uber Engineering. "
+                "You explain complex mechanics with rigorous clarity, avoiding fluff. You natively embed "
+                "self-created Mermaid.js diagrams, high-resolution figures with descriptive captions, and "
+                "formal references to deliver a transformative, top-tier reading experience."
             ),
-
-            # Fast LLM for creative writing tasks
-            llm="gemini/gemini-2.5-flash",
-
-            # Writer doesn't need external tools — works from context
+            llm=get_fallback_llm(),
             tools=[],
-
             verbose=False,
             allow_delegation=False,
             planning=False,
@@ -174,34 +122,21 @@ class ResearchAndBlogWriter:
 
     @agent
     def quality_reviewer(self) -> Agent:
-        """Agent 4 — Quality Reviewer.
-
-        Fact-checks the blog post, fixes errors, fills gaps, and
-        produces the final publication-ready version.
-        """
+        """Agent 4 — Executive Quality Reviewer & Fact Auditor."""
         return Agent(
             role="Quality Reviewer",
-
             goal=(
-                "Review the blog post for factual accuracy, missing "
-                "information, contradictions, grammar, and clarity — "
-                "then produce a corrected final version"
+                "Audit the blog post on '{topic}' for factual accuracy, minute technical depth, "
+                "Mermaid diagram syntax validity, figure caption completeness, and a formal References bibliography."
             ),
-
             backstory=(
-                "You are a meticulous editor and fact-checker.  You "
-                "examine every claim in a report, cross-reference it "
-                "against reliable sources, fix errors, fill information "
-                "gaps, and ensure the final piece is polished, accurate, "
-                "and well-structured."
+                "You are an uncompromising technical editor and peer reviewer for top-tier computer science "
+                "journals. You verify every empirical claim and statistic, eliminate hand-waving generalities, "
+                "verify that Mermaid code blocks are syntactically perfect, ensure every visual has a detailed "
+                "explanation, and compile an exhaustive 'References & Verified Sources' bibliography."
             ),
-
-            # Fast LLM — good at detailed review tasks
-            llm="gemini/gemini-2.5-flash",
-
-            # Reviewer can search to verify facts and scrape for details
+            llm=get_fallback_llm(),
             tools=[SearchTool(), ScrapeTool()],
-
             verbose=False,
             allow_delegation=False,
             planning=False,
@@ -209,220 +144,136 @@ class ResearchAndBlogWriter:
         )
 
     # ------------------------------------------------------------------
-    # TASKS — one method per task, decorated with @task
-    # Tasks execute in the order they are defined (sequential process).
-    # Each task receives the output of the previous task as context.
+    # TASKS
     # ------------------------------------------------------------------
 
     @task
     def research_the_given_topic_task(self) -> Task:
-        """Task 1 — Research the topic.
-
-        The Researcher agent searches for relevant, up-to-date information
-        using the SearchTool.  {topic} is replaced at runtime with the
-        user's input.
-        """
+        """Task 1 — Exhaustive Deep Research & Entity Registry."""
         return Task(
-            # What the agent should do — {topic} is a runtime placeholder
             description=(
-                "Research the topic '{topic}' thoroughly using reliable "
-                "online sources.  Find relevant, accurate, and up-to-date "
-                "information.  Focus on collecting key facts, statistics, "
-                "expert opinions, and useful source URLs that can be passed "
-                "to the next agent for analysis."
+                "Conduct deep, exhaustive technical research on '{topic}'. Gather minute technical "
+                "details including architectural mechanisms, internal workflows, quantitative benchmarks "
+                "(latency, memory, throughput), real-world production trade-offs, edge cases, and "
+                "authoritative reference links to official documentation and research papers.\n\n"
+                "CRITICAL MEMORY REQUIREMENT: You MUST conclude your dossier with a structured "
+                "'### 📌 Entity & Verified Source Registry' containing:\n"
+                "1. Key Entities, Specifications & Protocols with exact numbers\n"
+                "2. Benchmark Metrics (latency, throughput, memory)\n"
+                "3. Verified Primary Sources & URLs (numbered [1], [2], ...)"
             ),
-
-            # Defines what a successful output looks like
             expected_output=(
-                "A structured research report containing:\n"
-                "- Key findings and important facts\n"
-                "- Relevant statistics and data points\n"
-                "- Source URLs for each major claim\n"
-                "- A summary of the most important discoveries\n"
-                "Organised clearly so it can be easily analysed."
+                "An exhaustive technical dossier containing verified technical facts, low-level "
+                "specifications, quantitative benchmarks, architectural interactions, and a structured "
+                "Entity & Verified Source Registry with full URLs."
             ),
-
-            # Assign this task to the research agent
             agent=self.research(),
         )
 
     @task
     def analyze_the_research_provided_task(self) -> Task:
-        """Task 2 — Analyse the research.
-
-        The Content Analyst reviews the raw research, verifies key
-        claims, removes noise, and produces a structured analysis.
-        """
+        """Task 2 — Technical Synthesis & Diagram Design."""
         return Task(
             description=(
-                "Analyze the research provided by the Researcher on the "
-                "topic '{topic}'.  Identify the most important findings, "
-                "verify critical information, remove irrelevant or "
-                "duplicate information, and organise the findings into "
-                "clear thematic sections that can be used to write the "
-                "final blog post."
+                "Synthesize and architect the technical findings on '{topic}'. Organize insights into "
+                "logical architectural layers. Design at least 1-2 native Mermaid diagrams (flowcharts "
+                "or sequence diagrams) demonstrating dataflow or system topology. Formulate comparative "
+                "matrix tables with quantitative criteria, and plan figure visual concepts with explanatory notes.\n"
+                "Preserve all citations and metrics from the Entity & Verified Source Registry."
             ),
-
             expected_output=(
-                "A clear and organised analysis containing:\n"
-                "- The most important verified findings (grouped by theme)\n"
-                "- Key insights and takeaways\n"
-                "- Relevant evidence and source references\n"
-                "- Any inconsistencies or gaps that should be noted\n"
-                "Ready to be handed to the writer."
+                "A comprehensive synthesis blueprint with thematic section breakdown, complete Mermaid "
+                "diagram definitions ready for insertion, formatted comparative evaluation tables, and "
+                "curated citations."
             ),
-
             agent=self.content_analyst(),
+            context=[self.research_the_given_topic_task()],
         )
 
     @task
     def create_a_wellstructured_blog_post_task(self) -> Task:
-        """Task 3 — Write the blog post.
-
-        The Blog Writer transforms the analysis into a polished article
-        with proper structure, headings, and flow.
-        """
+        """Task 3 — Deep Visual Blog Writing."""
         return Task(
             description=(
-                "Create a well-structured, engaging blog post based on "
-                "the analysis of '{topic}'.  Present the most important "
-                "findings clearly and logically.  Use:\n"
-                "- An attention-grabbing introduction\n"
-                "- Clear section headings (H2/H3)\n"
-                "- Concise explanations with supporting evidence\n"
-                "- Bullet points for lists of facts\n"
-                "- A compelling conclusion with key takeaways\n"
-                "Do NOT add unsupported information."
+                "Write an authoritative, publication-ready deep-dive technical blog post (2,000 - 3,500 words) "
+                "on '{topic}' using the analysis and diagram blueprint. Include a compelling H1 title, an Executive "
+                "Summary callout box, deep-dive H2/H3 technical sections detailing how things work under the hood, "
+                "at least 1-2 native Mermaid code blocks illustrating architectures, contextual visuals with figure "
+                "captions, Markdown comparison tables, and a dedicated References & Verified Sources section.\n\n"
+                "FACTUAL GROUNDING: Ground all claims in the Entity & Verified Source Registry from the research task."
             ),
-
             expected_output=(
-                "A polished, accurate, and engaging blog post (1500-2500 "
-                "words) in Markdown format with:\n"
-                "- A compelling title\n"
-                "- Clear introduction, body sections, and conclusion\n"
-                "- Proper headings and formatting\n"
-                "- Source references where appropriate"
+                "A polished, exhaustive technical blog post in Markdown format (2,000 - 3,500 words) with "
+                "deep minute details, native Mermaid diagrams, contextual figures with captions, comparative "
+                "tables, and complete source references."
             ),
-
             agent=self.report_writer(),
+            context=[self.research_the_given_topic_task(), self.analyze_the_research_provided_task()],
         )
 
     @task
     def review_the_final_report_task(self) -> Task:
-        """Task 4 — Quality review.
-
-        The Quality Reviewer fact-checks the blog post, fixes any issues,
-        and produces the final publication-ready version.  The output is
-        also saved to a Markdown file via the SaveReportTool.
-        """
+        """Task 4 — Rigorous Quality Audit & Persistence."""
         return Task(
             description=(
-                "Review the blog post about '{topic}' for:\n"
-                "- Factual accuracy — verify key claims\n"
-                "- Contradictions or logical errors\n"
-                "- Missing important information\n"
-                "- Grammar, spelling, and clarity\n"
-                "- Overall structure and readability\n"
-                "Correct any errors found.  Do NOT add unsupported "
-                "information.  Produce the final, publication-ready "
-                "version of the blog post."
+                "Perform an exhaustive technical audit of the blog post on '{topic}'. Verify all technical "
+                "assertions and quantitative metrics against the Entity & Verified Source Registry. Ensure explanations "
+                "are deeply substantive with zero vague fluff. Validate that all Mermaid diagram syntax is 100% valid. "
+                "Ensure every visual has a descriptive explanatory caption, and check that the References section "
+                "is properly formatted with live links. Produce the finalized, publication-ready version."
             ),
-
             expected_output=(
-                "The final, quality-checked blog post in Markdown format, "
-                "containing accurate, relevant, and clearly presented "
-                "information.  All factual errors corrected, "
-                "inconsistencies resolved, and the post is ready to "
-                "publish."
+                "The finalized, publication-ready technical blog post in Markdown format, "
+                "verified for depth, visual clarity, Mermaid diagram validity, and citation accuracy."
             ),
-
             agent=self.quality_reviewer(),
-
-            # Save the final output to a Markdown file
+            context=[self.research_the_given_topic_task(), self.create_a_wellstructured_blog_post_task()],
             tools=[SaveReportTool()],
-
-            # Write the final report to disk automatically
             output_file="report.md",
         )
 
     # ------------------------------------------------------------------
-    # CREW — assembles agents + tasks into an executable crew
+    # CREW
     # ------------------------------------------------------------------
 
     @crew
     def crew(self, step_callback=None, task_callback=None) -> Crew:
-        """Build and return the complete crew.
-
-        - Process: sequential — tasks run in order, each receiving the
-          prior task's output as context.
-        - Memory: enabled — agents can recall context across tasks.
-        - Verbose: enabled — shows execution progress in the console.
-        """
-        crew_kwargs = {
-            "agents": self.agents,
-            "tasks": self.tasks,
-            "process": Process.sequential,
-            "verbose": True,
-            "memory": False,
-        }
-        if step_callback:
-            crew_kwargs["step_callback"] = step_callback
-        if task_callback:
-            crew_kwargs["task_callback"] = task_callback
-
-        return Crew(**crew_kwargs)
+        """Creates the Research_and_Blog_writer crew."""
+        return Crew(
+            agents=self.agents,
+            tasks=self.tasks,
+            process=Process.sequential,
+            verbose=False,
+            memory=False,
+            step_callback=step_callback,
+            task_callback=task_callback,
+        )
 
 
-# ---------------------------------------------------------------------------
-# CLI ENTRY POINT — allows running directly with `python crew.py`
-# ---------------------------------------------------------------------------
-
-def main():
-    """Parse command-line arguments and kick off the crew.
-
-    Usage:
-        python crew.py                                  # prompts for topic
-        python crew.py --topic "AI agents in 2026"      # supply topic directly
-    """
-    # Set up argument parser for the CLI
-    parser = argparse.ArgumentParser(
-        description="Research a topic and generate a quality-checked blog post."
-    )
-    parser.add_argument(
-        "--topic",
-        type=str,
-        default=None,
-        help="The topic to research and write about.",
-    )
+def run():
+    """CLI Entry point."""
+    parser = argparse.ArgumentParser(description="Research a topic and write an exhaustive, visual technical blog post.")
+    parser.add_argument("--topic", type=str, default="", help="The research topic")
     args = parser.parse_args()
 
-    # Prompt interactively if no topic was provided via CLI
-    topic = args.topic or input("Enter the topic to research: ").strip()
+    topic = args.topic.strip()
+    if not topic:
+        try:
+            topic = input("Enter research topic: ").strip()
+        except EOFError:
+            topic = "AI Agents in 2026: Architectures, Benchmarks, and Autonomous Workflows"
 
     if not topic:
-        print("Error: No topic provided. Exiting.")
-        return
+        topic = "AI Agents in 2026: Architectures, Benchmarks, and Autonomous Workflows"
 
-    print(f"\n🔍 Starting research on: {topic}\n")
-    print("=" * 60)
-
-    # Instantiate the crew and kick off execution
-    crew_instance = ResearchAndBlogWriter()
-    result = crew_instance.crew().kickoff(
-        inputs={"topic": topic}  # {topic} placeholders in tasks get replaced
-    )
-
-    # Display the final result
-    print("\n" + "=" * 60)
-    print("✅ Blog post generated successfully!")
-    print("=" * 60)
-    print(result)
-
-    # Confirm the output file was written
-    if os.path.exists("report.md"):
-        print(f"\n📄 Report saved to: {os.path.abspath('report.md')}")
+    print(f"\n🚀 Launching autonomous deep research squad for: '{topic}'...\n")
+    crew = ResearchAndBlogWriter().crew()
+    result = crew.kickoff(inputs={"topic": topic})
+    print("\n=======================================================")
+    print("✅ Autonomous Execution Complete! Report saved to report.md")
+    print("=======================================================\\n")
+    return result
 
 
-# Run when executed directly (not when imported)
 if __name__ == "__main__":
-    main()
+    run()

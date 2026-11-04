@@ -8,6 +8,10 @@ dependencies = [
     "crewai[google-genai,litellm,tools]>=1.15.21,<2.0.0",
     "streamlit>=1.63.0",
     "python-dotenv>=1.0.0",
+    "ddgs>=9.16.0",
+    "duckduckgo-search>=8.0.0",
+    "pymysql>=1.2.0",
+    "cryptography>=43.0.0",
 ]
 
 [build-system]
@@ -16,7 +20,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 # Include these directories/files in the built package
-only-include = ["agents", "crew.jsonc", "tools", "knowledge"]
+only-include = ["agents", "crew.jsonc", "tools", "knowledge", "security", "llmops", "memory", "llm_fallback.py", "database.py"]
 
 [tool.crewai]
 # Tells crewAI CLI this is a crew project using JSON-first config

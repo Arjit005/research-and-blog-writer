@@ -1,12 +1,9 @@
-"""Custom search tool — wraps crewAI's SerperDevTool for web searching.
+"""Custom search tool — searches the web using DuckDuckGo (free, no API key required)
+with optional Serper.dev fallback.
 
-This tool lets an agent search the internet via the Serper.dev API.
+This tool lets an agent search the internet via DuckDuckGo.
 It returns relevant search results (titles, snippets, URLs) that the
 agent can use to gather information about a topic.
-
-Requirements:
-    - A valid SERPER_API_KEY in your .env file
-    - The ``crewai[tools]`` extra installed (included in pyproject.toml)
 """
 
 import os
@@ -15,17 +12,26 @@ from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
 from crewai_tools import SerperDevTool
 
+try:
+    from ddgs import DDGS
+except ImportError:
+    try:
+        from duckduckgo_search import DDGS
+    except ImportError:
+        DDGS = None
+
 
 class SearchInput(BaseModel):
     """Input schema for SearchTool."""
-    query: str = Field(description="The search query to look up on Google")
+    query: str = Field(description="The search query to look up on the web")
 
 
 class SearchTool(BaseTool):
     """Search the internet for information about a given query.
 
-    Uses the Serper.dev API to perform Google searches and return
-    structured results including titles, snippets, and URLs.
+    Uses DuckDuckGo (free, no API key required) or Serper.dev
+    to perform web searches and return structured results including
+    titles, snippets, and URLs.
     """
 
     name: str = "search_tool"
@@ -42,14 +48,32 @@ class SearchTool(BaseTool):
         if not search_query or not search_query.strip():
             return "Error: No search query provided."
 
-        if not os.getenv("SERPER_API_KEY"):
-            return "Search unavailable: SERPER_API_KEY is missing from environment. Proceed using prior task context."
+        query_str = search_query.strip()
 
-        try:
-            serper = SerperDevTool()
-            results = str(serper._run(search_query=search_query.strip()))
-            if not results.strip():
-                return f"Notice: No web search results found for query '{search_query}'. Try alternate keywords."
-            return results
-        except Exception as e:
-            return f"Notice: Search request failed for '{search_query}' ({e}). Proceed with other available context."
+        # 1. Primary: DuckDuckGo search (Free, no API key needed)
+        if DDGS is not None:
+            try:
+                ddgs = DDGS()
+                results = list(ddgs.text(query_str, max_results=5))
+                if results:
+                    formatted = []
+                    for item in results:
+                        title = item.get("title", "")
+                        link = item.get("href") or item.get("link", "")
+                        snippet = item.get("body") or item.get("snippet", "")
+                        formatted.append(f"Title: {title}\nURL: {link}\nSnippet: {snippet}\n---")
+                    return "\n".join(formatted)
+            except Exception:
+                pass
+
+        # 2. Fallback to Serper if SERPER_API_KEY is available
+        if os.getenv("SERPER_API_KEY"):
+            try:
+                serper = SerperDevTool()
+                results = str(serper._run(search_query=query_str))
+                if results and results.strip():
+                    return results
+            except Exception:
+                pass
+
+        return f"Notice: No web search results found for query '{query_str}'. Try alternate keywords."
