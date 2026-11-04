@@ -43,6 +43,9 @@ crew.log                # Execution logs
 *.db-shm
 
 
+# --- Claude Code ---
+.claude/
+
 # --- Misc ---
 *.bak
 *.tmp
