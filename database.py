@@ -51,17 +51,53 @@ def get_connection():
             database = os.getenv("TIDB_DATABASE", "test")
 
             # TiDB Cloud requires SSL/TLS
-            conn = pymysql.connect(
-                host=host,
-                port=port,
-                user=user,
-                password=password,
-                database=database,
-                cursorclass=DictCursor,
-                ssl={"check_hostname": False},
-                connect_timeout=10,
-                autocommit=False,
-            )
+            try:
+                conn = pymysql.connect(
+                    host=host,
+                    port=port,
+                    user=user,
+                    password=password,
+                    database=database,
+                    cursorclass=DictCursor,
+                    ssl={"check_hostname": False},
+                    connect_timeout=10,
+                    autocommit=False,
+                )
+            except pymysql.err.OperationalError as db_err:
+                # Error 1049: ER_BAD_DB_ERROR (Unknown database)
+                if db_err.args and db_err.args[0] == 1049:
+                    logger.info("Database '%s' does not exist on TiDB Cloud. Attempting auto-creation...", database)
+                    safe_db = "".join(c for c in database if c.isalnum() or c == "_")
+                    admin_conn = pymysql.connect(
+                        host=host,
+                        port=port,
+                        user=user,
+                        password=password,
+                        cursorclass=DictCursor,
+                        ssl={"check_hostname": False},
+                        connect_timeout=10,
+                        autocommit=True,
+                    )
+                    try:
+                        with admin_conn.cursor() as cur:
+                            cur.execute(f"CREATE DATABASE IF NOT EXISTS `{safe_db}` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;")
+                    finally:
+                        admin_conn.close()
+
+                    # Reconnect to newly created database
+                    conn = pymysql.connect(
+                        host=host,
+                        port=port,
+                        user=user,
+                        password=password,
+                        database=database,
+                        cursorclass=DictCursor,
+                        ssl={"check_hostname": False},
+                        connect_timeout=10,
+                        autocommit=False,
+                    )
+                else:
+                    raise
 
             try:
                 yield conn, True
