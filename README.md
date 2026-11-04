@@ -9,7 +9,7 @@
 [![TiDB Cloud](https://img.shields.io/badge/TiDB_Cloud-Serverless_SQL-E30C34?logo=mysql&logoColor=white)](https://tidbcloud.com)
 [![Streamlit](https://img.shields.io/badge/Streamlit-Web_Studio-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io)
 [![OWASP LLM](https://img.shields.io/badge/OWASP-LLM_Top_10_Protected-0284C7)](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
-[![Tests](https://img.shields.io/badge/Tests-32%20Passed-success)](https://pytest.org)
+[![Tests](https://img.shields.io/badge/Tests-71%20Passed-success)](https://pytest.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 ---
@@ -196,6 +196,72 @@ TIDB_USER=your_prefix.root
 TIDB_PASSWORD=your_cluster_password
 TIDB_DATABASE=research_studio
 ```
+
+---
+
+## 🔐 Secure Email OTP Authentication & Data Isolation
+
+The studio incorporates passwordless authentication using single-use 6-digit verification codes (OTP) dispatched via SMTP, paired with HMAC-SHA256 hashed session tokens.
+
+### Key Security Properties
+- **Zero Plaintext Storage**: OTP codes are stored as HMAC-SHA256(OTP_PEPPER, email:code) and session tokens as HMAC-SHA256(SESSION_SECRET, token).
+- **Anti-Enumeration Defense**: The server returns an identical message regardless of whether an email exists or is blocked by domain policies.
+- **Brute-Force & Race-Condition Lockout**: Attempts are incremented *before* constant-time hash verification. Codes are locked after 5 failed attempts.
+- **Rate-Limiting & Cooldown**: Mandatory 60-second cooldown per email, 5 requests per email per hour, and 20 per IP per hour.
+- **Multi-Tenant Isolation**: Every SQL query filters strictly by WHERE user_id = ?. Cross-tenant ID guessing fails closed.
+- **Explicit Legacy Claiming**: Pre-existing articles created before authentication can be claimed once by verified users via a dedicated sidebar button.
+
+### How to Configure SMTP Credentials
+1. **Gmail SMTP (Recommended for Personal Dev)**:
+   - Enable **2-Step Verification** on your Google Account (myaccount.google.com/security).
+   - Navigate to **App Passwords** (myaccount.google.com/apppasswords).
+   - Create a new password named AI Research Studio (generates a 16-character string).
+   - In .env:
+     `env
+     SMTP_HOST=smtp.gmail.com
+     SMTP_PORT=587
+     SMTP_USER=your_email@gmail.com
+     SMTP_PASSWORD=xxxx xxxx xxxx xxxx
+     SMTP_FROM=AI Research Studio <your_email@gmail.com>
+     SMTP_USE_TLS=true
+     `
+2. **Transactional Email Services (Brevo, Resend, SendGrid)**:
+   - Create an account on [Resend](https://resend.com) or [Brevo](https://www.brevo.com).
+   - Generate an SMTP API Key and configure SMTP_HOST, SMTP_PORT, and SMTP_PASSWORD accordingly.
+
+### Local Development Mode (AUTH_DEV_MODE=true)
+When AUTH_DEV_MODE=true is set in .env:
+- External SMTP delivery is bypassed.
+- Verification codes are displayed directly inside the Streamlit UI with a yellow badge.
+- Automatically refuses to run if production database markers (TIDB_HOST) are configured, preventing accidental activation in production.
+
+---
+
+## ⚙️ Environment Variables Reference
+
+| Variable Name | Purpose | Required / Default |
+|---|---|---|
+| OTP_PEPPER | Secret string mixed into OTP HMAC-SHA256 hashes | **Required** (Auto-fallback in dev mode) |
+| SESSION_SECRET | Secret string mixed into session token hashes | **Required** (Auto-fallback in dev mode) |
+| SMTP_HOST | Hostname of SMTP email server | Optional in Dev Mode, Required for real delivery |
+| SMTP_PORT | Port for SMTP service | Default: 587 |
+| SMTP_USER | SMTP username / account email | Optional in Dev Mode |
+| SMTP_PASSWORD | SMTP password or app password | Optional in Dev Mode |
+| SMTP_FROM | Display sender address | Default: 
+oreply@research-studio.local |
+| SMTP_USE_TLS | Enforce STARTTLS encryption | Default: 	rue |
+| OTP_TTL_SECONDS | Lifetime of a 6-digit code in seconds | Default: 300 (5 minutes) |
+| OTP_MAX_ATTEMPTS | Maximum allowed invalid attempts before lockout | Default: 5 |
+| OTP_RESEND_COOLDOWN_SECONDS | Wait time required before re-sending code | Default: 60 |
+| OTP_MAX_PER_EMAIL_PER_HOUR | Maximum OTP requests per email in 60 min | Default: 5 |
+| OTP_MAX_PER_IP_PER_HOUR | Maximum OTP requests per IP in 60 min | Default: 20 |
+| SESSION_TTL_HOURS | Lifetime of an authenticated session | Default: 168 (7 days) |
+| ALLOWED_EMAIL_DOMAINS | Restrict access to comma-separated domains | Default: Empty (All allowed) |
+| AUTH_DEV_MODE | Display codes on screen and bypass SMTP | Default: alse |
+| OPENROUTER_API_KEY | Access to 5 free multi-model fallback LLMs | Recommended |
+| TIDB_HOST | TiDB Cloud Serverless host address | Optional (falls back to SQLite) |
+| TIDB_USER | TiDB Cloud SQL username | Optional |
+| TIDB_PASSWORD | TiDB Cloud SQL password | Optional |
 
 ---
 

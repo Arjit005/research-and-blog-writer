@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 import streamlit as st
 
 import database as db
+from auth import require_login
 from security.guardrails import validate_user_input, mask_pii_and_secrets, verify_citations
 from llmops.telemetry import TelemetryTracker
 from llm_fallback import get_fallback_llm
@@ -42,6 +43,10 @@ st.set_page_config(
 # Apply accessible theme tokens (WCAG AA compliant contrast)
 apply_accessible_theme()
 
+# Authentication Gateway: halts execution with st.stop() if not logged in
+current_user = require_login()
+current_user_id = current_user["id"]
+
 # --- Session State Initialization ---
 if "current_article_id" not in st.session_state:
     st.session_state.current_article_id = None
@@ -53,31 +58,18 @@ if "run_in_progress" not in st.session_state:
     st.session_state.run_in_progress = False
 
 if "current_report" not in st.session_state:
-    articles = db.get_articles(limit=1)
+    articles = db.get_articles(limit=1, user_id=current_user_id)
     if articles:
         latest = articles[0]
         st.session_state.current_report = latest["content"]
         st.session_state.current_article_id = latest["id"]
         st.session_state.current_topic = latest["topic"]
-    elif os.path.exists("report.md"):
-        try:
-            with open("report.md", "r", encoding="utf-8") as f:
-                content = f.read()
-            st.session_state.current_report = content
-            article_id = db.save_article(
-                topic="Imported from report.md",
-                content=content,
-            )
-            st.session_state.current_article_id = article_id
-            st.session_state.current_topic = "Imported from report.md"
-        except Exception:
-            st.session_state.current_report = None
     else:
         st.session_state.current_report = None
 
 if "chat_history" not in st.session_state:
     if st.session_state.current_article_id:
-        st.session_state.chat_history = db.get_chat_history(st.session_state.current_article_id)
+        st.session_state.chat_history = db.get_chat_history(st.session_state.current_article_id, user_id=current_user_id)
     else:
         st.session_state.chat_history = []
 
@@ -144,7 +136,7 @@ with st.sidebar:
     # 3. Persistent Author Preferences (Long-Term Memory)
     with st.expander("🧠 Persistent Author Style", expanded=False):
         st.caption("Preferences stored in TiDB/SQLite across sessions:")
-        existing_mems = db.get_user_memories()
+        existing_mems = db.get_user_memories(user_id=current_user_id)
 
         p_tone = st.text_input("Preferred Tone", value=existing_mems.get("preferred_tone", "Professional & Authoritative"))
         p_audience = st.text_input("Target Audience", value=existing_mems.get("target_audience", "Software Engineers & Developers"))
@@ -155,15 +147,15 @@ with st.sidebar:
         p_diagram = st.selectbox("Preferred Diagram", diagram_options, index=diag_idx)
 
         if st.button("💾 Save Preferences to Memory", use_container_width=True):
-            db.set_user_memory("preferred_tone", p_tone)
-            db.set_user_memory("target_audience", p_audience)
-            db.set_user_memory("prohibited_words", p_prohibited)
-            db.set_user_memory("preferred_diagram", p_diagram)
+            db.set_user_memory("preferred_tone", p_tone, user_id=current_user_id)
+            db.set_user_memory("target_audience", p_audience, user_id=current_user_id)
+            db.set_user_memory("prohibited_words", p_prohibited, user_id=current_user_id)
+            db.set_user_memory("preferred_diagram", p_diagram, user_id=current_user_id)
             st.success("Memory Updated!", icon="🧠")
 
     # 4. Revisions & Rollback History
     if st.session_state.current_article_id:
-        revisions = db.get_article_revisions(st.session_state.current_article_id)
+        revisions = db.get_article_revisions(st.session_state.current_article_id, user_id=current_user_id)
         if revisions:
             with st.expander("📜 Revision History & Undo", expanded=False):
                 st.caption(f"Found {len(revisions)} saved revision snapshot(s):")
@@ -171,16 +163,17 @@ with st.sidebar:
                 selected_label = st.selectbox("Select Revision to Restore", list(rev_options.keys()))
                 if selected_label and st.button("↺ Restore Selected Revision", use_container_width=True):
                     rev_id_to_restore = rev_options[selected_label]
-                    success = db.rollback_article_revision_transaction(st.session_state.current_article_id, rev_id_to_restore)
+                    success = db.rollback_article_revision_transaction(st.session_state.current_article_id, rev_id_to_restore, user_id=current_user_id)
                     if success:
-                        restored = db.get_article(st.session_state.current_article_id)
-                        st.session_state.current_report = restored["content"]
+                        restored = db.get_article(st.session_state.current_article_id, user_id=current_user_id)
+                        if restored:
+                            st.session_state.current_report = restored["content"]
                         st.success("Article safely restored! (Prior version snapshotted)", icon="✅")
                         st.rerun()
 
     # 5. Database Stats
     st.markdown("---")
-    stats = db.get_stats()
+    stats = db.get_stats(user_id=current_user_id)
     st.markdown("### 📊 Studio Stats")
     stat_c1, stat_c2 = st.columns(2)
     stat_c1.metric("Articles", stats.get("total_articles", 0))
@@ -191,7 +184,7 @@ with st.sidebar:
     # 6. Article History
     st.markdown("---")
     st.markdown("### 📚 Article History")
-    all_articles = db.get_articles(limit=25)
+    all_articles = db.get_articles(limit=25, user_id=current_user_id)
 
     if all_articles:
         for article in all_articles:
@@ -204,11 +197,11 @@ with st.sidebar:
                     st.session_state.current_article_id = article["id"]
                     st.session_state.current_report = article["content"]
                     st.session_state.current_topic = article["topic"]
-                    st.session_state.chat_history = db.get_chat_history(article["id"])
+                    st.session_state.chat_history = db.get_chat_history(article["id"], user_id=current_user_id)
                     st.rerun()
             with col_del:
                 if st.button("🗑️", key=f"del_{article['id']}"):
-                    db.delete_article(article["id"])
+                    db.delete_article(article["id"], user_id=current_user_id)
                     if st.session_state.current_article_id == article["id"]:
                         st.session_state.current_article_id = None
                         st.session_state.current_report = None
@@ -304,7 +297,7 @@ with main_tab1:
                 stepper_placeholder.markdown(render_stepper_html(stepper_state), unsafe_allow_html=True)
 
                 # Construct composite prompt with steering instructions & persistent memory
-                user_mems = db.get_user_memories()
+                user_mems = db.get_user_memories(user_id=current_user_id)
                 mem_guidance = []
                 if user_mems.get("prohibited_words"):
                     mem_guidance.append(f"Prohibited Jargon: {user_mems['prohibited_words']}")
@@ -354,7 +347,7 @@ with main_tab1:
                     # Finalize telemetry metrics
                     telemetry_data = telemetry_tracker.finalize(report_content)
 
-                    # Save to database
+                    # Save to database scoped to current user
                     article_id = db.save_article(
                         topic=topic_input.strip(),
                         content=report_content,
@@ -363,10 +356,11 @@ with main_tab1:
                         target_length=length,
                         generation_time_sec=elapsed,
                         tokens_used=tokens_used or telemetry_data.get("tokens_estimated", 0),
+                        user_id=current_user_id,
                     )
 
-                    # Persist LLMOps telemetry run
-                    db.save_telemetry_run(article_id, telemetry_data)
+                    # Persist LLMOps telemetry run scoped to current user
+                    db.save_telemetry_run(article_id, telemetry_data, user_id=current_user_id)
 
                     # Update session state
                     st.session_state.current_report = report_content
@@ -459,7 +453,8 @@ with main_tab2:
                             new_rev_num = db.apply_article_edit_transaction(
                                 article_id=st.session_state.current_article_id,
                                 new_content=msg["content"],
-                                summary="Applied Copilot edit"
+                                summary="Applied Copilot edit",
+                                user_id=current_user_id,
                             )
                             st.session_state.current_report = msg["content"]
                             st.toast(f"Applied Revision #{new_rev_num}. Prior version saved safely to undo history!", icon="✅")
@@ -479,7 +474,7 @@ with main_tab2:
                 st.markdown(active_query)
 
             if st.session_state.current_article_id:
-                db.save_chat_message(st.session_state.current_article_id, "user", active_query)
+                db.save_chat_message(st.session_state.current_article_id, "user", active_query, user_id=current_user_id)
 
             with st.chat_message("assistant"):
                 with st.spinner("Copilot is analyzing the article and drafting your response..."):
@@ -487,7 +482,7 @@ with main_tab2:
                         from memory.chat_memory import ChatMemoryManager
 
                         chat_mem = ChatMemoryManager(max_turns=6)
-                        user_mems = db.get_user_memories()
+                        user_mems = db.get_user_memories(user_id=current_user_id)
                         messages = chat_mem.build_bounded_context(
                             chat_history=st.session_state.chat_history,
                             current_report=st.session_state.current_report,
@@ -502,7 +497,7 @@ with main_tab2:
                         st.session_state.chat_history.append({"role": "assistant", "content": reply_text})
 
                         if st.session_state.current_article_id:
-                            db.save_chat_message(st.session_state.current_article_id, "assistant", reply_text)
+                            db.save_chat_message(st.session_state.current_article_id, "assistant", reply_text, user_id=current_user_id)
 
                         st.rerun()
 
@@ -517,7 +512,7 @@ with main_tab3:
     st.markdown("### 🛡️ Enterprise LLMOps, AI Security & Governance")
     st.markdown("Real-time telemetry, model failover health, and OWASP Top 10 for LLMs defense metrics.")
 
-    dash_stats = db.get_stats()
+    dash_stats = db.get_stats(user_id=current_user_id)
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Pipeline Runs", dash_stats.get("total_runs", 0))
     c2.metric("Total Tokens Processed", f"{dash_stats.get('total_tokens', 0):,}")
@@ -544,7 +539,7 @@ with main_tab3:
 
     st.markdown("---")
     st.markdown("#### 📊 Recent Execution Telemetry Runs")
-    telemetry_runs = db.get_telemetry_history(limit=10)
+    telemetry_runs = db.get_telemetry_history(limit=10, user_id=current_user_id)
     if not telemetry_runs:
         st.caption("No telemetry runs recorded yet. Generate an article to populate LLMOps metrics.")
     else:
@@ -566,7 +561,7 @@ with main_tab3:
 
     st.markdown("---")
     st.markdown("#### 🛡️ OWASP Security Audit Trail")
-    sec_logs = db.get_security_audit_logs(limit=15)
+    sec_logs = db.get_security_audit_logs(limit=15, user_id=current_user_id)
     if not sec_logs:
         st.caption("No security violations detected. All inputs and scraped content verified safe.")
     else:
