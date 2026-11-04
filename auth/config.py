@@ -6,9 +6,13 @@ Fails fast if required secrets (OTP_PEPPER, SESSION_SECRET) are missing in produ
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import List, Optional
+
+logger = logging.getLogger("auth.config")
 
 def _get_val(key: str, default: Optional[str] = None) -> Optional[str]:
     """Retrieve configuration from environment variable."""
@@ -73,9 +77,15 @@ def load_auth_config(reload: bool = False) -> AuthConfig:
     otp_pepper = _get_val("OTP_PEPPER")
     session_secret = _get_val("SESSION_SECRET")
 
+    is_render = bool(os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID"))
+    render_seed = os.getenv("RENDER_SERVICE_ID", os.getenv("RENDER_INSTANCE_ID", "render_default_salt"))
+
     if not otp_pepper:
         if auth_dev_mode:
             otp_pepper = f"otp_pepper_{default_dev_secret}"
+        elif is_render:
+            otp_pepper = hashlib.sha256(f"render_otp_{render_seed}".encode()).hexdigest()
+            logger.warning("OTP_PEPPER not set on Render. Auto-derived deterministic fallback from service context.")
         else:
             raise ValueError(
                 "Missing required authentication secret: OTP_PEPPER. "
@@ -85,6 +95,9 @@ def load_auth_config(reload: bool = False) -> AuthConfig:
     if not session_secret:
         if auth_dev_mode:
             session_secret = f"session_secret_{default_dev_secret}"
+        elif is_render:
+            session_secret = hashlib.sha256(f"render_session_{render_seed}".encode()).hexdigest()
+            logger.warning("SESSION_SECRET not set on Render. Auto-derived deterministic fallback from service context.")
         else:
             raise ValueError(
                 "Missing required authentication secret: SESSION_SECRET. "
