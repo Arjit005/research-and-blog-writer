@@ -5,6 +5,7 @@ Provides:
 - CSRF Origin verification & CORS middleware.
 - REST endpoints for articles, revisions, diffs, and LLMOps telemetry.
 - Healthcheck endpoint with live TiDB status verification.
+- Static serving for Next.js 15 production UI.
 """
 
 from __future__ import annotations
@@ -112,3 +113,11 @@ async def generic_exception_handler(request: Request, exc: Exception):
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"error": {"code": "INTERNAL_SERVER_ERROR", "message": "An unexpected server error occurred."}},
     )
+
+
+# 6. Mount Next.js Frontend Static Export (if built)
+frontend_out = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "out")
+if os.path.isdir(frontend_out):
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/", StaticFiles(directory=frontend_out, html=True), name="frontend")
+    logger.info(f"Mounted Next.js 15 UI from {frontend_out}")

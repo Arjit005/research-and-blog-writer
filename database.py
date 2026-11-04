@@ -32,98 +32,102 @@ def get_active_backend() -> str:
     return "tidb" if is_tidb_configured() else "sqlite"
 
 
+def _connect_tidb():
+    """Attempt to establish a connection to TiDB Cloud."""
+    import pymysql
+    from pymysql.cursors import DictCursor
+
+    host = os.getenv("TIDB_HOST")
+    port = int(os.getenv("TIDB_PORT", 4000))
+    user = os.getenv("TIDB_USER")
+    password = os.getenv("TIDB_PASSWORD", "")
+    database = os.getenv("TIDB_DATABASE", "test")
+
+    try:
+        return pymysql.connect(
+            host=host,
+            port=port,
+            user=user,
+            password=password,
+            database=database,
+            cursorclass=DictCursor,
+            ssl={"check_hostname": False},
+            connect_timeout=10,
+            autocommit=False,
+        )
+    except pymysql.err.OperationalError as db_err:
+        # Error 1049: ER_BAD_DB_ERROR (Unknown database)
+        if db_err.args and db_err.args[0] == 1049:
+            logger.info("Database '%s' does not exist on TiDB Cloud. Attempting auto-creation...", database)
+            safe_db = "".join(c for c in database if c.isalnum() or c == "_")
+            admin_conn = pymysql.connect(
+                host=host,
+                port=port,
+                user=user,
+                password=password,
+                cursorclass=DictCursor,
+                ssl={"check_hostname": False},
+                connect_timeout=10,
+                autocommit=True,
+            )
+            try:
+                with admin_conn.cursor() as cur:
+                    cur.execute(f"CREATE DATABASE IF NOT EXISTS `{safe_db}` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;")
+            finally:
+                admin_conn.close()
+
+            return pymysql.connect(
+                host=host,
+                port=port,
+                user=user,
+                password=password,
+                database=database,
+                cursorclass=DictCursor,
+                ssl={"check_hostname": False},
+                connect_timeout=10,
+                autocommit=False,
+            )
+        raise
+
+
 @contextmanager
 def get_connection():
     """Yield a database connection and a helper execute wrapper.
 
-    Yields:
-        (conn, execute_fn, is_tidb_bool)
+    Ensures a single, clean yield to prevent generator RuntimeError after exceptions.
     """
+    conn = None
+    is_tidb = False
+
     if is_tidb_configured():
         try:
-            import pymysql
-            from pymysql.cursors import DictCursor
-
-            host = os.getenv("TIDB_HOST")
-            port = int(os.getenv("TIDB_PORT", 4000))
-            user = os.getenv("TIDB_USER")
-            password = os.getenv("TIDB_PASSWORD", "")
-            database = os.getenv("TIDB_DATABASE", "test")
-
-            # TiDB Cloud requires SSL/TLS
-            try:
-                conn = pymysql.connect(
-                    host=host,
-                    port=port,
-                    user=user,
-                    password=password,
-                    database=database,
-                    cursorclass=DictCursor,
-                    ssl={"check_hostname": False},
-                    connect_timeout=10,
-                    autocommit=False,
-                )
-            except pymysql.err.OperationalError as db_err:
-                # Error 1049: ER_BAD_DB_ERROR (Unknown database)
-                if db_err.args and db_err.args[0] == 1049:
-                    logger.info("Database '%s' does not exist on TiDB Cloud. Attempting auto-creation...", database)
-                    safe_db = "".join(c for c in database if c.isalnum() or c == "_")
-                    admin_conn = pymysql.connect(
-                        host=host,
-                        port=port,
-                        user=user,
-                        password=password,
-                        cursorclass=DictCursor,
-                        ssl={"check_hostname": False},
-                        connect_timeout=10,
-                        autocommit=True,
-                    )
-                    try:
-                        with admin_conn.cursor() as cur:
-                            cur.execute(f"CREATE DATABASE IF NOT EXISTS `{safe_db}` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;")
-                    finally:
-                        admin_conn.close()
-
-                    # Reconnect to newly created database
-                    conn = pymysql.connect(
-                        host=host,
-                        port=port,
-                        user=user,
-                        password=password,
-                        database=database,
-                        cursorclass=DictCursor,
-                        ssl={"check_hostname": False},
-                        connect_timeout=10,
-                        autocommit=False,
-                    )
-                else:
-                    raise
-
-            try:
-                yield conn, True
-                conn.commit()
-            except Exception:
-                conn.rollback()
-                raise
-            finally:
-                conn.close()
-            return
+            conn = _connect_tidb()
+            is_tidb = True
         except Exception as e:
             logger.warning(f"Failed to connect to TiDB Cloud ({e}). Falling back to local SQLite.")
+            conn = None
 
-    # SQLite fallback
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
+    if conn is None:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        is_tidb = False
+
     try:
-        yield conn, False
+        yield conn, is_tidb
         conn.commit()
     except Exception:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         raise
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def _exec(conn: Any, is_tidb: bool, sql: str, params: Tuple = ()) -> Any:
@@ -280,20 +284,6 @@ def init_db():
                 );
             """)
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS system_cache (
-                    cache_key   TEXT PRIMARY KEY,
-                    namespace   TEXT NOT NULL,
-                    payload     TEXT NOT NULL,
-                    meta_info   TEXT NULL,
-                    user_id     INTEGER NULL,
-                    created_at  TEXT NOT NULL,
-                    expires_at  TEXT NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_cache_ns_exp ON system_cache(namespace, expires_at);
-                CREATE INDEX IF NOT EXISTS idx_cache_user ON system_cache(user_id);
-                CREATE INDEX IF NOT EXISTS idx_cache_created ON system_cache(created_at);
-
                 CREATE TABLE IF NOT EXISTS research_cache (
                     url_hash        VARCHAR(64) PRIMARY KEY,
                     url             TEXT NOT NULL,
