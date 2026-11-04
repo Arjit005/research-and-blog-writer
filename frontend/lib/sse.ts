@@ -80,7 +80,7 @@ export class ResumableSSEClient {
       this.retryAttempts = 0;
     };
 
-    es.onerror = (e) => {
+    es.onerror = () => {
       if (this.isClosed) return;
       es.close();
 

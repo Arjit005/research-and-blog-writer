@@ -35,12 +35,11 @@ export function MermaidCanvas({ code, title = "System Architecture Diagram" }: M
       },
     });
 
-    if (!code || !code.trim()) {
-      setSvgContent("");
-      return;
-    }
-
     const renderDiagram = async () => {
+      if (!code || !code.trim()) {
+        setSvgContent("");
+        return;
+      }
       setError(null);
       try {
         const id = `mermaid_${Math.random().toString(36).substring(2, 9)}`;

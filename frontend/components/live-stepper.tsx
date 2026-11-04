@@ -18,7 +18,7 @@ const STAGES = [
   { id: 4, name: "Editorial Director", desc: "Polishing tone, readability & structure", icon: CheckCircle },
 ];
 
-export function LiveStepper({ runId, topic, onCancel, logs, stage }: LiveStepperProps) {
+export function LiveStepper({ topic, onCancel, logs, stage }: LiveStepperProps) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -28,8 +28,6 @@ export function LiveStepper({ runId, topic, onCancel, logs, stage }: LiveStepper
     }, 1000);
     return () => clearInterval(interval);
   }, []);
-
-  const latestLog = logs.length > 0 ? logs[logs.length - 1] : null;
 
   return (
     <div className="w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl backdrop-blur-md">
@@ -74,7 +72,6 @@ export function LiveStepper({ runId, topic, onCancel, logs, stage }: LiveStepper
           const Icon = s.icon;
           const isDone = stage > s.id;
           const isCurrent = stage === s.id;
-          const isPending = stage < s.id;
 
           return (
             <div

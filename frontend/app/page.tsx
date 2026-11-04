@@ -12,15 +12,9 @@ import {
   BookOpen,
   SlidersHorizontal,
   ChevronDown,
-  Layers,
   Database,
-  ShieldCheck,
   LogOut,
   UserCheck,
-  PlusCircle,
-  Clock,
-  ArrowRight,
-  ExternalLink,
 } from "lucide-react";
 
 const PRESET_TOPICS = [

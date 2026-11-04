@@ -54,11 +54,11 @@ def test_sanitize_scraped_content_indirect_injection():
 def test_mask_pii_and_secrets():
     """Verify that API keys, emails, and credentials are redacted."""
     raw_text = (
-        "Config details: key=sk-or-v1-abcdef1234567890abcdef1234567890 "
+        "Config details: key=sk-mocksecretkeyfortestpurposesonly99999 "
         "contact developer@example.com for help."
     )
     sanitized = mask_pii_and_secrets(raw_text)
-    assert "sk-or-v1-" not in sanitized
+    assert "sk-mocksecretkey" not in sanitized
     assert "[REDACTED_API_KEY]" in sanitized
     assert "developer@example.com" not in sanitized
     assert "[REDACTED_EMAIL]" in sanitized

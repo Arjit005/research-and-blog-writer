@@ -33,13 +33,7 @@ export function CopilotDrawer({
   ]);
   const [input, setInput] = useState("");
 
-  useEffect(() => {
-    if (isOpen && articleId) {
-      loadRevisions();
-    }
-  }, [isOpen, articleId]);
-
-  const loadRevisions = async () => {
+  const loadRevisions = React.useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.listRevisions(articleId);
@@ -49,7 +43,13 @@ export function CopilotDrawer({
     } finally {
       setLoading(false);
     }
-  };
+  }, [articleId]);
+
+  useEffect(() => {
+    if (isOpen && articleId) {
+      loadRevisions();
+    }
+  }, [isOpen, articleId, loadRevisions]);
 
   const handleCompare = async (fromRev: number, toRev: number) => {
     try {

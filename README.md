@@ -7,9 +7,11 @@
 [![OpenRouter](https://img.shields.io/badge/OpenRouter-Multi--Model_Fallback-6366F1)](https://openrouter.ai)
 [![Google Gemini](https://img.shields.io/badge/Google_Gemini-2.5_Flash-4285F4?logo=google&logoColor=white)](https://ai.google.dev)
 [![TiDB Cloud](https://img.shields.io/badge/TiDB_Cloud-Serverless_SQL-E30C34?logo=mysql&logoColor=white)](https://tidbcloud.com)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![Next.js](https://img.shields.io/badge/Next.js-15%20App%20Router-black?logo=next.js&logoColor=white)](https://nextjs.org)
 [![Streamlit](https://img.shields.io/badge/Streamlit-Web_Studio-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io)
 [![OWASP LLM](https://img.shields.io/badge/OWASP-LLM_Top_10_Protected-0284C7)](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
-[![Tests](https://img.shields.io/badge/Tests-90%20Passed-success)](https://pytest.org)
+[![Tests](https://img.shields.io/badge/Tests-101%20Passed-success)](https://pytest.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 ---
@@ -124,6 +126,28 @@ flowchart TD
 
 ```
 research-and-blog-writer/
+├── backend/                 # FastAPI Production Backend
+│   ├── main.py              # App entrypoint, CORS, CSRF Origin Guard, Lifespan DB
+│   ├── deps.py              # User dependency injection, token extraction priority
+│   ├── schemas.py           # Pydantic request/response schemas
+│   └── routes/              # Modular API routers
+│       ├── auth.py          # Passwordless Email OTP & HttpOnly cookie session
+│       ├── research.py      # Resumable SSE run stream & durable execution jobs
+│       ├── articles.py      # User-scoped article CRUD
+│       ├── revisions.py     # Article revision history & unified diffs
+│       └── telemetry.py     # Studio metrics, cache telemetry, and pruning
+├── frontend/                # Next.js 15 App Router Frontend
+│   ├── app/page.tsx         # Modern SaaS Studio workspace layout
+│   ├── components/          # Interactive React components
+│   │   ├── auth-dialog.tsx  # Passwordless Email OTP modal
+│   │   ├── live-stepper.tsx # 4-Stage visual execution stepper & terminal logs
+│   │   ├── mermaid-canvas.tsx# Native Mermaid.js with SVG Pan/Zoom & Fullscreen
+│   │   ├── article-viewer.tsx# Sanitized Markdown reader & sticky floating TOC
+│   │   ├── copilot-drawer.tsx# Revisions inspector & AI Editorial Copilot
+│   │   └── diff-viewer.tsx  # Visual addition/deletion diff comparison
+│   ├── lib/api.ts           # Typed API client with credentials include
+│   ├── lib/sse.ts           # Resumable SSE with Last-Event-ID reconnection
+│   └── next.config.ts       # Reverse proxy (/api -> backend) for same-origin cookies
 ├── agents/                  # Declarative agent specifications (.jsonc)
 │   ├── research.jsonc       # Senior Researcher
 │   ├── content_analyst.jsonc# Systems Analyst
@@ -143,9 +167,16 @@ research-and-blog-writer/
 │   ├── search_tool.py       # DuckDuckGo (Free) + Serper fallback
 │   ├── scrape_tool.py       # SSRF-guarded scraper with research caching & compaction
 │   └── file_tool.py         # Markdown output writer
-├── tests/                   # 32 Automated Unit Tests
-│   ├── test_crew.py         # Crew architecture & agents
-│   ├── test_fallback_llm.py # OpenRouter failover sequence
+├── cache/                   # Hybrid Two-Tier Cache
+│   ├── __init__.py
+│   └── manager.py           # Thread-safe L1 memory LRU + L2 database cache
+├── tests/                   # 101 Automated PyTest Suite
+│   ├── test_api_auth.py     # FastAPI auth, cookies, articles, and telemetry tests
+│   ├── test_api_runs.py     # SSE events, Last-Event-ID resumption, concurrency guard
+│   ├── test_backend_purity.py# AST static scan & import purity gate
+│   ├── test_cache.py        # Hybrid caching concurrency, eviction, anti-stampede
+│   ├── test_red_team.py     # 10-fixture OWASP red team adversarial pack
+│   └── ...
 │   ├── test_llmops.py       # Telemetry & readability metrics
 │   ├── test_memory.py       # Cache, user memory, sliding window
 │   ├── test_security.py     # Injection defense, SSRF, PII masking
@@ -301,16 +332,32 @@ This project supports **TiDB Cloud Serverless** on AWS / GCP:
 
 ## 🖥️ Running the Application
 
-### Option A: Launch Interactive Web Studio (Streamlit)
+### Option A: Modern SaaS Studio (Next.js 15 + FastAPI Streaming Backend) — Recommended
+
+**Terminal 1 — FastAPI Backend:**
+```bash
+uv run uvicorn backend.main:app --reload --port 8000
+```
+
+**Terminal 2 — Next.js 15 Frontend:**
+```bash
+cd frontend
+npm run dev
+```
+Open **[http://localhost:3000](http://localhost:3000)** in your browser:
+- **Commission AI Squad**: Type custom research topics or choose curated presets.
+- **Durable Live Stepper**: 4-agent visual progress pipeline with real-time terminal activity, token tracker, and cancellation.
+- **Native Mermaid Canvas**: Interactive client-rendered diagrams with SVG Pan/Zoom, Fullscreen mode, and SVG export.
+- **Sanitized Markdown Reader**: Sticky floating Table of Contents, word count, and export options.
+- **AI Editorial Copilot**: Slide-over drawer with unified revision diffs and rollback restore.
+
+### Option B: Classic Web Studio (Streamlit Fallback)
 ```bash
 uv run streamlit run app.py
 ```
-Open [http://localhost:8501](http://localhost:8501) in your browser:
-- **Tab 1 (Autonomous Research & Generation)**: Select presets or type custom topics, choose tone and depth, and stream live agent execution.
-- **Tab 2 (Interactive Copilot & Chat)**: Chat with the AI editor to request section edits, LinkedIn posts, Twitter/X threads, or executive summaries.
-- **Tab 3 (🛡️ LLMOps & Security Governance)**: Real-time telemetry, token metrics, Flesch readability ratings, model fallback logs, and security audit events.
+Open [http://localhost:8501](http://localhost:8501) in your browser.
 
-### Option B: Run via CLI
+### Option C: Run via CLI
 ```bash
 # Interactive topic prompt:
 uv run python crew.py
@@ -323,7 +370,7 @@ uv run python crew.py --topic "LLMOps in 2026: Architectures, Guardrails, and Ob
 
 ## 🧪 Automated Test Suite & Red-Team Attack Pack
 
-The project includes an enterprise-grade automated test suite featuring **90 passing unit, integration, red-team, and cache tests**:
+The project includes an enterprise-grade automated test suite featuring **101 passing unit, integration, red-team, cache, and API tests**:
 
 ```bash
 # Run all tests
