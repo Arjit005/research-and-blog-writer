@@ -149,12 +149,14 @@ export default function Home() {
   const loadArticles = useCallback(async () => {
     try {
       const list = await api.listArticles();
-      setArticles(list);
-      if (list.length > 0 && !selectedArticleRef.current && !activeRunIdRef.current) {
-        await loadArticleDetail(list[0].id);
+      const safeArticles = Array.isArray(list) ? list : [];
+      setArticles(safeArticles);
+      if (safeArticles.length > 0 && !selectedArticleRef.current && !activeRunIdRef.current) {
+        await loadArticleDetail(safeArticles[0].id);
       }
     } catch (err) {
       console.error("Failed to load articles:", err);
+      setArticles([]);
     }
   }, [loadArticleDetail]);
 

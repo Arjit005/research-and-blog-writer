@@ -47,6 +47,13 @@ export interface ArticleSummary {
   created_at: string;
 }
 
+export interface ArticleListResponse {
+  items: ArticleSummary[];
+  total: number;
+  limit: number;
+  next_cursor?: number | null;
+}
+
 export interface ArticleDetail extends ArticleSummary {
   content: string;
   target_length?: string;
@@ -262,8 +269,19 @@ export const api = {
   },
 
   // Articles
-  async listArticles(): Promise<ArticleSummary[]> {
-    return fetchJson("/api/v1/articles");
+  async listArticles(limit: number = 20, cursor?: number): Promise<ArticleSummary[]> {
+    const query = new URLSearchParams();
+    if (limit) query.set("limit", String(limit));
+    if (cursor) query.set("cursor", String(cursor));
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    const res = await fetchJson<ArticleSummary[] | ArticleListResponse>(`/api/v1/articles${qs}`);
+    if (Array.isArray(res)) {
+      return res;
+    }
+    if (res && typeof res === "object" && Array.isArray((res as ArticleListResponse).items)) {
+      return (res as ArticleListResponse).items;
+    }
+    return [];
   },
 
   async getArticle(id: number): Promise<ArticleDetail> {
