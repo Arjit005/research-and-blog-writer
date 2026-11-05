@@ -131,15 +131,19 @@ export interface TelemetryStats {
 export interface UserKeysInfo {
   has_gemini: boolean;
   has_openrouter: boolean;
+  has_beatapi?: boolean;
   gemini_masked?: string | null;
   openrouter_masked?: string | null;
+  beatapi_masked?: string | null;
   server_has_gemini: boolean;
   server_has_openrouter: boolean;
+  server_has_beatapi?: boolean;
 }
 
 export interface UserKeysUpdate {
   gemini_api_key?: string;
   openrouter_api_key?: string;
+  beatapi_key?: string;
 }
 
 interface RawDiffResponse {
@@ -221,6 +225,13 @@ async function fetchJson<T>(path: string, options: RequestInit = {}, timeoutMs: 
 
 export const api = {
   // Auth
+  async loginWithGoogle(idToken: string): Promise<AuthResult> {
+    return fetchJson("/api/v1/auth/google", {
+      method: "POST",
+      body: JSON.stringify({ id_token: idToken }),
+    });
+  },
+
   async loginWithPassword(email: string, password: string, otpCode?: string): Promise<AuthResult> {
     return fetchJson("/api/v1/auth/login", {
       method: "POST",

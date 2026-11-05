@@ -127,7 +127,8 @@ with st.sidebar:
     # ------------------------------------------------------------------
     server_has_openrouter = bool(os.getenv("OPENROUTER_API_KEY") or os.getenv("OPEN_ROUTER_API_KEY"))
     server_has_gemini = bool(os.getenv("GEMINI_API_KEY"))
-    has_any_llm = bool(server_has_openrouter or server_has_gemini)
+    server_has_beatapi = bool(os.getenv("BEATAPI_KEY") or os.getenv("BEAT_API_KEY"))
+    has_any_llm = bool(server_has_openrouter or server_has_gemini or server_has_beatapi)
 
     # 1. API Keys & Models
     with st.expander("🔑 API Keys & LLM Routing", expanded=False):
@@ -136,37 +137,49 @@ with st.sidebar:
             "and are **never displayed** here. Optional keys entered below live only in "
             "this browser session and are scoped to your next run."
         )
-        c1, c2 = st.columns(2)
+        c1, c2, c3 = st.columns(3)
         with c1:
-            if server_has_openrouter:
-                st.success("OpenRouter (server: configured)", icon="🔄")
-            else:
-                st.info("OpenRouter (server: not configured)", icon="ℹ️")
-        with c2:
             if server_has_gemini:
-                st.success("Gemini (server: configured)", icon="✅")
+                st.success("Gemini (configured)", icon="✅")
             else:
-                st.info("Gemini (server: not configured)", icon="ℹ️")
+                st.info("Gemini (not set)", icon="ℹ️")
+        with c2:
+            if server_has_beatapi:
+                st.success("BeatAPI (configured)", icon="⚡")
+            else:
+                st.info("BeatAPI (not set)", icon="ℹ️")
+        with c3:
+            if server_has_openrouter:
+                st.success("OpenRouter (configured)", icon="🔄")
+            else:
+                st.info("OpenRouter (not set)", icon="ℹ️")
         if not has_any_llm:
             st.warning(
                 "No server LLM key is configured. Enter your own trial key below "
-                "or ask the operator to set OPENROUTER_API_KEY / GEMINI_API_KEY.",
+                "or ask the operator to set GEMINI_API_KEY / BEATAPI_KEY / OPENROUTER_API_KEY.",
                 icon="⚠️",
             )
 
+        user_gemini = st.text_input(
+            "Use your own Gemini key (optional, session-only)",
+            value="",
+            type="password",
+            key="user_gemini_key",
+            placeholder="AIza… (1,500 free req/day)",
+        )
+        user_beatapi = st.text_input(
+            "Use your own BeatAPI key (optional, session-only)",
+            value="",
+            type="password",
+            key="user_beatapi_key",
+            placeholder="sk-… (Free GLM, DeepSeek, Hunyuan)",
+        )
         user_openrouter = st.text_input(
             "Use your own OpenRouter key (optional, session-only)",
             value="",
             type="password",
             key="user_openrouter_key",
             placeholder="sk-or-v1-…",
-        )
-        user_gemini = st.text_input(
-            "Use your own Gemini key (optional, session-only)",
-            value="",
-            type="password",
-            key="user_gemini_key",
-            placeholder="AIza…",
         )
         user_serper = st.text_input(
             "Use your own Serper.dev key (optional, session-only)",
@@ -176,12 +189,12 @@ with st.sidebar:
             placeholder="Serper key",
             help="DuckDuckGo is used by default for 100% free searching.",
         )
-        if user_openrouter or user_gemini or user_serper:
+        if user_openrouter or user_gemini or user_beatapi or user_serper:
             st.caption("Session-only keys set. They are not written to process environment or disk.")
 
-        if get_serper_key() and not server_has_gemini and not server_has_openrouter:
+        if get_serper_key() and not has_any_llm:
             st.info("Search: Serper key available in this session.", icon="🔎")
-        elif server_has_openrouter or server_has_gemini:
+        elif has_any_llm:
             st.info("Web Search: DuckDuckGo (free) by default; Serper if configured.", icon="🦆")
         else:
             st.info("Web Search: DuckDuckGo (free, no key required).", icon="🦆")
@@ -406,6 +419,7 @@ with main_tab1:
                 runtime_keys = {
                     "openrouter": st.session_state.get("user_openrouter_key") or None,
                     "gemini": st.session_state.get("user_gemini_key") or None,
+                    "beatapi": st.session_state.get("user_beatapi_key") or None,
                     "serper": st.session_state.get("user_serper_key") or None,
                 }
 

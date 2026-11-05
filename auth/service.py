@@ -27,6 +27,13 @@ from auth.rate_limit import (
 )
 import database as db
 
+try:
+    from google.oauth2 import id_token as google_id_token
+    from google.auth.transport import requests as google_requests
+except ImportError:
+    google_id_token = None
+    google_requests = None
+
 GENERIC_DISPATCH_MESSAGE = "If this email can sign in, a verification code has been sent."
 
 GENERIC_INVALID_CREDENTIALS = "Invalid email or password."
@@ -82,6 +89,7 @@ def request_otp(email: str, request_ip: Optional[str] = None) -> Tuple[bool, str
     # 4. Dispatch Email or Dev Mode Display
     dev_code = None
     if cfg.auth_dev_mode:
+        # AUTH_DEV_MODE: use dev path so the request succeeds and we can return the code
         dev_code = code
         db.save_security_event("AUTH_OTP_DEV_DISPATCH", f"Email: {masked} | Dev mode active")
     else:
@@ -119,7 +127,7 @@ def verify_otp_and_login(
         db.save_security_event("AUTH_OTP_VERIFY_FAILED", f"Email: {masked} | Reason: {err_msg}")
         return False, err_msg, None, None
 
-    # Retrieve or create user on first verified login
+    # Retrieve or create user on first verified login (this now uses INSERT OR IGNORE)
     user = db.get_or_create_user(norm_email)
     if not user.get("is_active"):
         db.save_security_event("AUTH_ACCOUNT_DISABLED", f"Email: {masked}")
@@ -266,3 +274,111 @@ def login_or_register_with_password(
     raw_token, _ = create_user_session(user["id"])
     db.save_security_event("AUTH_LOGIN_SUCCESS", f"Email: {masked} | Method: Password")
     return True, "Login successful.", raw_token, user
+
+
+def verify_google_token_and_login(
+    id_token: str,
+    request_ip: Optional[str] = None,
+) -> Tuple[bool, str, Optional[str], Optional[Dict[str, Any]]]:
+    """Verify submitted Firebase Google ID token and establish user session.
+
+    Security guarantees:
+    - Grounded verification using google.oauth2.id_token.verify_firebase_token.
+    - Matches audience against configured firebase_project_id.
+    - Requires email_verified == True.
+    - Enforces configured allowed_email_domains.
+    - Atomic account linking / creation handling IntegrityError and race conditions.
+    - Preserves existing user data, passwords, and sessions.
+
+    Returns:
+        (success_bool, message, raw_session_token, user_dict)
+    """
+    if not id_token or not str(id_token).strip():
+        return False, "Google token is required.", None, None
+
+    if google_id_token is None or google_requests is None:
+        return False, "Google authentication dependencies (google-auth, requests) not installed.", None, None
+
+    cfg = load_auth_config()
+
+    try:
+        request_adapter = google_requests.Request()
+        decoded = google_id_token.verify_firebase_token(
+            id_token.strip(),
+            request_adapter,
+            audience=cfg.firebase_project_id,
+        )
+    except Exception as exc:
+        db.save_security_event("AUTH_GOOGLE_TOKEN_INVALID", f"Reason: {exc}")
+        return False, f"Invalid or expired Google authentication token: {exc}", None, None
+
+    google_id = decoded.get("sub") or decoded.get("user_id")
+    raw_email = decoded.get("email")
+    email_verified = decoded.get("email_verified")
+
+    if not google_id:
+        db.save_security_event("AUTH_GOOGLE_TOKEN_INVALID", "Reason: Missing sub/user_id in token")
+        return False, "Google token does not contain a valid user identity.", None, None
+
+    if not raw_email:
+        db.save_security_event("AUTH_GOOGLE_TOKEN_INVALID", "Reason: Missing email in token")
+        return False, "Google token does not contain an email address.", None, None
+
+    if email_verified is not True:
+        db.save_security_event("AUTH_GOOGLE_UNVERIFIED_EMAIL", f"GoogleID: {google_id}")
+        return False, "Google account email is not verified.", None, None
+
+    try:
+        norm_email = normalize_email(raw_email)
+    except ValueError as e:
+        return False, str(e), None, None
+
+    masked = mask_email(norm_email)
+
+    if cfg.allowed_email_domains:
+        domain = norm_email.split("@")[1]
+        if domain not in cfg.allowed_email_domains:
+            db.save_security_event("AUTH_GOOGLE_DOMAIN_REJECTED", f"Email: {masked} | Domain: {domain}")
+            return False, f"Email domain '@{domain}' is not permitted to sign in.", None, None
+
+    # Check if a user is already associated with this Google ID
+    user_by_gid = db.get_user_by_google_id(google_id)
+    if user_by_gid:
+        if user_by_gid.get("email", "").lower() != norm_email:
+            db.save_security_event(
+                "AUTH_GOOGLE_COLLISION_REJECTED",
+                f"GoogleID: {google_id} | Existing: {mask_email(user_by_gid.get('email', ''))} | Attempted: {masked}"
+            )
+            return False, "This Google identity is already linked to a different email address.", None, None
+        if not user_by_gid.get("is_active"):
+            db.save_security_event("AUTH_ACCOUNT_DISABLED", f"Email: {masked}")
+            return False, ACCOUNT_DISABLED_MESSAGE, None, None
+        user = user_by_gid
+    else:
+        # Check if existing user by email
+        user_by_email = db.get_user_by_email(norm_email)
+        if user_by_email:
+            if not user_by_email.get("is_active"):
+                db.save_security_event("AUTH_ACCOUNT_DISABLED", f"Email: {masked}")
+                return False, ACCOUNT_DISABLED_MESSAGE, None, None
+            # Link Google ID transactionally
+            linked, reason = db.link_user_google_id(user_by_email["id"], google_id)
+            if not linked:
+                db.save_security_event("AUTH_GOOGLE_LINK_FAILED", f"Email: {masked} | Reason: {reason}")
+                return False, "Unable to link Google identity to existing account.", None, None
+            user_by_email["google_id"] = google_id
+            user = user_by_email
+            db.save_security_event("AUTH_GOOGLE_LINK_SUCCESS", f"Email: {masked} | UserID: {user['id']}")
+        else:
+            # Create new user transactionally
+            user, reason = db.create_google_user(norm_email, google_id)
+            if not user:
+                db.save_security_event("AUTH_GOOGLE_CREATE_FAILED", f"Email: {masked} | Reason: {reason}")
+                return False, "Unable to create account with Google identity.", None, None
+            db.save_security_event("AUTH_GOOGLE_REGISTER_SUCCESS", f"Email: {masked} | UserID: {user['id']}")
+
+    # Establish authenticated session
+    raw_token, _ = create_user_session(user["id"])
+    db.save_security_event("AUTH_LOGIN_SUCCESS", f"Email: {masked} | Method: Google | UserID: {user['id']}")
+    return True, "Login successful.", raw_token, user
+

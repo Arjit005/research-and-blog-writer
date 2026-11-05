@@ -20,6 +20,8 @@ dependencies = [
     "pydantic>=2.12.5",
     "httpx>=0.28.1",
     "langsmith>=0.1.0",
+    "google-auth>=2.30.0",
+    "requests>=2.31.0",
 ]
 
 [build-system]

@@ -13,6 +13,7 @@ export function ApiKeysDialog({ isOpen, onClose, onKeysUpdated }: ApiKeysDialogP
   const [keysInfo, setKeysInfo] = useState<UserKeysInfo | null>(null);
   const [geminiKey, setGeminiKey] = useState("");
   const [openrouterKey, setOpenrouterKey] = useState("");
+  const [beatapiKey, setBeatapiKey] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ text: string; type: "success" | "error" } | null>(null);
@@ -45,10 +46,12 @@ export function ApiKeysDialog({ isOpen, onClose, onKeysUpdated }: ApiKeysDialogP
       await api.saveUserKeys({
         gemini_api_key: geminiKey.trim() || undefined,
         openrouter_api_key: openrouterKey.trim() || undefined,
+        beatapi_key: beatapiKey.trim() || undefined,
       });
       setStatusMsg({ text: "API keys saved successfully!", type: "success" });
       setGeminiKey("");
       setOpenrouterKey("");
+      setBeatapiKey("");
       await loadKeys();
       onKeysUpdated?.();
       setTimeout(() => {
@@ -168,6 +171,42 @@ export function ApiKeysDialog({ isOpen, onClose, onKeysUpdated }: ApiKeysDialogP
             />
           </div>
 
+          {/* BeatAPI Card */}
+          <div className="p-4 rounded-xl bg-slate-800/50 border border-slate-700">
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                <span>⚡ BeatAPI Key</span>
+                <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-slate-700 text-slate-300">
+                  Free models: GLM 5.3, DeepSeek V4.1, Hunyuan
+                </span>
+              </label>
+              {keysInfo?.has_beatapi && (
+                <span className="text-xs text-slate-400 font-mono">
+                  {keysInfo.beatapi_masked || "Configured"}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-400 mb-2">
+              Free fallback models from BeatAPI.{" "}
+              <a
+                href="https://beatapi.io"
+                target="_blank"
+                rel="noreferrer"
+                className="text-indigo-400 hover:text-indigo-300 underline font-medium"
+              >
+                Get BeatAPI Key &rarr;
+              </a>
+            </p>
+            <input
+              type="password"
+              placeholder={keysInfo?.has_beatapi ? "Enter new key to update..." : "beat-..."}
+              value={beatapiKey}
+              onChange={(e) => setBeatapiKey(e.target.value)}
+              className="w-full px-3.5 py-2 text-sm rounded-lg bg-slate-950 border border-slate-700 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              autoComplete="off"
+            />
+          </div>
+
           <div className="flex justify-end gap-3 pt-2">
             <button
               type="button"
@@ -179,7 +218,7 @@ export function ApiKeysDialog({ isOpen, onClose, onKeysUpdated }: ApiKeysDialogP
             </button>
             <button
               type="submit"
-              disabled={saving || (!geminiKey && !openrouterKey)}
+              disabled={saving || (!geminiKey && !openrouterKey && !beatapiKey)}
               className="px-5 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-indigo-600/30"
             >
               {saving ? "Saving..." : "Save Keys"}

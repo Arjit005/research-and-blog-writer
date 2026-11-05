@@ -79,6 +79,9 @@ _RUNTIME_OPENROUTER_KEY: contextvars.ContextVar[Optional[str]] = contextvars.Con
 _RUNTIME_GEMINI_KEY: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
     "runtime_gemini_key", default=None
 )
+_RUNTIME_BEATAPI_KEY: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "runtime_beatapi_key", default=None
+)
 
 
 def get_openrouter_key() -> str:
@@ -96,8 +99,22 @@ def get_gemini_key() -> str:
     return _RUNTIME_GEMINI_KEY.get() or os.getenv("GEMINI_API_KEY") or ""
 
 
+def get_beatapi_key() -> str:
+    """Retrieve the BeatAPI key, preferring a runtime-scoped key."""
+    return (
+        _RUNTIME_BEATAPI_KEY.get()
+        or os.getenv("BEATAPI_KEY")
+        or os.getenv("BEAT_API_KEY")
+        or ""
+    )
+
+
 @contextmanager
-def scoped_llm_keys(openrouter_key: Optional[str] = None, gemini_key: Optional[str] = None) -> Iterator[None]:
+def scoped_llm_keys(
+    openrouter_key: Optional[str] = None,
+    gemini_key: Optional[str] = None,
+    beatapi_key: Optional[str] = None,
+) -> Iterator[None]:
     """Temporarily expose caller-supplied LLM keys to the current context only.
 
     Unlike writing to ``os.environ`` this is thread-safe, isolated to the current
@@ -110,6 +127,8 @@ def scoped_llm_keys(openrouter_key: Optional[str] = None, gemini_key: Optional[s
             tokens.append((_RUNTIME_OPENROUTER_KEY, _RUNTIME_OPENROUTER_KEY.set(str(openrouter_key))))
         if gemini_key:
             tokens.append((_RUNTIME_GEMINI_KEY, _RUNTIME_GEMINI_KEY.set(str(gemini_key))))
+        if beatapi_key:
+            tokens.append((_RUNTIME_BEATAPI_KEY, _RUNTIME_BEATAPI_KEY.set(str(beatapi_key))))
         yield
     finally:
         for var, token in reversed(tokens):
@@ -118,7 +137,7 @@ def scoped_llm_keys(openrouter_key: Optional[str] = None, gemini_key: Optional[s
 
 def has_llm_key() -> bool:
     """Return True when at least one supported LLM provider key is configured."""
-    return bool(get_openrouter_key() or get_gemini_key())
+    return bool(get_openrouter_key() or get_gemini_key() or get_beatapi_key())
 
 
 # Curated list of high-capability free models on OpenRouter
@@ -134,27 +153,40 @@ OPENROUTER_FREE_MODELS = [
 
 # Verified Google Gemini models (1,500 requests/day free tier on Google AI Studio).
 # Model names match the LiteLLM / CrewAI identifier format: "gemini/<model-id>".
-# Ordered newest-to-oldest so the most capable available model is tried first.
+# Ordered with verified active 2026 models first so the most capable available model is tried first.
 GEMINI_MODELS = [
-    "gemini/gemini-2.5-flash",       # Gemini 2.5 Flash — fastest 2.5-series
-    "gemini/gemini-2.5-flash-lite",  # Gemini 2.5 Flash-Lite — lower quota cost
-    "gemini/gemini-2.0-flash",       # Gemini 2.0 Flash — stable, widely available
-    "gemini/gemini-2.0-flash-lite",  # Gemini 2.0 Flash-Lite — lightweight fallback
-    "gemini/gemini-1.5-flash",       # Gemini 1.5 Flash — broad availability fallback
+    "gemini/gemini-3.5-flash",       # Gemini 3.5 Flash — current primary fast flagship
+    "gemini/gemini-3.5-flash-lite",  # Gemini 3.5 Flash-Lite — ultra-fast, high quota
+    "gemini/gemini-3.8-flash",       # Gemini 3.8 Flash fallback
+    "gemini/gemini-2.5-flash",       # Gemini 2.5 Flash fallback
+    "gemini/gemini-2.5-flash-lite",  # Gemini 2.5 Flash-Lite fallback
+]
+
+# BeatAPI free models (OpenAI-compatible endpoints at https://api.beatapi.io/v1)
+BEATAPI_FREE_MODELS = [
+    "beatapi/glm-5.3-flash-free",         # High performance GLM free model
+    "beatapi/deepseek-v4.1-flash-free",    # DeepSeek V4.1 free model
+    "beatapi/hy4-free",                    # Tencent Hunyuan free model
 ]
 
 
 def get_available_model_sequence() -> List[str]:
-    """Build the fallback sequence, prioritizing high-quota Gemini first, then OpenRouter."""
+    """Build the fallback sequence, prioritizing Gemini first, then BeatAPI, then OpenRouter."""
     seq: List[str] = []
 
     gemini_key = get_gemini_key()
+    beatapi_key = get_beatapi_key()
     or_key = get_openrouter_key()
 
-    # Prioritize Google Gemini first (1,500 req/day free vs OpenRouter 50 req/day)
+    # 1. Prioritize Google Gemini first (1,500 req/day free vs OpenRouter 50 req/day)
     if gemini_key:
         seq.extend(GEMINI_MODELS)
 
+    # 2. Next, BeatAPI free models
+    if beatapi_key:
+        seq.extend(BEATAPI_FREE_MODELS)
+
+    # 3. Next, OpenRouter free models
     if or_key:
         seq.extend(OPENROUTER_FREE_MODELS)
 
@@ -163,6 +195,7 @@ def get_available_model_sequence() -> List[str]:
         # construction path still works, but ``FallbackLLM.call`` fails fast and
         # never fires a doomed request for each entry.
         seq.extend(GEMINI_MODELS)
+        seq.extend(BEATAPI_FREE_MODELS)
         seq.extend(OPENROUTER_FREE_MODELS)
 
     return seq
@@ -474,14 +507,33 @@ class FallbackLLM(BaseLLM):
             if model_name in self._llm_instances:
                 return self._llm_instances[model_name]
 
-            active_key = get_gemini_key() if model_name.startswith("gemini/") else get_openrouter_key()
+            if model_name.startswith("gemini/"):
+                active_key = get_gemini_key()
+                inst_model = model_name
+                init_kwargs: Dict[str, Any] = {"timeout": self._call_timeout}
+                if active_key:
+                    init_kwargs["api_key"] = active_key
+            elif model_name.startswith("beatapi/"):
+                active_key = get_beatapi_key()
+                raw_model = model_name[len("beatapi/"):]
+                inst_model = f"openai/{raw_model}"
+                init_kwargs = {
+                    "timeout": self._call_timeout,
+                    "base_url": "https://api.beatapi.io/v1",
+                }
+                if active_key:
+                    init_kwargs["api_key"] = active_key
+            else:
+                active_key = get_openrouter_key()
+                inst_model = model_name
+                init_kwargs = {"timeout": self._call_timeout}
+                if active_key:
+                    init_kwargs["api_key"] = active_key
+
             cache_key = (model_name, active_key)
             if cache_key in self._llm_instances:
                 return self._llm_instances[cache_key]
 
-            init_kwargs: Dict[str, Any] = {"timeout": self._call_timeout}
-            if active_key:
-                init_kwargs["api_key"] = active_key
             temperature = getattr(self, "temperature", None)
             if temperature is not None:
                 init_kwargs["temperature"] = temperature
@@ -489,10 +541,10 @@ class FallbackLLM(BaseLLM):
             if max_tokens is not None:
                 init_kwargs["max_tokens"] = max_tokens
             try:
-                inst = LLM(model=model_name, **init_kwargs)
+                inst = LLM(model=inst_model, **init_kwargs)
             except TypeError:
                 # Older crewai versions do not accept timeout/temperature here.
-                inst = LLM(model=model_name)
+                inst = LLM(model=inst_model)
             self._llm_instances[cache_key] = inst
             return inst
 
@@ -589,11 +641,11 @@ class FallbackLLM(BaseLLM):
                 else:
                     break
 
-        if skip_openrouter and not get_gemini_key():
+        if skip_openrouter and not get_gemini_key() and not get_beatapi_key():
             raise AllModelsFailedError(
                 "OpenRouter free-tier daily rate limit reached (50 requests/day). "
-                "Please configure a free Google Gemini API Key in Settings (⚙️ API Keys at top right) "
-                "to get 1,500 free requests per day from Google AI Studio."
+                "Please configure a free Google Gemini API Key or BeatAPI Key in Settings "
+                "to get additional free requests without daily limits."
             )
 
         raise AllModelsFailedError(

@@ -13,6 +13,7 @@ from backend.schemas import (
     OTPRequest,
     OTPVerifyRequest,
     PasswordAuthRequest,
+    GoogleAuthRequest,
     AuthResponse,
     UserResponse,
     UserKeysResponse,
@@ -141,6 +142,33 @@ def login_with_password_endpoint(body: PasswordAuthRequest, request: Request, re
     )
 
 
+@router.post("/google", response_model=AuthResponse)
+def google_auth_endpoint(body: GoogleAuthRequest, request: Request, response: Response) -> AuthResponse:
+    """Authenticate or register user using a verified Firebase Google ID token."""
+    client_ip = _get_client_ip(request)
+    success, msg, session_token, user_data = auth_service.verify_google_token_and_login(
+        id_token=body.id_token,
+        request_ip=client_ip,
+    )
+
+    if not success or not session_token or not user_data:
+        msg_lower = (msg or "").lower()
+        if "invalid or expired" in msg_lower:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=msg)
+        if "disabled" in msg_lower:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=msg)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
+
+    _set_session_cookie(response, session_token)
+
+    return AuthResponse(
+        success=True,
+        message=msg,
+        user=UserResponse(id=user_data["id"], email=user_data["email"]),
+        token=session_token if _dev_mode_enabled() else None,
+    )
+
+
 @router.post("/otp/request", response_model=AuthResponse)
 def request_otp_endpoint(body: OTPRequest, request: Request) -> AuthResponse:
     """Request a single-use 6-digit verification code sent via email."""
@@ -150,11 +178,16 @@ def request_otp_endpoint(body: OTPRequest, request: Request) -> AuthResponse:
     if not success:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=msg)
 
-    return AuthResponse(
-        success=True,
-        message=msg,
-        dev_code=dev_code if _dev_mode_enabled() else None,
-    )
+    # Dev mode: expose the raw OTP code in the JSON response for local testing
+    # Production mode: never expose dev_code, regardless of _dev_mode_enabled state
+    response_data = {
+        "success": True,
+        "message": msg,
+    }
+    if _dev_mode_enabled():
+        response_data["dev_code"] = dev_code
+
+    return AuthResponse(**response_data)
 
 
 @router.post("/otp/verify", response_model=AuthResponse)
@@ -168,6 +201,11 @@ def verify_otp_endpoint(body: OTPVerifyRequest, request: Request, response: Resp
     )
 
     if not success or not session_token or not user_data:
+        msg_lower = (msg or "").lower()
+        if "invalid or expired" in msg_lower:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=msg)
+        if "disabled" in msg_lower:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=msg)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
 
     _set_session_cookie(response, session_token)
@@ -198,14 +236,18 @@ def get_user_keys_endpoint(user: Dict[str, Any] = Depends(get_current_user)) -> 
     user_id = user["id"]
     keys = db.get_user_api_keys(user_id=user_id) if hasattr(db, "get_user_api_keys") else {}
     gemini_key = keys.get("gemini_api_key", "")
+    beatapi_key = keys.get("beatapi_key", "")
     openrouter_key = keys.get("openrouter_api_key", "")
 
     return UserKeysResponse(
         has_gemini=bool(gemini_key),
+        has_beatapi=bool(beatapi_key),
         has_openrouter=bool(openrouter_key),
         gemini_masked=_mask_key(gemini_key),
+        beatapi_masked=_mask_key(beatapi_key),
         openrouter_masked=_mask_key(openrouter_key),
         server_has_gemini=bool(os.getenv("GEMINI_API_KEY")),
+        server_has_beatapi=bool(os.getenv("BEATAPI_KEY") or os.getenv("BEAT_API_KEY")),
         server_has_openrouter=bool(os.getenv("OPENROUTER_API_KEY")),
     )
 
@@ -221,6 +263,7 @@ def update_user_keys_endpoint(
         db.save_user_api_keys(
             user_id=user_id,
             gemini_key=body.gemini_api_key,
+            beatapi_key=body.beatapi_key,
             openrouter_key=body.openrouter_api_key,
         )
     return {"status": "success", "message": "API keys saved securely."}

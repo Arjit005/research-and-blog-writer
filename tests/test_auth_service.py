@@ -103,14 +103,14 @@ def test_audit_logs_mask_email_and_never_store_plain_code():
 
 
 def test_email_sender_failure_returns_friendly_error():
-    """Verify SMTP failure produces a clean user error without leaking credentials or stack traces."""
+    """Verify email delivery failure produces a clean user error without leaking credentials or stack traces."""
     failing_sender = FakeEmailSender(should_fail=True)
     set_email_sender_override(failing_sender)
 
     ok, msg, _ = request_otp("smtp_failure_target@example.com")
     assert ok is False
     assert "Could not send email" in msg
-    assert "Simulated SMTP delivery failure" in msg
+    assert "Simulated email delivery failure" in msg
 
     set_email_sender_override(None)
 

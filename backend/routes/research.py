@@ -224,11 +224,12 @@ def _execute_run_worker(
         # Resolve API keys: user-specific credentials take precedence over environment
         user_keys = db.get_user_api_keys(user_id=user_id) if (user_id and hasattr(db, "get_user_api_keys")) else {}
         u_gemini = user_keys.get("gemini_api_key") or os.getenv("GEMINI_API_KEY")
+        u_beatapi = user_keys.get("beatapi_key") or os.getenv("BEATAPI_KEY") or os.getenv("BEAT_API_KEY")
         u_openrouter = user_keys.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY")
 
         from llm_fallback import scoped_llm_keys
 
-        with scoped_llm_keys(openrouter_key=u_openrouter, gemini_key=u_gemini):
+        with scoped_llm_keys(openrouter_key=u_openrouter, gemini_key=u_gemini, beatapi_key=u_beatapi):
             start_time = time.time()
             _reset_llm_usage_stats()
             crew_instance = ResearchAndBlogWriter()

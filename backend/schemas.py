@@ -31,16 +31,24 @@ class UserResponse(BaseModel):
 
 class UserKeysResponse(BaseModel):
     has_gemini: bool
+    has_beatapi: bool = False
     has_openrouter: bool
     gemini_masked: Optional[str] = None
+    beatapi_masked: Optional[str] = None
     openrouter_masked: Optional[str] = None
     server_has_gemini: bool = False
+    server_has_beatapi: bool = False
     server_has_openrouter: bool = False
 
 
 class UserKeysUpdateRequest(BaseModel):
     gemini_api_key: Optional[str] = Field(None, max_length=256)
+    beatapi_key: Optional[str] = Field(None, max_length=256)
     openrouter_api_key: Optional[str] = Field(None, max_length=256)
+
+
+class GoogleAuthRequest(BaseModel):
+    id_token: str = Field(..., min_length=10, description="Firebase Google ID token")
 
 
 class AuthResponse(BaseModel):

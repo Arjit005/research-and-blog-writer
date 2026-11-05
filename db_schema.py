@@ -346,6 +346,7 @@ TABLE_DEFINITIONS: List[Tuple[str, str, str]] = [
             id            INT AUTO_INCREMENT PRIMARY KEY,
             email         VARCHAR(255) NOT NULL UNIQUE,
             password_hash VARCHAR(255) NULL,
+            google_id     VARCHAR(255) NULL UNIQUE,
             created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
             last_login_at DATETIME NULL,
             is_active     TINYINT(1) NOT NULL DEFAULT 1
@@ -356,6 +357,7 @@ TABLE_DEFINITIONS: List[Tuple[str, str, str]] = [
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             email         TEXT NOT NULL UNIQUE,
             password_hash TEXT NULL,
+            google_id     TEXT NULL UNIQUE,
             created_at    TEXT NOT NULL DEFAULT (datetime('now')),
             last_login_at TEXT NULL,
             is_active     INTEGER NOT NULL DEFAULT 1
@@ -538,6 +540,7 @@ SQLITE_EXTRA_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_art_user            ON articles(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_chat_user           ON chat_history(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_telem_user          ON telemetry_runs(user_id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL",
 ]
 
 # ---------------------------------------------------------------------------
@@ -555,6 +558,7 @@ MIGRATION_COLUMNS: List[Tuple[str, str, str, str]] = [
     ("article_revisions",   "user_id",      "INT NULL",          "INTEGER"),
     ("research_jobs",       "trace_url",    "VARCHAR(512) NULL", "TEXT"),
     ("users",               "password_hash","VARCHAR(255) NULL", "TEXT"),
+    ("users",               "google_id",    "VARCHAR(255) NULL UNIQUE", "TEXT NULL"),
 ]
 
 

@@ -19,9 +19,7 @@ services:
       - key: ENVIRONMENT
         value: production
       - key: AUTH_DEV_MODE
-        value: "true"
-      - key: ALLOW_DEV_MODE_WITH_PROD_DB
-        value: "true"
+        value: "false"
 
       # --- Authentication secrets (auto-generated on Render if not explicitly set) ---
       - key: OTP_PEPPER
@@ -33,6 +31,8 @@ services:
       - key: OPENROUTER_API_KEY
         sync: false
       - key: GEMINI_API_KEY
+        sync: false
+      - key: BEATAPI_KEY
         sync: false
 
       # --- TiDB Cloud Serverless (optional; falls back to SQLite) ---

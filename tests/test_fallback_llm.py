@@ -18,6 +18,7 @@ from llm_fallback import (
     scoped_llm_keys,
     get_openrouter_key,
     get_gemini_key,
+    get_beatapi_key,
     classify_error,
 )
 
@@ -27,7 +28,7 @@ MODEL_NAMES = ["model-1", "model-2"]
 @pytest.fixture(autouse=True)
 def _offline_llm_env(monkeypatch):
     """Deterministic, offline defaults: no keys, no real backoff sleeps."""
-    for var in ("OPENROUTER_API_KEY", "OPEN_ROUTER_API_KEY", "GEMINI_API_KEY"):
+    for var in ("OPENROUTER_API_KEY", "OPEN_ROUTER_API_KEY", "GEMINI_API_KEY", "BEATAPI_KEY", "BEAT_API_KEY"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("LLM_BACKOFF_BASE_SECONDS", "0")
     monkeypatch.setenv("LLM_BACKOFF_CAP_SECONDS", "10")
@@ -206,18 +207,37 @@ def test_scoped_llm_keys_do_not_mutate_process_environment():
     """Runtime-scoped keys are visible only inside the context manager."""
     env_openrouter = os.getenv("OPENROUTER_API_KEY")
     env_gemini = os.getenv("GEMINI_API_KEY")
-    with scoped_llm_keys(openrouter_key="sk-or-runtime", gemini_key="AIza-runtime"):
+    env_beatapi = os.getenv("BEATAPI_KEY")
+    with scoped_llm_keys(openrouter_key="sk-or-runtime", gemini_key="AIza-runtime", beatapi_key="sk-beat-runtime"):
         assert get_openrouter_key() == "sk-or-runtime"
         assert get_gemini_key() == "AIza-runtime"
+        assert get_beatapi_key() == "sk-beat-runtime"
         assert os.getenv("OPENROUTER_API_KEY") == env_openrouter
         assert os.getenv("GEMINI_API_KEY") == env_gemini
+        assert os.getenv("BEATAPI_KEY") == env_beatapi
     assert os.getenv("OPENROUTER_API_KEY") == env_openrouter
     assert os.getenv("GEMINI_API_KEY") == env_gemini
+    assert os.getenv("BEATAPI_KEY") == env_beatapi
     assert get_openrouter_key() == (env_openrouter or os.getenv("OPEN_ROUTER_API_KEY") or "")
     assert get_gemini_key() == (env_gemini or "")
+    assert get_beatapi_key() == (env_beatapi or os.getenv("BEAT_API_KEY") or "")
 
 
 def test_exported_helpers_are_import_safe():
     assert callable(llm_fallback.get_usage_stats)
     assert callable(llm_fallback.reset_usage_stats)
     assert callable(get_fallback_llm)
+
+
+def test_beatapi_model_routing():
+    """BeatAPI models are initialized with base_url and openai/ prefix."""
+    mock_llm = _mock_llm("beatapi response")
+    with patch("llm_fallback.LLM", return_value=mock_llm) as mock_ctor:
+        with scoped_llm_keys(beatapi_key="test-beat-key"):
+            fallback = FallbackLLM(["beatapi/glm-5.3-flash-free"])
+            res = fallback.call([{"role": "user", "content": "hi"}])
+            assert res == "beatapi response"
+            assert mock_ctor.call_count == 1
+            assert mock_ctor.call_args.kwargs.get("model") == "openai/glm-5.3-flash-free"
+            assert mock_ctor.call_args.kwargs.get("base_url") == "https://api.beatapi.io/v1"
+            assert mock_ctor.call_args.kwargs.get("api_key") == "test-beat-key"

@@ -143,11 +143,18 @@ class PipelineRunner:
                 # Runtime-scoped credentials (never mutate os.environ globally).
                 openrouter_key = self.runtime_keys.get("openrouter")
                 gemini_key = self.runtime_keys.get("gemini")
+                beatapi_key = self.runtime_keys.get("beatapi")
                 serper_key = self.runtime_keys.get("serper")
-                if openrouter_key or gemini_key:
+                if openrouter_key or gemini_key or beatapi_key:
                     from llm_fallback import scoped_llm_keys
 
-                    stack.enter_context(scoped_llm_keys(openrouter_key=openrouter_key, gemini_key=gemini_key))
+                    stack.enter_context(
+                        scoped_llm_keys(
+                            openrouter_key=openrouter_key,
+                            gemini_key=gemini_key,
+                            beatapi_key=beatapi_key,
+                        )
+                    )
                 if serper_key:
                     from tools.search_tool import scoped_serper_key
 

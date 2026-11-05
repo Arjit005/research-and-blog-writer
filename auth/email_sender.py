@@ -1,69 +1,37 @@
-"""Email sending abstraction with secure SMTP implementation and testing fakes.
+"""Email sending abstraction with Brevo HTTPS API implementation and testing fakes.
 
 Security requirements:
-1. STARTTLS/SMTPS with strict SSL validation context (ssl.create_default_context()).
-2. Plain text + HTML multipart message.
+1. HTTPS POST to https://api.brevo.com/v3/smtp/email using TLS (port 443).
+2. Plain text + HTML multipart content.
 3. Zero links in authentication emails (prevents phishing/link redirection attacks).
-4. Error masking: Never leak SMTP server responses or credential details to users.
+4. Error masking: Never leak API keys, response payloads, or credential details to users.
 5. 10-second connect/read timeout.
+6. Does not depend on outbound SMTP ports (25, 465, 587) blocked on cloud platforms like Render.
 """
 
 from __future__ import annotations
 
-import smtplib
-import ssl
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+import logging
 from typing import List, Optional
+
+import requests
 
 from auth.config import load_auth_config
 
+logger = logging.getLogger(__name__)
 
-class EmailSender:
-    """Abstract interface for email dispatching."""
-
-    def send_otp_email(self, to_email: str, code: str, ttl_minutes: int) -> bool:
-        """Send verification code email. Returns True on success, raises RuntimeError on failure."""
-        raise NotImplementedError
+BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
 
 
-class FakeEmailSender(EmailSender):
-    """Test fake capturing sent messages in memory for unit assertions."""
-
-    def __init__(self, should_fail: bool = False):
-        self.sent_messages: List[dict] = []
-        self.should_fail = should_fail
-
-    def send_otp_email(self, to_email: str, code: str, ttl_minutes: int) -> bool:
-        if self.should_fail:
-            raise RuntimeError("Simulated SMTP delivery failure for testing.")
-        self.sent_messages.append({
-            "to": to_email,
-            "code": code,
-            "ttl_minutes": ttl_minutes,
-        })
-        return True
-
-
-class SMTPEmailSender(EmailSender):
-    """Production SMTP sender using STARTTLS/SSL with credential masking."""
-
-    def __init__(self, timeout: float = 10.0):
-        self.timeout = timeout
-
-    def send_otp_email(self, to_email: str, code: str, ttl_minutes: int) -> bool:
-        cfg = load_auth_config()
-
-        if not cfg.smtp_host:
-            raise RuntimeError("Email delivery is not configured on this server. Please contact the administrator.")
-
-        subject = "Your sign-in code"
-        plain_body = (
-            f"Your sign-in code is: {code}\n\n"
-            f"This code will expire in {ttl_minutes} minutes.\n"
-            "If you did not request this code, you can safely ignore this email.\n"
-        )
-        html_body = f"""<!DOCTYPE html>
+def _build_email_contents(code: str, ttl_minutes: int) -> tuple[str, str, str]:
+    """Generate email subject, plain text body, and styled HTML body."""
+    subject = "Your sign-in code"
+    plain_body = (
+        f"Your sign-in code is: {code}\n\n"
+        f"This code will expire in {ttl_minutes} minutes.\n"
+        "If you did not request this code, you can safely ignore this email.\n"
+    )
+    html_body = f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -89,36 +57,99 @@ class SMTPEmailSender(EmailSender):
 </body>
 </html>
 """
+    return subject, plain_body, html_body
 
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = cfg.smtp_from or "noreply@research-studio.local"
-        msg["To"] = to_email
 
-        part1 = MIMEText(plain_body, "plain", "utf-8")
-        part2 = MIMEText(html_body, "html", "utf-8")
-        msg.attach(part1)
-        msg.attach(part2)
+class EmailSender:
+    """Abstract interface for email dispatching."""
+
+    def send_otp_email(self, to_email: str, code: str, ttl_minutes: int) -> bool:
+        """Send verification code email. Returns True on success, raises RuntimeError on failure."""
+        raise NotImplementedError
+
+
+class FakeEmailSender(EmailSender):
+    """Test fake capturing sent messages in memory for unit assertions."""
+
+    def __init__(self, should_fail: bool = False):
+        self.sent_messages: List[dict] = []
+        self.should_fail = should_fail
+
+    def send_otp_email(self, to_email: str, code: str, ttl_minutes: int) -> bool:
+        if self.should_fail:
+            raise RuntimeError("Simulated email delivery failure for testing.")
+        self.sent_messages.append({
+            "to": to_email,
+            "code": code,
+            "ttl_minutes": ttl_minutes,
+        })
+        return True
+
+
+class BrevoApiEmailSender(EmailSender):
+    """Production email sender using Brevo's HTTPS REST API (api.brevo.com/v3/smtp/email)."""
+
+    def __init__(self, timeout: float = 10.0):
+        self.timeout = timeout
+
+    def send_otp_email(self, to_email: str, code: str, ttl_minutes: int) -> bool:
+        cfg = load_auth_config()
+
+        if not cfg.brevo_api_key:
+            raise RuntimeError("Email delivery is not configured on this server. Please contact the administrator.")
+
+        subject, plain_body, html_body = _build_email_contents(code, ttl_minutes)
+
+        headers = {
+            "accept": "application/json",
+            "api-key": cfg.brevo_api_key.strip(),
+            "content-type": "application/json",
+        }
+
+        payload = {
+            "sender": {
+                "name": cfg.email_sender_name or "Research & Blog Writer",
+                "email": cfg.email_sender_address or "arjit04554@gmail.com",
+            },
+            "to": [
+                {"email": to_email.strip()}
+            ],
+            "subject": subject,
+            "htmlContent": html_body,
+            "textContent": plain_body,
+        }
 
         try:
-            context = ssl.create_default_context()
-            if cfg.smtp_port == 465 or not cfg.smtp_use_tls:
-                with smtplib.SMTP_SSL(cfg.smtp_host, cfg.smtp_port, timeout=self.timeout, context=context) as server:
-                    if cfg.smtp_user and cfg.smtp_password:
-                        server.login(cfg.smtp_user, cfg.smtp_password)
-                    server.send_message(msg)
-            else:
-                with smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=self.timeout) as server:
-                    if cfg.smtp_use_tls:
-                        server.starttls(context=context)
-                    if cfg.smtp_user and cfg.smtp_password:
-                        server.login(cfg.smtp_user, cfg.smtp_password)
-                    server.send_message(msg)
+            resp = requests.post(
+                BREVO_API_URL,
+                json=payload,
+                headers=headers,
+                timeout=self.timeout,
+            )
+        except requests.exceptions.Timeout:
+            logger.error("Brevo API request timed out after %s seconds", self.timeout)
+            raise RuntimeError("Email delivery server timed out. Please try again shortly.")
+        except requests.exceptions.RequestException as exc:
+            logger.error("Brevo API request network error: %s", type(exc).__name__)
+            raise RuntimeError("Unable to communicate with email delivery server.")
+
+        # Brevo returns 201 Created on successful email dispatch
+        if resp.status_code in (200, 201):
             return True
-        except smtplib.SMTPAuthenticationError:
-            raise RuntimeError("Authentication failed with the email delivery server.")
-        except (smtplib.SMTPException, OSError) as e:
-            raise RuntimeError(f"Unable to send verification email. Please try again shortly. (Code: {type(e).__name__})")
+
+        # Error handling with credential masking
+        status = resp.status_code
+        logger.error("Brevo API delivery failed with HTTP %s", status)
+        if status == 401:
+            raise RuntimeError("Authentication failed with the email delivery service.")
+        elif status == 400:
+            raise RuntimeError("Invalid email delivery request. Please verify the recipient address.")
+        else:
+            raise RuntimeError(f"Email delivery service returned an error (HTTP {status}). Please try again shortly.")
+
+
+# Backwards compatibility alias for any existing imports
+SMTPEmailSender = BrevoApiEmailSender
 
 
 # Global active sender instance (can be swapped in unit tests)
@@ -130,7 +161,7 @@ def get_email_sender() -> EmailSender:
     global _global_sender
     if _global_sender is not None:
         return _global_sender
-    return SMTPEmailSender()
+    return BrevoApiEmailSender()
 
 
 def set_email_sender_override(sender: Optional[EmailSender]):

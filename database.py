@@ -598,7 +598,7 @@ def get_or_create_user(email: str) -> Dict[str, Any]:
         # the already-existing case).
         cursor = _exec(
             conn, is_tidb,
-            "SELECT id, email, password_hash, created_at, last_login_at, is_active FROM users WHERE email = ?",
+            "SELECT id, email, password_hash, google_id, created_at, last_login_at, is_active FROM users WHERE email = ?",
             (norm_email,),
         )
         row = cursor.fetchone()
@@ -608,7 +608,7 @@ def get_or_create_user(email: str) -> Dict[str, Any]:
 def get_user_by_id(user_id: int) -> Optional[Dict[str, Any]]:
     """Retrieve user record by user_id."""
     with get_connection() as (conn, is_tidb):
-        cursor = _exec(conn, is_tidb, "SELECT id, email, password_hash, created_at, last_login_at, is_active FROM users WHERE id = ?", (user_id,))
+        cursor = _exec(conn, is_tidb, "SELECT id, email, password_hash, google_id, created_at, last_login_at, is_active FROM users WHERE id = ?", (user_id,))
         row = cursor.fetchone()
         return _row_to_dict(row) if row else None
 
@@ -617,10 +617,163 @@ def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
     """Retrieve user record by email, or None if non-existent."""
     norm_email = email.strip().lower()
     with get_connection() as (conn, is_tidb):
-        cursor = _exec(conn, is_tidb, "SELECT id, email, password_hash, created_at, last_login_at, is_active FROM users WHERE email = ?", (norm_email,))
+        cursor = _exec(conn, is_tidb, "SELECT id, email, password_hash, google_id, created_at, last_login_at, is_active FROM users WHERE email = ?", (norm_email,))
         row = cursor.fetchone()
         return _row_to_dict(row) if row else None
 
+
+
+
+def get_user_by_google_id(google_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieve user record by Google unique subject identifier."""
+    if not google_id or not str(google_id).strip():
+        return None
+    clean_gid = str(google_id).strip()
+    with get_connection() as (conn, is_tidb):
+        cursor = _exec(
+            conn,
+            is_tidb,
+            "SELECT id, email, password_hash, google_id, created_at, last_login_at, is_active FROM users WHERE google_id = ?",
+            (clean_gid,),
+        )
+        row = cursor.fetchone()
+        return _row_to_dict(row) if row else None
+
+
+def link_user_google_id(user_id: int, google_id: str) -> Tuple[bool, str]:
+    """Atomically link a Google ID to an existing user.
+
+    Guarantees:
+    - Verifies user exists and is active.
+    - Prevents overwriting if user is already linked to a different Google ID.
+    - Prevents duplicate linking if Google ID is already linked to another user.
+    - Handles concurrent race conditions and database IntegrityError safely.
+    """
+    clean_gid = str(google_id).strip()
+    if not clean_gid or not user_id:
+        return False, "INVALID_ARGUMENTS"
+
+    try:
+        with get_connection() as (conn, is_tidb):
+            cursor = _exec(
+                conn, is_tidb,
+                "SELECT id, google_id, is_active FROM users WHERE id = ?",
+                (user_id,),
+            )
+            user_row = cursor.fetchone()
+            if not user_row:
+                return False, "USER_NOT_FOUND"
+
+            existing_gid = _get_value(user_row, is_tidb, "google_id", None)
+            if existing_gid and existing_gid != clean_gid:
+                return False, "USER_LINKED_TO_DIFFERENT_GOOGLE_ACCOUNT"
+            if existing_gid == clean_gid:
+                return True, "ALREADY_LINKED"
+
+            # Check if google_id is already claimed by another user
+            cursor = _exec(
+                conn, is_tidb,
+                "SELECT id FROM users WHERE google_id = ? AND id != ?",
+                (clean_gid, user_id),
+            )
+            if cursor.fetchone():
+                return False, "GOOGLE_ACCOUNT_ALREADY_LINKED"
+
+            if is_tidb:
+                sql = "UPDATE users SET google_id = ?, last_login_at = NOW() WHERE id = ?"
+            else:
+                sql = "UPDATE users SET google_id = ?, last_login_at = datetime('now') WHERE id = ?"
+
+            try:
+                _exec(conn, is_tidb, sql, (clean_gid, user_id))
+                return True, "LINKED_SUCCESSFULLY"
+            except Exception as exc:
+                err_text = str(exc).lower()
+                if "unique" in err_text or "duplicate" in err_text or "1062" in err_text or isinstance(exc, sqlite3.IntegrityError):
+                    logger.warning("Integrity violation during link_user_google_id: %s", exc)
+                    return False, "GOOGLE_ACCOUNT_ALREADY_LINKED"
+                raise
+    except Exception as exc:
+        err_text = str(exc).lower()
+        if "unique" in err_text or "duplicate" in err_text or "1062" in err_text or isinstance(exc, sqlite3.IntegrityError):
+            logger.warning("Integrity violation during link_user_google_id: %s", exc)
+            return False, "GOOGLE_ACCOUNT_ALREADY_LINKED"
+        logger.exception("Unexpected error in link_user_google_id")
+        return False, f"DATABASE_ERROR: {exc}"
+
+
+def create_google_user(email: str, google_id: str) -> Tuple[Optional[Dict[str, Any]], str]:
+    """Atomically create a new user authenticated via Google.
+
+    Guarantees:
+    - Normalizes email to lowercase.
+    - Handles concurrent race conditions and database IntegrityError safely.
+    - Preserves existing user accounts if collision occurs.
+    """
+    clean_email = str(email).strip().lower()
+    clean_gid = str(google_id).strip()
+    if not clean_email or not clean_gid:
+        return None, "INVALID_ARGUMENTS"
+
+    try:
+        with get_connection() as (conn, is_tidb):
+            cursor = _exec(
+                conn, is_tidb,
+                "SELECT id, email, password_hash, google_id, created_at, last_login_at, is_active FROM users WHERE email = ? OR google_id = ?",
+                (clean_email, clean_gid),
+            )
+            row = cursor.fetchone()
+            if row:
+                user_dict = _row_to_dict(row)
+                if user_dict.get("email") == clean_email and not user_dict.get("google_id"):
+                    success, reason = link_user_google_id(user_dict["id"], clean_gid)
+                    if success:
+                        user_dict["google_id"] = clean_gid
+                        return user_dict, "LINKED"
+                    return None, reason
+                elif user_dict.get("google_id") == clean_gid:
+                    if user_dict.get("email") == clean_email:
+                        return user_dict, "EXISTS"
+                    return None, "GOOGLE_ACCOUNT_ALREADY_LINKED"
+                return None, "EMAIL_ALREADY_EXISTS"
+
+            if is_tidb:
+                sql = "INSERT INTO users (email, google_id, is_active, created_at, last_login_at) VALUES (?, ?, 1, NOW(), NOW())"
+            else:
+                sql = "INSERT INTO users (email, google_id, is_active, created_at, last_login_at) VALUES (?, ?, 1, datetime('now'), datetime('now'))"
+
+            try:
+                cursor = _exec(conn, is_tidb, sql, (clean_email, clean_gid))
+                new_id = cursor.lastrowid
+                return {
+                    "id": new_id,
+                    "email": clean_email,
+                    "password_hash": None,
+                    "google_id": clean_gid,
+                    "is_active": 1,
+                }, "CREATED"
+            except Exception as exc:
+                err_text = str(exc).lower()
+                if "unique" in err_text or "duplicate" in err_text or "1062" in err_text or isinstance(exc, sqlite3.IntegrityError):
+                    logger.warning("Integrity error on concurrent create_google_user: %s", exc)
+                    cursor = _exec(
+                        conn, is_tidb,
+                        "SELECT id, email, password_hash, google_id, created_at, last_login_at, is_active FROM users WHERE email = ? OR google_id = ?",
+                        (clean_email, clean_gid),
+                    )
+                    race_row = cursor.fetchone()
+                    if race_row:
+                        winner = _row_to_dict(race_row)
+                        if winner.get("email") == clean_email and winner.get("google_id") == clean_gid:
+                            return winner, "EXISTS"
+                    return None, "CONCURRENT_COLLISION"
+                raise
+    except Exception as exc:
+        err_text = str(exc).lower()
+        if "unique" in err_text or "duplicate" in err_text or "1062" in err_text or isinstance(exc, sqlite3.IntegrityError):
+            return None, "CONCURRENT_COLLISION"
+        logger.exception("Unexpected error in create_google_user")
+        return None, f"DATABASE_ERROR: {exc}"
 
 def set_user_password(user_id: int, password_hash: str) -> None:
     """Store or update PBKDF2 hashed password for a user."""
@@ -1895,14 +2048,22 @@ def get_user_api_keys(user_id: int) -> Dict[str, str]:
     memories = get_user_memories(user_id=user_id)
     return {
         "gemini_api_key": memories.get("api_key_gemini", "") or os.getenv("GEMINI_API_KEY", ""),
+        "beatapi_key": memories.get("api_key_beatapi", "") or os.getenv("BEATAPI_KEY", "") or os.getenv("BEAT_API_KEY", ""),
         "openrouter_api_key": memories.get("api_key_openrouter", "") or os.getenv("OPENROUTER_API_KEY", "") or os.getenv("OPEN_ROUTER_API_KEY", ""),
     }
 
 
-def save_user_api_keys(user_id: int, gemini_key: Optional[str] = None, openrouter_key: Optional[str] = None):
+def save_user_api_keys(
+    user_id: int,
+    gemini_key: Optional[str] = None,
+    openrouter_key: Optional[str] = None,
+    beatapi_key: Optional[str] = None,
+):
     """Save persistent API keys for a user in user_memory."""
     if gemini_key is not None and gemini_key.strip():
         set_user_memory("api_key_gemini", gemini_key.strip(), memory_type="credential", user_id=user_id)
+    if beatapi_key is not None and beatapi_key.strip():
+        set_user_memory("api_key_beatapi", beatapi_key.strip(), memory_type="credential", user_id=user_id)
     if openrouter_key is not None and openrouter_key.strip():
         set_user_memory("api_key_openrouter", openrouter_key.strip(), memory_type="credential", user_id=user_id)
 

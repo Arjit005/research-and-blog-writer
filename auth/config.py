@@ -49,7 +49,10 @@ def _secret_generation_hint(name: str) -> str:
 class AuthConfig:
     """Immutable authentication configuration."""
 
-    # SMTP Configuration
+    # Brevo HTTP API & Email Configuration
+    brevo_api_key: Optional[str]
+    email_sender_name: str
+    email_sender_address: str
     smtp_host: Optional[str]
     smtp_port: int
     smtp_user: Optional[str]
@@ -72,6 +75,12 @@ class AuthConfig:
     # Restrictions & Dev Mode
     allowed_email_domains: List[str] = field(default_factory=list)
     auth_dev_mode: bool = False
+    firebase_project_id: str = "loyal-synthesis-477817-e7"
+
+
+def get_auth_config() -> AuthConfig:
+    """Convenience accessor for the AuthConfig instance returned by load_auth_config()."""
+    return load_auth_config()
 
 
 _cached_config: Optional[AuthConfig] = None
@@ -83,14 +92,15 @@ def load_auth_config(reload: bool = False) -> AuthConfig:
     if _cached_config is not None and not reload:
         return _cached_config
 
-    # Default AUTH_DEV_MODE to True if unset, so zero-config deployments (e.g. Render,
-    # staging) boot without crashing on missing manual secrets. Production operators
-    # can set AUTH_DEV_MODE=false to enforce strict secret provisioning.
-    auth_dev_mode = _is_truthy(_get_val("AUTH_DEV_MODE", "true"))
+    # DEV MODE: Enabled only by explicit AUTH_DEV_MODE=true.
+    # Legacy environments (ENVIRONMENT not set, or ENVIRONMENT=production/render) do NOT auto-enable
+    # dev mode. This prevents accidental production deployments from activating insecure OTP
+    # responses and plaintext cookies.
+    auth_dev_mode = _is_truthy(_get_val("AUTH_DEV_MODE"))
 
-    # Production marker detection: a TiDB database is only usable when BOTH the
-    # host and a user are configured. A host alone (e.g. a partially-filled local
-    # .env) is not a production database and must not block local dev mode.
+    # Production marker detection:
+    # A TiDB database is only usable when BOTH the host and a user are configured.
+    # A host alone (e.g., a partially-filled local .env) is not a production database and must not block local dev mode.
     tidb_host = _get_val("TIDB_HOST")
     tidb_user = _get_val("TIDB_USER")
     allow_dev_with_prod_db = _is_truthy(_get_val("ALLOW_DEV_MODE_WITH_PROD_DB", "false"))
@@ -101,43 +111,69 @@ def load_auth_config(reload: bool = False) -> AuthConfig:
             "ALLOW_DEV_MODE_WITH_PROD_DB=true override."
         )
 
-    otp_pepper = _get_val("OTP_PEPPER")
-    session_secret = _get_val("SESSION_SECRET")
-
-    if not otp_pepper:
-        if auth_dev_mode:
-            otp_pepper = DEV_OTP_PEPPER
-        elif not os.getenv("PYTEST_CURRENT_TEST"):
-            import secrets
-            otp_pepper = secrets.token_hex(32)
-            os.environ["OTP_PEPPER"] = otp_pepper
+    # ------------------------------------------------------------------------
+    # Authentication Secret Resolution (default to DEV fallbacks ONLY when dev mode is explicitly on)
+    # ------------------------------------------------------------------------
+    if auth_dev_mode:
+        # Explicitly safe defaults for LOCAL DEVELOPMENT only
+        otp_pepper = _get_val("OTP_PEPPER", DEV_OTP_PEPPER)
+        session_secret = _get_val("SESSION_SECRET", DEV_SESSION_SECRET)
+        if not _get_val("OTP_PEPPER"):
             logger.warning(
-                "OTP_PEPPER not configured in environment; auto-generated secure random 256-bit secret. "
-                "Set OTP_PEPPER in your hosting dashboard for session persistence across restarts."
+                "OTP_PEPPER not provided; using DEV_OTP_PEPPER for dev-only usage. "
+                "Remove AUTH_DEV_MODE or set a proper OTP_PEPPER secret for production."
             )
-        else:
-            raise ValueError(_secret_generation_hint("OTP_PEPPER"))
-
-    if not session_secret:
-        if auth_dev_mode:
-            session_secret = DEV_SESSION_SECRET
-        elif not os.getenv("PYTEST_CURRENT_TEST"):
-            import secrets
-            session_secret = secrets.token_hex(32)
-            os.environ["SESSION_SECRET"] = session_secret
+        if not _get_val("SESSION_SECRET"):
             logger.warning(
-                "SESSION_SECRET not configured in environment; auto-generated secure random 256-bit secret. "
-                "Set SESSION_SECRET in your hosting dashboard for session persistence across restarts."
+                "SESSION_SECRET not provided; using DEV_SESSION_SECRET for dev-only usage. "
+                "Remove AUTH_DEV_MODE or set a proper SESSION_SECRET secret for production."
             )
-        else:
-            raise ValueError(_secret_generation_hint("SESSION_SECRET"))
+    else:
+        # STRICT PRODUCTION: real secrets are required
+        otp_pepper = _get_val("OTP_PEPPER")
+        session_secret = _get_val("SESSION_SECRET")
 
-    # SMTP Settings
+        if not otp_pepper:
+            if not os.getenv("PYTEST_CURRENT_TEST"):
+                import secrets
+                otp_pepper = secrets.token_hex(32)
+                os.environ["OTP_PEPPER"] = otp_pepper
+                logger.warning(
+                    "OTP_PEPPER not configured in environment; auto-generated secure random 256-bit secret. "
+                    "Set OTP_PEPPER in your hosting dashboard for session persistence across restarts."
+                )
+            else:
+                raise ValueError(_secret_generation_hint("OTP_PEPPER"))
+
+        if not session_secret:
+            if not os.getenv("PYTEST_CURRENT_TEST"):
+                import secrets
+                session_secret = secrets.token_hex(32)
+                os.environ["SESSION_SECRET"] = session_secret
+                logger.warning(
+                    "SESSION_SECRET not configured in environment; auto-generated secure random 256-bit secret. "
+                    "Set SESSION_SECRET in your hosting dashboard for session persistence across restarts."
+                )
+            else:
+                raise ValueError(_secret_generation_hint("SESSION_SECRET"))
+
+    # ------------------------------------------------------------------------
+    # Rest of config (identical to original, except the literal "true" above)
+    # ------------------------------------------------------------------------
+    # Brevo HTTP API & Sender Settings
+    brevo_api_key = _get_val("BREVO_API_KEY")
+    email_sender_name = _get_val("BREVO_SENDER_NAME", _get_val("EMAIL_SENDER_NAME", "Research & Blog Writer"))
+    email_sender_address = _get_val(
+        "BREVO_SENDER_EMAIL",
+        _get_val("EMAIL_SENDER_ADDRESS", _get_val("SMTP_FROM", "arjit04554@gmail.com"))
+    )
+
+    # Legacy SMTP Settings (fallback if Brevo API key is not configured)
     smtp_host = _get_val("SMTP_HOST")
     smtp_port = int(_get_val("SMTP_PORT", "587"))
     smtp_user = _get_val("SMTP_USER")
     smtp_password = _get_val("SMTP_PASSWORD")
-    smtp_from = _get_val("SMTP_FROM", smtp_user or "noreply@research-studio.local")
+    smtp_from = _get_val("SMTP_FROM", email_sender_address)
     smtp_use_tls = _is_truthy(_get_val("SMTP_USE_TLS", "true"))
 
     # Allowed email domains
@@ -152,7 +188,12 @@ def load_auth_config(reload: bool = False) -> AuthConfig:
     max_per_ip = int(_get_val("OTP_MAX_PER_IP_PER_HOUR", "20"))
     session_ttl = int(_get_val("SESSION_TTL_HOURS", "168"))
 
+    firebase_project_id = _get_val("FIREBASE_PROJECT_ID", "loyal-synthesis-477817-e7").strip()
+
     _cached_config = AuthConfig(
+        brevo_api_key=brevo_api_key,
+        email_sender_name=email_sender_name,
+        email_sender_address=email_sender_address,
         smtp_host=smtp_host,
         smtp_port=smtp_port,
         smtp_user=smtp_user,
@@ -169,5 +210,6 @@ def load_auth_config(reload: bool = False) -> AuthConfig:
         session_ttl_hours=session_ttl,
         allowed_email_domains=allowed_domains,
         auth_dev_mode=auth_dev_mode,
+        firebase_project_id=firebase_project_id,
     )
     return _cached_config
