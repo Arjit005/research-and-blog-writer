@@ -471,12 +471,22 @@ def _ensure_column_exists(conn: Any, is_tidb: bool, table: str, col: str, col_ty
         res = cursor.fetchone()
         cnt = res["cnt"] if isinstance(res, dict) else res[0]
         if cnt == 0:
-            cursor.execute(f"ALTER TABLE `{safe_table}` ADD COLUMN `{safe_col}` {safe_type}")
+            try:
+                cursor.execute(f"ALTER TABLE `{safe_table}` ADD COLUMN `{safe_col}` {safe_type}")
+                logger.info("Added column %s.%s (%s) to TiDB.", safe_table, safe_col, safe_type)
+            except Exception as exc:
+                logger.error("Failed to add column %s.%s to TiDB: %s", safe_table, safe_col, exc)
+                raise
     else:
         cursor = conn.execute(f"PRAGMA table_info({safe_table})")
         existing_cols = [row[1] for row in cursor.fetchall()]
         if safe_col not in existing_cols:
-            conn.execute(f"ALTER TABLE {safe_table} ADD COLUMN {safe_col} {safe_type}")
+            try:
+                conn.execute(f"ALTER TABLE {safe_table} ADD COLUMN {safe_col} {safe_type}")
+                logger.info("Added column %s.%s (%s) to SQLite.", safe_table, safe_col, safe_type)
+            except Exception as exc:
+                logger.error("Failed to add column %s.%s to SQLite: %s", safe_table, safe_col, exc)
+                raise
 
 
 def _ensure_job_event_unique_index(conn: Any, is_tidb: bool) -> None:
@@ -537,6 +547,59 @@ def _ensure_job_event_unique_index(conn: Any, is_tidb: bool) -> None:
         logger.warning("Job event unique-index migration skipped: %s", exc)
 
 
+def _ensure_users_google_id_unique_index(conn: Any, is_tidb: bool) -> None:
+    """Idempotently ensure a unique index exists on users(google_id) across TiDB and SQLite.
+
+    TiDB rejects inline UNIQUE constraints during ALTER TABLE ADD COLUMN on existing tables.
+    Instead, google_id is added as a nullable column, and this helper checks information_schema.STATISTICS
+    for an existing index on google_id. If missing, it adds `uk_users_google_id`.
+    For SQLite, it ensures `idx_users_google_id` partial index is created.
+    """
+    if is_tidb:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME
+            FROM information_schema.STATISTICS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'
+            ORDER BY INDEX_NAME, SEQ_IN_INDEX
+            """
+        )
+        indexes: Dict[str, Dict[str, Any]] = {}
+        for row in cursor.fetchall():
+            name = row["INDEX_NAME"] if isinstance(row, dict) else row[0]
+            non_unique = row["NON_UNIQUE"] if isinstance(row, dict) else row[1]
+            column = row["COLUMN_NAME"] if isinstance(row, dict) else row[3]
+            entry = indexes.setdefault(name, {"non_unique": non_unique, "columns": []})
+            entry["columns"].append(column)
+
+        # Check if any unique index covers (google_id,) exclusively
+        has_unique_gid = any(
+            (entry["non_unique"] == 0 or entry["non_unique"] is False) and entry["columns"] == ["google_id"]
+            for entry in indexes.values()
+        )
+        if has_unique_gid:
+            return
+
+        try:
+            cursor.execute("ALTER TABLE `users` ADD UNIQUE KEY `uk_users_google_id` (`google_id`)")
+            logger.info("Created unique index uk_users_google_id on users(google_id) in TiDB.")
+        except Exception as exc:
+            err_str = str(exc)
+            if "1061" in err_str or "Duplicate key name" in err_str:
+                return
+            logger.error("Failed to create unique index uk_users_google_id on users(google_id): %s", exc)
+            raise
+    else:
+        try:
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL"
+            )
+        except Exception as exc:
+            logger.error("Failed to create unique index idx_users_google_id on users(google_id) in SQLite: %s", exc)
+            raise
+
+
 def init_db():
     """Initialize database schemas and apply idempotent migrations on TiDB Cloud or SQLite.
 
@@ -555,6 +618,8 @@ def init_db():
             for table, col, tidb_type, _sqlite_type in MIGRATION_COLUMNS:
                 _ensure_column_exists(conn, is_tidb, table, col, tidb_type)
 
+            _ensure_users_google_id_unique_index(conn, is_tidb)
+
         else:
             # SQLite: execute all CREATE TABLE statements individually then indexes
             for ddl in build_sqlite_ddl():
@@ -569,6 +634,8 @@ def init_db():
             # Idempotent column migrations for pre-existing databases
             for table, col, _tidb_type, sqlite_type in MIGRATION_COLUMNS:
                 _ensure_column_exists(conn, is_tidb, table, col, sqlite_type)
+
+            _ensure_users_google_id_unique_index(conn, is_tidb)
 
         _ensure_job_event_unique_index(conn, is_tidb)
 
@@ -629,15 +696,36 @@ def get_user_by_google_id(google_id: str) -> Optional[Dict[str, Any]]:
     if not google_id or not str(google_id).strip():
         return None
     clean_gid = str(google_id).strip()
-    with get_connection() as (conn, is_tidb):
-        cursor = _exec(
-            conn,
-            is_tidb,
-            "SELECT id, email, password_hash, google_id, created_at, last_login_at, is_active FROM users WHERE google_id = ?",
-            (clean_gid,),
-        )
-        row = cursor.fetchone()
-        return _row_to_dict(row) if row else None
+    try:
+        with get_connection() as (conn, is_tidb):
+            cursor = _exec(
+                conn,
+                is_tidb,
+                "SELECT id, email, password_hash, google_id, created_at, last_login_at, is_active FROM users WHERE google_id = ?",
+                (clean_gid,),
+            )
+            row = cursor.fetchone()
+            return _row_to_dict(row) if row else None
+    except Exception as exc:
+        err_str = str(exc).lower()
+        if "1054" in err_str or "unknown column" in err_str or "no such column" in err_str:
+            logger.warning("google_id column not present in users table; attempting automatic self-healing migration: %s", exc)
+            try:
+                init_db()
+                with get_connection() as (conn, is_tidb):
+                    cursor = _exec(
+                        conn,
+                        is_tidb,
+                        "SELECT id, email, password_hash, google_id, created_at, last_login_at, is_active FROM users WHERE google_id = ?",
+                        (clean_gid,),
+                    )
+                    row = cursor.fetchone()
+                    return _row_to_dict(row) if row else None
+            except Exception as retry_exc:
+                logger.error("Failed to recover from missing google_id column: %s", retry_exc)
+                return None
+        logger.exception("Unexpected error in get_user_by_google_id")
+        raise
 
 
 def link_user_google_id(user_id: int, google_id: str) -> Tuple[bool, str]:

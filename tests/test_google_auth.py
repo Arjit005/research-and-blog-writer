@@ -217,6 +217,91 @@ class TestDatabaseGoogleIdSafety:
         # TiDB DDL must define google_id exactly once
         assert tidb_ddl.count("google_id") == 1
 
+    def test_migration_columns_definition(self):
+        """Ensure MIGRATION_COLUMNS defines google_id as plain VARCHAR(255) NULL without inline UNIQUE."""
+        gid_col = [col for col in db_schema.MIGRATION_COLUMNS if col[0] == "users" and col[1] == "google_id"][0]
+        assert gid_col[2] == "VARCHAR(255) NULL"
+        assert gid_col[3] == "TEXT NULL"
+
+    def test_migration_scenarios_sqlite(self):
+        """Test SQLite migration behavior across column/index existence and repeated runs."""
+        import sqlite3
+        conn = sqlite3.connect(":memory:")
+        # 1. Start with bare users table (missing column, missing index)
+        conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT UNIQUE)")
+        db._ensure_column_exists(conn, False, "users", "google_id", "TEXT NULL")
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
+        assert "google_id" in cols
+
+        # 2. Add index (existing column, missing index)
+        db._ensure_users_google_id_unique_index(conn, False)
+        indexes = [r[1] for r in conn.execute("PRAGMA index_list(users)").fetchall()]
+        assert "idx_users_google_id" in indexes
+
+        # 3. Repeated execution is completely idempotent
+        db._ensure_column_exists(conn, False, "users", "google_id", "TEXT NULL")
+        db._ensure_users_google_id_unique_index(conn, False)
+        indexes_after = [r[1] for r in conn.execute("PRAGMA index_list(users)").fetchall()]
+        assert indexes_after.count("idx_users_google_id") == 1
+
+    def test_migration_scenarios_tidb_mock(self):
+        """Test TiDB migration logic across all 4 scenarios using mock cursor."""
+        from unittest.mock import MagicMock
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+
+        # Scenario 1: Missing column & missing index
+        mock_cursor.fetchone.return_value = {"cnt": 0}
+        mock_cursor.fetchall.return_value = []
+        db._ensure_column_exists(mock_conn, True, "users", "google_id", "VARCHAR(255) NULL")
+        mock_cursor.execute.assert_called_with("ALTER TABLE `users` ADD COLUMN `google_id` VARCHAR(255) NULL")
+
+        mock_cursor.execute.reset_mock()
+        mock_cursor.fetchall.return_value = []
+        db._ensure_users_google_id_unique_index(mock_conn, True)
+        mock_cursor.execute.assert_called_with("ALTER TABLE `users` ADD UNIQUE KEY `uk_users_google_id` (`google_id`)")
+
+        # Scenario 2: Existing column but missing index
+        mock_cursor.execute.reset_mock()
+        mock_cursor.fetchone.return_value = {"cnt": 1}
+        mock_cursor.fetchall.return_value = []
+        db._ensure_column_exists(mock_conn, True, "users", "google_id", "VARCHAR(255) NULL")
+        # Column ALTER should not be executed since cnt == 1
+        assert not any("ADD COLUMN `google_id`" in str(call) for call in mock_cursor.execute.mock_calls)
+
+        db._ensure_users_google_id_unique_index(mock_conn, True)
+        assert any("ADD UNIQUE KEY `uk_users_google_id`" in str(call) for call in mock_cursor.execute.mock_calls)
+
+        # Scenario 3: Existing column and existing unique index
+        mock_cursor.execute.reset_mock()
+        mock_cursor.fetchone.return_value = {"cnt": 1}
+        mock_cursor.fetchall.return_value = [
+            {"INDEX_NAME": "uk_users_google_id", "NON_UNIQUE": 0, "SEQ_IN_INDEX": 1, "COLUMN_NAME": "google_id"}
+        ]
+        db._ensure_column_exists(mock_conn, True, "users", "google_id", "VARCHAR(255) NULL")
+        db._ensure_users_google_id_unique_index(mock_conn, True)
+        # Neither ALTER TABLE should be called
+        assert not any("ALTER TABLE" in str(call) for call in mock_cursor.execute.mock_calls)
+
+        # Scenario 3b: Composite unique index containing google_id (e.g. email, google_id) must NOT satisfy exclusive requirement
+        mock_cursor.execute.reset_mock()
+        mock_cursor.fetchall.return_value = [
+            {"INDEX_NAME": "uk_composite", "NON_UNIQUE": 0, "SEQ_IN_INDEX": 1, "COLUMN_NAME": "email"},
+            {"INDEX_NAME": "uk_composite", "NON_UNIQUE": 0, "SEQ_IN_INDEX": 2, "COLUMN_NAME": "google_id"},
+        ]
+        db._ensure_users_google_id_unique_index(mock_conn, True)
+        assert any("ADD UNIQUE KEY `uk_users_google_id`" in str(call) for call in mock_cursor.execute.mock_calls)
+
+        # Scenario 4: Repeated migration execution (when uk_users_google_id is already present)
+        mock_cursor.execute.reset_mock()
+        mock_cursor.fetchall.return_value = [
+            {"INDEX_NAME": "uk_users_google_id", "NON_UNIQUE": 0, "SEQ_IN_INDEX": 1, "COLUMN_NAME": "google_id"}
+        ]
+        db._ensure_column_exists(mock_conn, True, "users", "google_id", "VARCHAR(255) NULL")
+        db._ensure_users_google_id_unique_index(mock_conn, True)
+        assert not any("ALTER TABLE" in str(call) for call in mock_cursor.execute.mock_calls)
+
     def test_link_user_google_id_atomic(self):
         email = _unique_email("link_atomic")
         u = db.get_or_create_user(email)

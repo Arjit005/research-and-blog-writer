@@ -558,7 +558,7 @@ MIGRATION_COLUMNS: List[Tuple[str, str, str, str]] = [
     ("article_revisions",   "user_id",      "INT NULL",          "INTEGER"),
     ("research_jobs",       "trace_url",    "VARCHAR(512) NULL", "TEXT"),
     ("users",               "password_hash","VARCHAR(255) NULL", "TEXT"),
-    ("users",               "google_id",    "VARCHAR(255) NULL UNIQUE", "TEXT NULL"),
+    ("users",               "google_id",    "VARCHAR(255) NULL", "TEXT NULL"),
 ]
 
 
