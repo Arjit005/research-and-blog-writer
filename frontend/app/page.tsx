@@ -96,6 +96,7 @@ export default function Home() {
   // Active run state
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [activeTopic, setActiveTopic] = useState("");
+  const [streamingDraft, setStreamingDraft] = useState<string>("");
   const [runLogs, setRunLogs] = useState<SquadLog[]>([]);
   const [runStage, setRunStage] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -174,6 +175,7 @@ export default function Home() {
       const articleId = asNumber(data.article_id);
       setActiveRunId(null);
       activeRunIdRef.current = null;
+      setStreamingDraft("");
       clearStoredRun();
       closeStream();
 
@@ -238,6 +240,7 @@ export default function Home() {
       activeRunIdRef.current = runId;
       setActiveRunId(runId);
       setActiveTopic(runTopic);
+      setStreamingDraft("");
       setSelectedArticle(null);
       selectedArticleRef.current = null;
       setRunStage(1);
@@ -259,6 +262,11 @@ export default function Home() {
                 timestamp: asNumber(event.data.timestamp),
               },
             ]);
+          } else if (event.type === "token") {
+            const delta = asString(event.data.delta);
+            if (delta) {
+              setStreamingDraft((prev) => prev + delta);
+            }
           } else if (event.type === "task_done") {
             const completedStage = asNumber(event.data.completed_stage) ?? 0;
             if (completedStage === 1) {
@@ -577,6 +585,12 @@ export default function Home() {
               generationTime={selectedArticle.generation_time_sec}
               onOpenCopilot={() => setIsCopilotOpen(true)}
               onOpenVersionHistory={() => setIsCopilotOpen(true)}
+            />
+          ) : activeRunId && streamingDraft.trim() ? (
+            <ArticleViewer
+              topic={activeTopic}
+              content={streamingDraft}
+              isStreaming={true}
             />
           ) : activeRunId ? (
             <div className="flex-1 flex flex-col items-center justify-center p-12 border border-slate-800/80 rounded-3xl bg-slate-900/30 text-center min-h-[480px]">

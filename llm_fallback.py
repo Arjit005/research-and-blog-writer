@@ -170,6 +170,29 @@ BEATAPI_FREE_MODELS = [
 ]
 
 
+def _provider_name_for_model(model_name: str) -> str:
+    """Return a human-readable provider name for log messages."""
+    if model_name.startswith("gemini/"):
+        return "Google Gemini"
+    if model_name.startswith("beatapi/"):
+        return "BeatAPI"
+    if model_name.startswith("openrouter/"):
+        return "OpenRouter"
+    return "Custom Provider"
+
+
+def _sanitize_log_message(msg: str) -> str:
+    """Ensure no API keys or token credentials leak in logs."""
+    for key_fn in (get_openrouter_key, get_gemini_key, get_beatapi_key):
+        val = key_fn()
+        if val and len(val) >= 6:
+            msg = msg.replace(val, "[REDACTED_API_KEY]")
+    # Also catch generic bearer / sk- / AIza keys
+    msg = re.sub(r"(AIza[0-9A-Za-z-_]{35})", "[REDACTED_API_KEY]", msg)
+    msg = re.sub(r"(sk-[a-zA-Z0-9_-]{20,})", "[REDACTED_API_KEY]", msg)
+    return msg
+
+
 def get_available_model_sequence() -> List[str]:
     """Build the fallback sequence, prioritizing Gemini first, then BeatAPI, then OpenRouter."""
     seq: List[str] = []
@@ -540,6 +563,9 @@ class FallbackLLM(BaseLLM):
             max_tokens = getattr(self, "max_tokens", None)
             if max_tokens is not None:
                 init_kwargs["max_tokens"] = max_tokens
+            stream = getattr(self, "stream", None)
+            if stream is not None:
+                init_kwargs["stream"] = stream
             try:
                 inst = LLM(model=inst_model, **init_kwargs)
             except TypeError:
@@ -550,8 +576,30 @@ class FallbackLLM(BaseLLM):
 
     @staticmethod
     def _is_openrouter_daily_quota(error: BaseException) -> bool:
+        """Distinguish OpenRouter daily quota exhaustion from temporary rate limits.
+
+        Daily quota indicators:
+        - "free-models-per-day", "per day", "daily", "daily limit", "daily rate limit"
+        - "quota exceeded", "quota reached", "insufficient_quota"
+        - "free model limit reached", "limit reached", "out of credits", "insufficient credits"
+        """
         text = str(error).lower()
-        return "free-models-per-day" in text or "per day" in text or "daily" in text
+        daily_markers = (
+            "free-models-per-day",
+            "per day",
+            "daily",
+            "daily limit",
+            "daily rate limit",
+            "free model limit reached",
+            "limit reached",
+            "quota exceeded",
+            "quota_exceeded",
+            "insufficient_quota",
+            "out of credits",
+            "insufficient credits",
+            "credit limit",
+        )
+        return any(marker in text for marker in daily_markers)
 
     @staticmethod
     def _next_attemptable(models: List[str], start_index: int, skip_openrouter: bool) -> Optional[str]:
@@ -620,23 +668,40 @@ class FallbackLLM(BaseLLM):
                 if next_model:
                     _track_fallback(model_name, next_model, error_type)
 
-                logger.warning(
-                    "[FallbackLLM] model '%s' failed (%s: %s). %s",
-                    model_name,
-                    error_type,
-                    error,
-                    f"Falling back to '{next_model}'..." if next_model else "No candidates remain.",
-                )
-                if daily_quota and next_model:
+                curr_provider = _provider_name_for_model(model_name)
+                next_provider = _provider_name_for_model(next_model) if next_model else "None"
+                safe_err_text = _sanitize_log_message(str(error))
+
+                if daily_quota:
                     logger.warning(
-                        "[FallbackLLM] OpenRouter daily free quota hit; skipping remaining "
-                        "OpenRouter candidates."
+                        "[FallbackLLM] %s daily quota exhausted on model '%s' (%s). "
+                        "Immediately skipping all remaining %s models. Switching to %s (model: '%s').",
+                        curr_provider,
+                        model_name,
+                        safe_err_text,
+                        curr_provider,
+                        next_provider,
+                        next_model or "none",
+                    )
+                else:
+                    logger.warning(
+                        "[FallbackLLM] %s model '%s' failed (%s: %s). %s",
+                        curr_provider,
+                        model_name,
+                        error_type,
+                        safe_err_text,
+                        f"Falling back to {next_provider} (model: '{next_model}')..." if next_model else "No candidates remain.",
                     )
 
                 if next_model:
                     delay = 0.0 if daily_quota else _backoff_delay(attempt_index, error)
                     if delay > 0:
-                        logger.warning("[FallbackLLM] backing off for %.2fs before next attempt", delay)
+                        logger.warning(
+                            "[FallbackLLM] Backing off for %.2fs before retrying with %s (model: '%s').",
+                            delay,
+                            next_provider,
+                            next_model,
+                        )
                         time.sleep(delay)
                 else:
                     break

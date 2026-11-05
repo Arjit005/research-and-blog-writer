@@ -241,3 +241,122 @@ def test_beatapi_model_routing():
             assert mock_ctor.call_args.kwargs.get("model") == "openai/glm-5.3-flash-free"
             assert mock_ctor.call_args.kwargs.get("base_url") == "https://api.beatapi.io/v1"
             assert mock_ctor.call_args.kwargs.get("api_key") == "test-beat-key"
+
+
+def test_openrouter_daily_quota_skips_to_gemini():
+    """Daily quota exhaustion (e.g. 50 req/day) skips remaining OpenRouter models directly to Gemini."""
+    models = [
+        "openrouter/model-a:free",
+        "openrouter/model-b:free",
+        "gemini/gemini-2.5-flash",
+    ]
+    mock_or_a = _mock_llm(side_effect=RuntimeError("Provider returned 429: Free model limit reached (50 requests per day)"))
+    mock_or_b = _mock_llm(side_effect=RuntimeError("Should be skipped"))
+    mock_gemini = _mock_llm("Gemini response after OpenRouter quota exhausted")
+
+    def _llm_factory(model, **kwargs):
+        if "model-a" in model:
+            return mock_or_a
+        if "model-b" in model:
+            return mock_or_b
+        return mock_gemini
+
+    with patch("llm_fallback.LLM", side_effect=_llm_factory):
+        with scoped_llm_keys(openrouter_key="test-or-key", gemini_key="test-gemini-key"):
+            fallback = FallbackLLM(models)
+            res = fallback.call([{"role": "user", "content": "hi"}])
+            assert res == "Gemini response after OpenRouter quota exhausted"
+            assert mock_or_a.call.call_count == 1
+            assert mock_or_b.call.call_count == 0  # Crucial: skipped!
+            assert mock_gemini.call.call_count == 1
+
+
+def test_openrouter_temporary_429_retries_and_backs_off(monkeypatch):
+    """Temporary 429 without daily quota indicators retries the next candidate with backoff."""
+    monkeypatch.setenv("LLM_BACKOFF_BASE_SECONDS", "1.0")
+    models = [
+        "openrouter/model-a:free",
+        "openrouter/model-b:free",
+    ]
+    mock_or_a = _mock_llm(side_effect=RuntimeError("429 Too Many Requests: concurrency limit 2"))
+    mock_or_b = _mock_llm("Model B succeeded")
+
+    def _llm_factory(model, **kwargs):
+        if "model-a" in model:
+            return mock_or_a
+        return mock_or_b
+
+    with patch("llm_fallback.LLM", side_effect=_llm_factory):
+        with patch("llm_fallback.time.sleep") as mock_sleep:
+            with scoped_llm_keys(openrouter_key="test-or-key"):
+                fallback = FallbackLLM(models)
+                res = fallback.call([{"role": "user", "content": "hi"}])
+                assert res == "Model B succeeded"
+                assert mock_or_a.call.call_count == 1
+                assert mock_or_b.call.call_count == 1  # Not skipped!
+                # Backoff was invoked for temporary rate limit
+                assert mock_sleep.call_count >= 1
+                assert mock_sleep.call_args[0][0] >= 1.0
+
+
+def test_fallback_sequence_gemini_to_beatapi():
+    """If Gemini fails, fallback proceeds to BeatAPI."""
+    models = [
+        "gemini/gemini-2.5-flash",
+        "beatapi/glm-5.3-flash-free",
+    ]
+    mock_gemini = _mock_llm(side_effect=RuntimeError("Google Gemini 503 Service Unavailable"))
+    mock_beatapi = _mock_llm("BeatAPI response")
+
+    def _llm_factory(model, **kwargs):
+        if "gemini" in model:
+            return mock_gemini
+        return mock_beatapi
+
+    with patch("llm_fallback.LLM", side_effect=_llm_factory):
+        with scoped_llm_keys(gemini_key="test-gemini-key", beatapi_key="test-beat-key"):
+            fallback = FallbackLLM(models)
+            res = fallback.call([{"role": "user", "content": "hi"}])
+            assert res == "BeatAPI response"
+            assert mock_gemini.call.call_count == 1
+            assert mock_beatapi.call.call_count == 1
+
+
+def test_no_keys_configured_fails_fast():
+    """When no keys are configured, default fallback chain fails fast with informative error."""
+    with patch("llm_fallback.get_openrouter_key", return_value=""):
+        with patch("llm_fallback.get_gemini_key", return_value=""):
+            with patch("llm_fallback.get_beatapi_key", return_value=""):
+                fallback = FallbackLLM()
+                with pytest.raises(RuntimeError, match="No LLM API key configured"):
+                    fallback.call([{"role": "user", "content": "hi"}])
+
+
+def test_secret_safe_logging(caplog):
+    """Logs must never contain actual API keys or secret tokens."""
+    import logging
+    secret_or = "sk-or-v1-abcdef1234567890abcdef1234567890"
+    secret_gemini = "AIzaSyD-Secret1234567890abcdef1234567"
+
+    models = ["openrouter/model-a:free", "gemini/model-g"]
+    mock_a = _mock_llm(side_effect=RuntimeError(f"OpenRouter 429 quota error: key {secret_or} exceeded free-models-per-day"))
+    mock_g = _mock_llm("Success from Gemini")
+
+    def _llm_factory(model, **kwargs):
+        if "model-a" in model:
+            return mock_a
+        return mock_g
+
+    with caplog.at_level(logging.WARNING):
+        with patch("llm_fallback.LLM", side_effect=_llm_factory):
+            with scoped_llm_keys(openrouter_key=secret_or, gemini_key=secret_gemini):
+                fallback = FallbackLLM(models)
+                res = fallback.call([{"role": "user", "content": "hi"}])
+                assert res == "Success from Gemini"
+
+    # Verify no log record contains the actual secret keys
+    all_logs = " ".join([rec.message for rec in caplog.records])
+    assert secret_or not in all_logs
+    assert secret_gemini not in all_logs
+    assert "[REDACTED_API_KEY]" in all_logs
+

@@ -84,7 +84,7 @@ export class ResumableSSEClient {
     };
 
     // Listen to standard named events
-    const eventNames = ["run_start", "status", "step", "task_done", "completed", "error", "cancelled"];
+    const eventNames = ["run_start", "status", "step", "task_done", "token", "completed", "error", "cancelled"];
     eventNames.forEach((name) => {
       es.addEventListener(name, (ev: Event) => handleMessage(name, ev as MessageEvent));
     });

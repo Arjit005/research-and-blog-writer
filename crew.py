@@ -188,7 +188,11 @@ class ResearchAndBlogWriter:
                 "to deliver a transformative, top-tier reading experience. You never invent image URLs "
                 "or fabricate external figures: diagrams are authored as Mermaid code only."
             ),
-            llm=get_fallback_llm(temperature=WRITER_LLM_SETTINGS["temperature"], max_tokens=WRITER_LLM_SETTINGS["max_tokens"]),
+            llm=get_fallback_llm(
+                temperature=WRITER_LLM_SETTINGS["temperature"],
+                max_tokens=WRITER_LLM_SETTINGS["max_tokens"],
+                stream=True,
+            ),
             tools=[],
             verbose=False,
             allow_delegation=False,

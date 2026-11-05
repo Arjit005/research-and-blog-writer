@@ -27,6 +27,7 @@ interface ArticleViewerProps {
   content: string;
   wordCount?: number;
   generationTime?: number;
+  isStreaming?: boolean;
   onOpenCopilot?: () => void;
   onOpenVersionHistory?: () => void;
 }
@@ -67,6 +68,7 @@ export function ArticleViewer({
   content,
   wordCount,
   generationTime,
+  isStreaming,
   onOpenCopilot,
   onOpenVersionHistory,
 }: ArticleViewerProps) {
@@ -343,10 +345,17 @@ export function ArticleViewer({
             <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
             <span>{calculatedWords.toLocaleString()} words</span>
           </span>
-          <span className="flex items-center gap-1.5 px-3 py-1 bg-slate-900 border border-slate-800/80 rounded-xl text-xs font-medium text-slate-300">
-            <Clock className="w-3.5 h-3.5 text-emerald-400" />
-            <span>{readingTimeMin} min read</span>
-          </span>
+          {isStreaming ? (
+            <span className="flex items-center gap-1.5 px-3 py-1 bg-emerald-950/60 border border-emerald-500/40 rounded-xl text-xs font-medium text-emerald-300 animate-pulse">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+              <span>Streaming Draft Live...</span>
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5 px-3 py-1 bg-slate-900 border border-slate-800/80 rounded-xl text-xs font-medium text-slate-300">
+              <Clock className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{readingTimeMin} min read</span>
+            </span>
+          )}
           {generationTime && (
             <span className="hidden sm:flex items-center gap-1 px-3 py-1 bg-slate-900/60 border border-slate-800/50 rounded-xl text-xs text-slate-400">
               <span>Gen: {generationTime}s</span>
@@ -501,6 +510,14 @@ export function ArticleViewer({
           >
             {content}
           </ReactMarkdown>
+
+          {/* Live Streaming Indicator Cursor */}
+          {isStreaming && (
+            <div className="mt-4 flex items-center gap-2 text-indigo-400 font-mono text-sm select-none">
+              <span className="inline-block w-2.5 h-5 bg-indigo-400 animate-pulse rounded-sm" />
+              <span className="text-xs text-slate-400 italic">Blog Writer drafting token-by-token...</span>
+            </div>
+          )}
 
           {/* End of article citation summary card */}
           {citations.length > 0 && (

@@ -9,7 +9,7 @@ import uuid
 import asyncio
 import logging
 import threading
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request, status
 from fastapi.responses import StreamingResponse
@@ -26,6 +26,44 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/runs", tags=["Research Runs"])
 
 _CANCELLATION_EVENTS: Dict[str, threading.Event] = {}
+
+# Active in-memory token broadcasting channels for live token-by-token streaming.
+# Mapping: run_id -> set of asyncio.Queue instances (one queue per active SSE client).
+_RUN_TOKEN_LISTENERS: Dict[str, Set[asyncio.Queue]] = {}
+_RUN_TOKEN_LOCK = threading.Lock()
+
+
+def register_token_listener(run_id: str, q: asyncio.Queue) -> None:
+    with _RUN_TOKEN_LOCK:
+        if run_id not in _RUN_TOKEN_LISTENERS:
+            _RUN_TOKEN_LISTENERS[run_id] = set()
+        _RUN_TOKEN_LISTENERS[run_id].add(q)
+
+
+def unregister_token_listener(run_id: str, q: asyncio.Queue) -> None:
+    with _RUN_TOKEN_LOCK:
+        listeners = _RUN_TOKEN_LISTENERS.get(run_id)
+        if listeners:
+            listeners.discard(q)
+            if not listeners:
+                _RUN_TOKEN_LISTENERS.pop(run_id, None)
+
+
+def broadcast_run_token(run_id: str, chunk: str) -> None:
+    """Thread-safe non-blocking broadcast of a token chunk to all active SSE listeners."""
+    with _RUN_TOKEN_LOCK:
+        listeners = list(_RUN_TOKEN_LISTENERS.get(run_id, []))
+    for q in listeners:
+        try:
+            q.put_nowait(chunk)
+        except Exception:
+            # Drop chunk if consumer queue is overflowing or closed
+            pass
+
+
+def cleanup_run_tokens(run_id: str) -> None:
+    with _RUN_TOKEN_LOCK:
+        _RUN_TOKEN_LISTENERS.pop(run_id, None)
 
 # Event types that close an SSE stream (only after they have been delivered).
 _TERMINAL_EVENT_TYPES = frozenset({"completed", "error", "cancelled"})
@@ -308,14 +346,40 @@ def _execute_run_worker(
         u_openrouter = user_keys.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY")
 
         from llm_fallback import scoped_llm_keys
+        
+        # Subscribe to crewai stream chunk events for Blog Writer to stream drafts in real time
+        from crewai.events.event_bus import crewai_event_bus
+        from crewai.events.types.llm_events import LLMStreamChunkEvent
 
-        with scoped_llm_keys(openrouter_key=u_openrouter, gemini_key=u_gemini, beatapi_key=u_beatapi):
-            start_time = time.time()
-            _reset_llm_usage_stats()
-            crew_instance = ResearchAndBlogWriter()
-            crew_obj = crew_instance.crew(step_callback=on_step, task_callback=on_task)
-            result = crew_obj.kickoff(inputs={"topic": safe_topic})
-            usage_stats = _get_llm_usage_stats()
+        def _on_llm_chunk(source: Any, event: Any) -> None:
+            if _job_is_cancelled(run_id, cancel_event):
+                return
+            # Strict requirement 4: Stream only the Blog Writer's draft content initially.
+            # Do not mix Researcher, Diagram Architect, and Editorial Director internal outputs into the article.
+            agent_role = str(getattr(event, "agent_role", "") or "").lower()
+            if not agent_role:
+                from_agent = getattr(event, "from_agent", None)
+                agent_role = str(getattr(from_agent, "role", "") or "").lower()
+            if "writer" in agent_role or "author" in agent_role or "blog" in agent_role:
+                chunk_str = str(getattr(event, "chunk", "") or "")
+                if chunk_str:
+                    broadcast_run_token(run_id, chunk_str)
+
+        crewai_event_bus.register_handler(LLMStreamChunkEvent, _on_llm_chunk)
+
+        try:
+            with scoped_llm_keys(openrouter_key=u_openrouter, gemini_key=u_gemini, beatapi_key=u_beatapi):
+                start_time = time.time()
+                _reset_llm_usage_stats()
+                crew_instance = ResearchAndBlogWriter()
+                crew_obj = crew_instance.crew(step_callback=on_step, task_callback=on_task)
+                result = crew_obj.kickoff(inputs={"topic": safe_topic})
+                usage_stats = _get_llm_usage_stats()
+        finally:
+            try:
+                crewai_event_bus.off(LLMStreamChunkEvent, _on_llm_chunk)
+            except Exception:
+                pass
 
         # Check if cancelled while kickoff was executing
         if _job_is_cancelled(run_id, cancel_event):
@@ -405,6 +469,7 @@ def _execute_run_worker(
         db.update_research_job(run_id, status="failed", error_message=safe_error)
     finally:
         _CANCELLATION_EVENTS.pop(run_id, None)
+        cleanup_run_tokens(run_id)
 
 
 @router.post("", response_model=RunResponse)
@@ -506,62 +571,83 @@ async def stream_run_events(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research run not found.")
 
     start_seq = int(last_event_id) if last_event_id and last_event_id.isdigit() else (after_seq or 0)
+    token_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1000)
+    register_token_listener(run_id, token_queue)
 
     async def event_generator():
         current_seq = start_seq
         last_heartbeat = time.time()
         terminal_status_polls = 0
 
-        while True:
-            if await request.is_disconnected():
-                break
-
-            # 1 query on the hot path: fetch any new events.
-            events = await asyncio.to_thread(db.get_job_events, run_id, current_seq)
-            if events:
-                terminal_event_seen = False
-                for ev in events:
-                    seq_id = ev["seq_id"]
-                    ev_type = ev["event_type"]
-                    payload = json.dumps(ev["payload"]) if not isinstance(ev["payload"], str) else ev["payload"]
-                    yield f"id: {seq_id}\nevent: {ev_type}\ndata: {payload}\n\n"
-                    current_seq = max(current_seq, seq_id)
-                    if ev_type in _TERMINAL_EVENT_TYPES:
-                        terminal_event_seen = True
-                last_heartbeat = time.time()
-                if terminal_event_seen:
-                    # Terminal event delivered: safe to close the stream.
+        try:
+            while True:
+                if await request.is_disconnected():
                     break
-            else:
-                # Idle: only now pay for a status query (single query per iteration).
-                j = await asyncio.to_thread(db.get_research_job, run_id)
-                if j and j.get("status") in _TERMINAL_JOB_STATUSES:
-                    # Ordering guarantee makes the terminal event durable before the
-                    # status flip; flush once more, then close (small grace for the
-                    # cancel/worker race where a status write may precede the event).
-                    more = await asyncio.to_thread(db.get_job_events, run_id, current_seq)
-                    if not more and terminal_status_polls >= 2:
-                        break
-                    terminal_status_polls += 1
-                    if more:
-                        for ev in more:
-                            seq_id = ev["seq_id"]
-                            ev_type = ev["event_type"]
-                            payload = json.dumps(ev["payload"]) if not isinstance(ev["payload"], str) else ev["payload"]
-                            yield f"id: {seq_id}\nevent: {ev_type}\ndata: {payload}\n\n"
-                            current_seq = max(current_seq, seq_id)
+
+                # 1. Drain any pending live tokens immediately with zero DB delay
+                token_emitted = False
+                while not token_queue.empty():
+                    try:
+                        chunk = token_queue.get_nowait()
+                        token_payload = json.dumps({"delta": chunk})
+                        yield f"event: token\ndata: {token_payload}\n\n"
+                        token_emitted = True
                         last_heartbeat = time.time()
-                    await asyncio.sleep(0.1)
-                    continue
+                    except asyncio.QueueEmpty:
+                        break
+
+                # 2. Check for sequenced durable job events in DB
+                events = await asyncio.to_thread(db.get_job_events, run_id, current_seq)
+                if events:
+                    terminal_event_seen = False
+                    for ev in events:
+                        seq_id = ev["seq_id"]
+                        ev_type = ev["event_type"]
+                        payload = json.dumps(ev["payload"]) if not isinstance(ev["payload"], str) else ev["payload"]
+                        yield f"id: {seq_id}\nevent: {ev_type}\ndata: {payload}\n\n"
+                        current_seq = max(current_seq, seq_id)
+                        if ev_type in _TERMINAL_EVENT_TYPES:
+                            terminal_event_seen = True
+                    last_heartbeat = time.time()
+                    if terminal_event_seen:
+                        # Terminal event delivered: safe to close the stream.
+                        break
                 else:
-                    terminal_status_polls = 0
+                    # Idle: only now pay for a status query (single query per iteration).
+                    j = await asyncio.to_thread(db.get_research_job, run_id)
+                    if j and j.get("status") in _TERMINAL_JOB_STATUSES:
+                        # Ordering guarantee makes the terminal event durable before the
+                        # status flip; flush once more, then close (small grace for the
+                        # cancel/worker race where a status write may precede the event).
+                        more = await asyncio.to_thread(db.get_job_events, run_id, current_seq)
+                        if not more and terminal_status_polls >= 2:
+                            break
+                        terminal_status_polls += 1
+                        if more:
+                            for ev in more:
+                                seq_id = ev["seq_id"]
+                                ev_type = ev["event_type"]
+                                payload = json.dumps(ev["payload"]) if not isinstance(ev["payload"], str) else ev["payload"]
+                                yield f"id: {seq_id}\nevent: {ev_type}\ndata: {payload}\n\n"
+                                current_seq = max(current_seq, seq_id)
+                            last_heartbeat = time.time()
+                        await asyncio.sleep(0.05)
+                        continue
+                    else:
+                        terminal_status_polls = 0
 
-            # Heartbeat to keep connection alive
-            if time.time() - last_heartbeat >= 15:
-                yield ": ping\n\n"
-                last_heartbeat = time.time()
+                # Heartbeat to keep connection alive
+                if time.time() - last_heartbeat >= 15:
+                    yield ": ping\n\n"
+                    last_heartbeat = time.time()
 
-            await asyncio.sleep(0.5)
+                # If tokens are rapidly arriving, check queue immediately; otherwise yield to event loop briefly
+                if token_emitted:
+                    await asyncio.sleep(0.02)
+                else:
+                    await asyncio.sleep(0.2)
+        finally:
+            unregister_token_listener(run_id, token_queue)
 
     return StreamingResponse(
         event_generator(),
