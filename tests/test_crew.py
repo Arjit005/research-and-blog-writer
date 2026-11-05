@@ -53,8 +53,10 @@ def test_crew_structure():
     assert "{topic}" in task2.description
     assert "{topic}" in task3.description
     assert "{topic}" in task4.description
-    assert task1.async_execution is True
+    assert task1.async_execution is False
     assert task2.async_execution is True
+    assert task3.async_execution is True
+    assert task4.async_execution is False
     assert task4.output_file == "report.md"
 
 

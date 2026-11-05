@@ -195,7 +195,7 @@ TABLE_DEFINITIONS: List[Tuple[str, str, str]] = [
         "system_cache",
         """
         CREATE TABLE IF NOT EXISTS system_cache (
-            cache_key  VARCHAR(64) PRIMARY KEY,
+            cache_key  VARCHAR(128) PRIMARY KEY,
             namespace  VARCHAR(32) NOT NULL,
             payload    LONGTEXT NOT NULL,
             meta_info  JSON NULL,

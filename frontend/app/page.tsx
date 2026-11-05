@@ -11,30 +11,22 @@ import {
 } from "@/lib/api";
 import { ResumableSSEClient, SSEPayload } from "@/lib/sse";
 import { AuthDialog } from "@/components/auth-dialog";
-import { LiveStepper } from "@/components/live-stepper";
 import { ArticleViewer } from "@/components/article-viewer";
+import { LeftSidebar } from "@/components/left-sidebar";
+import { AICommandCenter, SquadLog } from "@/components/ai-command-center";
 import { CopilotDrawer } from "@/components/copilot-drawer";
 import { ApiKeysDialog } from "@/components/api-keys-dialog";
 import {
   Sparkles,
   BookOpen,
-  SlidersHorizontal,
-  ChevronDown,
   Database,
   LogOut,
   UserCheck,
   Key,
+  Menu,
+  Cpu,
 } from "lucide-react";
 
-const PRESET_TOPICS = [
-  "Autonomous Multi-Agent AI Systems: 2026 Architecture",
-  "Quantum Computing Advancements in Post-RSA Cryptography",
-  "High-Throughput Event-Driven Microservices in Rust & Go",
-  "Zero-Knowledge Proofs in Enterprise Cloud Security",
-];
-
-// Persisted so a page refresh mid-run reattaches to the existing backend job
-// instead of letting the UI dead-end (the backend enforces one active run/user).
 const ACTIVE_RUN_STORAGE_KEY = "research-studio:active-run";
 
 interface StoredRun {
@@ -100,17 +92,21 @@ export default function Home() {
   const [tone, setTone] = useState("Professional & Authoritative");
   const [audience, setAudience] = useState("Software Engineers & Developers");
   const [targetLength, setTargetLength] = useState("Standard Blog (1,500 - 2,000 words)");
-  const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Active run state
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [activeTopic, setActiveTopic] = useState("");
-  const [runLogs, setRunLogs] = useState<Array<{ type: string; detail?: string; timestamp?: number }>>([]);
+  const [runLogs, setRunLogs] = useState<SquadLog[]>([]);
   const [runStage, setRunStage] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   const [activeTraceUrl, setActiveTraceUrl] = useState<string | null>(null);
   const [isApiKeysOpen, setIsApiKeysOpen] = useState(false);
+
+  // Responsive Drawer & Panels
+  const [isLeftCollapsed, setIsLeftCollapsed] = useState(false);
+  const [isRightCollapsed, setIsRightCollapsed] = useState(false);
+  const [mobileDrawer, setMobileDrawer] = useState<"none" | "left" | "right">("none");
 
   // Copilot Drawer
   const [isCopilotOpen, setIsCopilotOpen] = useState(false);
@@ -189,10 +185,6 @@ export default function Home() {
     [closeStream, loadArticles, loadArticleDetail]
   );
 
-  /**
-   * Reconcile through GET /runs/{id} when the SSE stream errors or exhausts its
-   * reconnect budget: the job may have finished while the socket was down.
-   */
   const handleStreamError = useCallback(
     async (error: Error) => {
       setRunError(error.message);
@@ -225,10 +217,8 @@ export default function Home() {
           return;
         }
 
-        // Still running/pending server-side: keep the stepper usable (Cancel works)
-        // and tell the truth instead of pretending the run is dead.
         setRunError(
-          `${error.message} The server still reports this run as "${status.status}" — wait for it, or cancel and start again.`
+          `${error.message} The server still reports this run as "${status.status}".`
         );
       } catch (err) {
         console.error("Run state reconciliation failed:", err);
@@ -262,18 +252,49 @@ export default function Home() {
           if (event.type === "step") {
             setRunLogs((prev) => [
               ...prev,
-              { type: "step", detail: asString(event.data.detail), timestamp: asNumber(event.data.timestamp) },
+              {
+                type: "step",
+                detail: asString(event.data.detail),
+                agent: event.data.agent ? asString(event.data.agent) : undefined,
+                timestamp: asNumber(event.data.timestamp),
+              },
             ]);
           } else if (event.type === "task_done") {
-            setRunStage((current) => Math.min(current + 1, 4));
+            const completedStage = asNumber(event.data.completed_stage) ?? 0;
+            if (completedStage === 1) {
+              // Lead Researcher done -> Stage 2 (Parallel Writer & Diagram Architect)
+              setRunStage(2);
+            } else if (completedStage === 2) {
+              // First parallel agent done -> Still in Stage 2 (awaiting partner)
+              setRunStage(2);
+            } else if (completedStage === 3) {
+              // BOTH parallel agents completed -> Advance to Stage 4 (Editorial Director)
+              setRunStage(4);
+            } else if (completedStage >= 4) {
+              setRunStage(4);
+            } else {
+              setRunStage((current) => Math.min(current + 1, 4));
+            }
+            const agentName = event.data.agent ? asString(event.data.agent) : "";
+            const msg = event.data.message ? asString(event.data.message) : "Stage finished";
+            const dur = event.data.duration_sec ? (" (" + event.data.duration_sec + "s)") : "";
             setRunLogs((prev) => [
               ...prev,
-              { type: "stage_complete", detail: "Stage finished", timestamp: asNumber(event.data.timestamp) },
+              {
+                type: "stage_complete",
+                detail: msg + dur,
+                agent: agentName || undefined,
+                timestamp: asNumber(event.data.timestamp),
+              },
             ]);
           } else if (event.type === "status") {
             setRunLogs((prev) => [
               ...prev,
-              { type: "status", detail: asString(event.data.stage), timestamp: Date.now() },
+              {
+                type: "status",
+                detail: asString(event.data.stage) || asString(event.data.status),
+                timestamp: Date.now() / 1000,
+              },
             ]);
           }
         },
@@ -313,13 +334,12 @@ export default function Home() {
       }
       clearStoredRun();
     } catch (err) {
-      // 404 (deleted run / different user) or transient auth issue: drop the pointer.
       console.error("Could not reattach to stored research run:", err);
       clearStoredRun();
     }
   }, [attachToRun, handleRunCompleted]);
 
-  // Boot: restore session, then reconcile any run persisted before a refresh.
+  // Boot
   useEffect(() => {
     let cancelled = false;
 
@@ -354,6 +374,7 @@ export default function Home() {
     }
 
     setIsSubmitting(true);
+    setRunError(null);
     try {
       const runRes = await api.createRun({
         topic: topic.trim(),
@@ -362,6 +383,8 @@ export default function Home() {
         target_length: targetLength,
       });
       attachToRun(runRes.run_id, runRes.topic);
+      // Close mobile drawer on start
+      setMobileDrawer("none");
     } catch (err) {
       setRunError(errorMessage(err, "Failed to start run."));
     } finally {
@@ -405,27 +428,39 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500/30">
-      {/* 1. Studio Header */}
-      <header className="sticky top-0 z-40 w-full border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md px-6 py-4 flex items-center justify-between">
+      {/* 1. SaaS Enterprise Header */}
+      <header className="sticky top-0 z-40 w-full border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md px-4 sm:px-6 py-3.5 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-gradient-to-tr from-indigo-600 to-violet-600 rounded-xl shadow-lg shadow-indigo-500/20">
+          {/* Mobile drawer toggle buttons */}
+          <button
+            type="button"
+            onClick={() => setMobileDrawer(mobileDrawer === "left" ? "none" : "left")}
+            className="lg:hidden p-2 bg-slate-900 border border-slate-800 text-slate-300 rounded-xl"
+            title="Toggle Research Library"
+          >
+            <Menu className="w-4 h-4" />
+          </button>
+
+          <div className="p-2 bg-gradient-to-tr from-indigo-600 to-violet-600 rounded-xl shadow-lg shadow-indigo-500/20">
             <Sparkles className="w-5 h-5 text-white" aria-hidden="true" />
           </div>
           <div>
-            <h1 className="text-base font-bold tracking-tight text-white flex items-center gap-2">
-              Research & Visual Blog Studio
+            <h1 className="text-sm md:text-base font-bold tracking-tight text-white flex items-center gap-2">
+              Research Studio
               <span className="px-2 py-0.5 text-[10px] uppercase font-mono font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-md">
-                Next.js 16 · FastAPI
+                Workspace
               </span>
             </h1>
-            <p className="text-xs text-slate-400">Autonomous 4-Agent Research Squad & Native Mermaid Canvas</p>
+            <p className="text-[11px] text-slate-400 hidden sm:block">
+              Autonomous 4-Agent Research Squad & Mermaid Visual Canvas
+            </p>
           </div>
         </div>
 
-        {/* System & User Badges */}
-        <div className="flex items-center gap-3">
+        {/* System telemetry & Auth badges */}
+        <div className="flex items-center gap-2 sm:gap-3">
           {systemStats && (
-            <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-xs text-slate-300">
+            <div className="hidden xl:flex items-center gap-2 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-xs text-slate-300">
               <Database className="w-3.5 h-3.5 text-indigo-400" aria-hidden="true" />
               <span>{databaseBackend ? databaseBackend.toUpperCase() : "DB"}</span>
               <span className="text-slate-600">|</span>
@@ -445,11 +480,26 @@ export default function Home() {
             <span className="hidden sm:inline">API Keys</span>
           </button>
 
+          {/* Mobile Right drawer toggle */}
+          <button
+            type="button"
+            onClick={() => setMobileDrawer(mobileDrawer === "right" ? "none" : "right")}
+            className="lg:hidden p-2 bg-slate-900 border border-slate-800 text-slate-300 rounded-xl relative"
+            title="Toggle AI Command Center"
+          >
+            <Cpu className="w-4 h-4 text-indigo-400" />
+            {activeRunId && (
+              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+            )}
+          </button>
+
           {user ? (
-            <div className="flex items-center gap-2 pl-2">
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-xs">
+            <div className="flex items-center gap-2 pl-1 sm:pl-2">
+              <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-xs">
                 <UserCheck className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
-                <span className="text-slate-300 font-medium">{user.email}</span>
+                <span className="text-slate-300 font-medium truncate max-w-[140px] md:max-w-none">
+                  {user.email}
+                </span>
               </div>
               <button
                 type="button"
@@ -465,7 +515,7 @@ export default function Home() {
             <button
               type="button"
               onClick={() => setIsAuthOpen(true)}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold transition shadow-md shadow-indigo-600/20"
+              className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold transition shadow-md shadow-indigo-600/20"
             >
               Sign In
             </button>
@@ -473,206 +523,50 @@ export default function Home() {
         </div>
       </header>
 
-      {/* 2. Main Studio Workspace Layout */}
-      <div className="flex-1 flex flex-col lg:flex-row w-full max-w-[1600px] mx-auto p-4 md:p-8 gap-8">
-        {/* Left Column: Prompt Input & Articles Library */}
-        <div className="w-full lg:w-96 shrink-0 flex flex-col gap-6">
-          {/* Research Prompt Composer Box */}
-          <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 shadow-xl backdrop-blur-sm">
-            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 mb-3 flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-indigo-400" aria-hidden="true" />
-              Commission AI Squad
-            </h2>
-
-            <form onSubmit={handleStartRun} className="space-y-4">
-              <div>
-                <label htmlFor="research-topic" className="sr-only">
-                  Research topic
-                </label>
-                <textarea
-                  id="research-topic"
-                  required
-                  rows={3}
-                  placeholder="Enter research topic, target domain, or prompt brief…"
-                  value={topic}
-                  onChange={(event) => setTopic(event.target.value)}
-                  className="w-full p-3.5 bg-slate-950 border border-slate-800 rounded-2xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-200 resize-none placeholder:text-slate-500"
-                />
-              </div>
-
-              {/* Quick Presets */}
-              <div>
-                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">
-                  Suggested Topics
-                </span>
-                <div className="flex flex-col gap-1.5">
-                  {PRESET_TOPICS.map((preset, idx) => (
-                    <button
-                      key={idx}
-                      type="button"
-                      onClick={() => setTopic(preset)}
-                      className="text-left px-2.5 py-1.5 bg-slate-950 hover:bg-slate-800/80 text-slate-300 hover:text-white rounded-lg text-xs truncate transition border border-slate-800/60"
-                    >
-                      {preset}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Advanced Controls Toggle */}
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setShowAdvanced(!showAdvanced)}
-                  aria-expanded={showAdvanced}
-                  className="flex items-center justify-between w-full py-1.5 text-xs text-slate-400 hover:text-slate-200 transition"
-                >
-                  <span className="flex items-center gap-1.5 font-medium">
-                    <SlidersHorizontal className="w-3.5 h-3.5" aria-hidden="true" />
-                    Tone & Audience Options
-                  </span>
-                  <ChevronDown
-                    className={`w-3.5 h-3.5 transition-transform ${showAdvanced ? "rotate-180" : ""}`}
-                    aria-hidden="true"
-                  />
-                </button>
-
-                {showAdvanced && (
-                  <div className="pt-3 space-y-3 border-t border-slate-800 mt-2">
-                    <div>
-                      <label htmlFor="tone-select" className="block text-[11px] text-slate-400 mb-1">
-                        Tone of Voice
-                      </label>
-                      <select
-                        id="tone-select"
-                        value={tone}
-                        onChange={(event) => setTone(event.target.value)}
-                        className="w-full p-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200"
-                      >
-                        <option>Professional & Authoritative</option>
-                        <option>Engaging & Accessible</option>
-                        <option>Academic & Rigorous</option>
-                        <option>Executive Brief</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label htmlFor="audience-select" className="block text-[11px] text-slate-400 mb-1">
-                        Target Audience
-                      </label>
-                      <select
-                        id="audience-select"
-                        value={audience}
-                        onChange={(event) => setAudience(event.target.value)}
-                        className="w-full p-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200"
-                      >
-                        <option>Software Engineers & Developers</option>
-                        <option>CTOs & Tech Leaders</option>
-                        <option>Product Managers</option>
-                        <option>General Tech Enthusiasts</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label htmlFor="target-length-select" className="block text-[11px] text-slate-400 mb-1">
-                        Target Length
-                      </label>
-                      <select
-                        id="target-length-select"
-                        value={targetLength}
-                        onChange={(event) => setTargetLength(event.target.value)}
-                        className="w-full p-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200"
-                      >
-                        <option>Quick Brief (800 - 1,200 words)</option>
-                        <option>Standard Blog (1,500 - 2,000 words)</option>
-                        <option>Deep Dive (2,500 - 3,500 words)</option>
-                      </select>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <button
-                type="submit"
-                disabled={isSubmitting || !!activeRunId || !topic.trim()}
-                className="w-full py-3 px-4 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:opacity-50 text-white font-semibold rounded-2xl text-xs transition shadow-lg shadow-indigo-600/20 flex items-center justify-center gap-2"
-              >
-                <Sparkles className="w-4 h-4" aria-hidden="true" />
-                {isSubmitting ? "Launching Squad…" : "Launch Research Squad"}
-              </button>
-            </form>
-
-            {runError && (
-              <div
-                role="alert"
-                className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-xs text-red-400 space-y-2"
-              >
-                <div>{runError}</div>
-                {(runError.includes("429") ||
-                  runError.toLowerCase().includes("rate limit") ||
-                  runError.includes("free-models-per-day")) && (
-                  <button
-                    type="button"
-                    onClick={() => setIsApiKeysOpen(true)}
-                    className="w-full py-2 px-3 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-medium rounded-lg text-xs transition flex items-center justify-center gap-1.5 shadow-sm"
-                  >
-                    <span>✨ Configure Free Gemini Key (1,500 req/day)</span>
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Past Articles Library */}
-          <div className="bg-slate-900/60 border border-slate-800 rounded-3xl p-6 shadow-xl backdrop-blur-sm flex-1 flex flex-col">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-                <BookOpen className="w-3.5 h-3.5 text-indigo-400" aria-hidden="true" />
-                Your Articles Library ({articles.length})
-              </h3>
-            </div>
-
-            <div className="space-y-2 overflow-y-auto max-h-96 pr-1 divide-y divide-slate-800/40">
-              {articles.map((article) => (
-                <button
-                  key={article.id}
-                  type="button"
-                  onClick={() => void loadArticleDetail(article.id)}
-                  aria-pressed={selectedArticle?.id === article.id}
-                  className={`w-full text-left pt-2 cursor-pointer p-3 rounded-xl transition ${
-                    selectedArticle?.id === article.id
-                      ? "bg-indigo-950/40 border border-indigo-500/40 text-slate-100"
-                      : "hover:bg-slate-800/40 text-slate-300"
-                  }`}
-                >
-                  <h4 className="text-xs font-semibold line-clamp-1 mb-1">{article.topic}</h4>
-                  <div className="flex items-center gap-2 text-[10px] text-slate-500">
-                    <span>{article.word_count.toLocaleString()} words</span>
-                    <span>&bull;</span>
-                    <span>{article.created_at}</span>
-                  </div>
-                </button>
-              ))}
-              {articles.length === 0 && (
-                <div className="p-8 text-center text-xs text-slate-500 italic">
-                  No articles generated yet. Launch your first research squad above!
-                </div>
-              )}
-            </div>
-          </div>
+      {/* 2. Responsive 3-Panel Workspace */}
+      <main className="flex-1 flex w-full max-w-[1920px] mx-auto p-3 sm:p-5 md:p-6 gap-6 overflow-hidden">
+        {/* Panel A: Left Sidebar (Desktop) */}
+        <div className="hidden lg:flex shrink-0">
+          <LeftSidebar
+            topic={topic}
+            setTopic={setTopic}
+            tone={tone}
+            setTone={setTone}
+            audience={audience}
+            setAudience={setAudience}
+            targetLength={targetLength}
+            setTargetLength={setTargetLength}
+            isSubmitting={isSubmitting}
+            activeRunId={activeRunId}
+            onSubmit={handleStartRun}
+            articles={articles}
+            selectedArticleId={selectedArticle?.id ?? null}
+            onSelectArticle={(id) => void loadArticleDetail(id)}
+            isCollapsed={isLeftCollapsed}
+            onToggleCollapse={() => setIsLeftCollapsed(!isLeftCollapsed)}
+          />
         </div>
 
-        {/* Right Column: Active Live Stepper OR Article Reader */}
-        <div className="flex-1 min-w-0 flex flex-col gap-6">
-          {activeRunId && (
-            <LiveStepper
-              runId={activeRunId}
-              topic={activeTopic}
-              onCancel={() => void handleCancelRun()}
-              logs={runLogs}
-              stage={runStage}
-              traceUrl={activeTraceUrl}
-            />
+        {/* Panel B: Center Professional Article Editor & Workspace */}
+        <div className="flex-1 min-w-0 flex flex-col gap-6 overflow-y-auto pr-1">
+          {runError && (
+            <div
+              role="alert"
+              className="p-3.5 bg-red-500/10 border border-red-500/30 rounded-2xl text-xs text-red-400 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg"
+            >
+              <div>{runError}</div>
+              {(runError.includes("429") ||
+                runError.toLowerCase().includes("rate limit") ||
+                runError.includes("free-models-per-day")) && (
+                <button
+                  type="button"
+                  onClick={() => setIsApiKeysOpen(true)}
+                  className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-medium rounded-xl text-xs transition"
+                >
+                  Configure Free Gemini Key (1,500 req/day)
+                </button>
+              )}
+            </div>
           )}
 
           {selectedArticle ? (
@@ -682,22 +576,141 @@ export default function Home() {
               wordCount={selectedArticle.word_count}
               generationTime={selectedArticle.generation_time_sec}
               onOpenCopilot={() => setIsCopilotOpen(true)}
+              onOpenVersionHistory={() => setIsCopilotOpen(true)}
             />
-          ) : !activeRunId ? (
-            <div className="flex-1 flex flex-col items-center justify-center p-12 border border-slate-800/80 rounded-3xl bg-slate-900/30 text-center min-h-[450px]">
+          ) : activeRunId ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-12 border border-slate-800/80 rounded-3xl bg-slate-900/30 text-center min-h-[480px]">
+              <div className="p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl mb-4 text-indigo-400 animate-pulse">
+                <Cpu className="w-8 h-8" />
+              </div>
+              <h3 className="text-base font-bold text-slate-100 mb-1">
+                AI Squad Pipeline in Progress
+              </h3>
+              <p className="text-xs text-slate-400 max-w-md mb-4">
+                Researching <strong className="text-slate-200">&ldquo;{activeTopic}&rdquo;</strong>. Watch real-time
+                agent telemetry and diagram synthesis in the Command Center.
+              </p>
+              <div className="flex items-center gap-2 text-xs font-mono text-slate-500">
+                <span>Stage {runStage}/4 Active</span>
+                <span>&bull;</span>
+                <span>{runLogs.length} events logged</span>
+              </div>
+            </div>
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center p-12 border border-slate-800/80 rounded-3xl bg-slate-900/30 text-center min-h-[480px]">
               <div className="p-4 bg-slate-800/50 rounded-2xl mb-4 text-indigo-400">
                 <BookOpen className="w-8 h-8" aria-hidden="true" />
               </div>
               <h3 className="text-base font-bold text-slate-200 mb-1">No Article Selected</h3>
-              <p className="text-xs text-slate-400 max-w-sm">
-                Select an existing article from the library on the left, or launch a new multi-agent research run.
+              <p className="text-xs text-slate-400 max-w-sm mb-6">
+                Select an existing article from the library, or launch a new multi-agent research run to
+                generate a publication-ready blog post with Mermaid diagrams.
               </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setTopic("Autonomous Multi-Agent AI Systems: 2026 Architecture");
+                }}
+                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded-xl text-xs text-indigo-300 font-medium transition"
+              >
+                Load Suggested Topic
+              </button>
             </div>
-          ) : null}
+          )}
         </div>
-      </div>
 
-      {/* 3. Copilot Drawer */}
+        {/* Panel C: Right AI Command Center (Desktop) */}
+        <div className="hidden lg:flex shrink-0">
+          <AICommandCenter
+            runId={activeRunId}
+            topic={activeTopic}
+            stage={runStage}
+            logs={runLogs}
+            onCancel={() => void handleCancelRun()}
+            traceUrl={activeTraceUrl}
+            isCollapsed={isRightCollapsed}
+            onToggleCollapse={() => setIsRightCollapsed(!isRightCollapsed)}
+            articleSummary={{
+              wordCount: selectedArticle?.word_count,
+              generationTime: selectedArticle?.generation_time_sec,
+            }}
+          />
+        </div>
+      </main>
+
+      {/* 3. Mobile Drawers */}
+      {mobileDrawer === "left" && (
+        <div className="lg:hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex">
+          <div className="w-full max-w-xs bg-slate-900 p-4 border-r border-slate-800 overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <span className="text-xs font-bold uppercase text-slate-300">Workspace Library</span>
+              <button
+                type="button"
+                onClick={() => setMobileDrawer("none")}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg bg-slate-800"
+              >
+                ✕
+              </button>
+            </div>
+            <LeftSidebar
+              topic={topic}
+              setTopic={setTopic}
+              tone={tone}
+              setTone={setTone}
+              audience={audience}
+              setAudience={setAudience}
+              targetLength={targetLength}
+              setTargetLength={setTargetLength}
+              isSubmitting={isSubmitting}
+              activeRunId={activeRunId}
+              onSubmit={handleStartRun}
+              articles={articles}
+              selectedArticleId={selectedArticle?.id ?? null}
+              onSelectArticle={(id) => {
+                void loadArticleDetail(id);
+                setMobileDrawer("none");
+              }}
+              isCollapsed={false}
+              onToggleCollapse={() => setMobileDrawer("none")}
+            />
+          </div>
+          <div className="flex-1" onClick={() => setMobileDrawer("none")} />
+        </div>
+      )}
+
+      {mobileDrawer === "right" && (
+        <div className="lg:hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex justify-end">
+          <div className="flex-1" onClick={() => setMobileDrawer("none")} />
+          <div className="w-full max-w-sm bg-slate-900 p-4 border-l border-slate-800 overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <span className="text-xs font-bold uppercase text-slate-300">Command Center</span>
+              <button
+                type="button"
+                onClick={() => setMobileDrawer("none")}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg bg-slate-800"
+              >
+                ✕
+              </button>
+            </div>
+            <AICommandCenter
+              runId={activeRunId}
+              topic={activeTopic}
+              stage={runStage}
+              logs={runLogs}
+              onCancel={() => void handleCancelRun()}
+              traceUrl={activeTraceUrl}
+              isCollapsed={false}
+              onToggleCollapse={() => setMobileDrawer("none")}
+              articleSummary={{
+                wordCount: selectedArticle?.word_count,
+                generationTime: selectedArticle?.generation_time_sec,
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* 4. Copilot Drawer */}
       {selectedArticle && (
         <CopilotDrawer
           isOpen={isCopilotOpen}
@@ -708,7 +721,7 @@ export default function Home() {
         />
       )}
 
-      {/* 4. Passwordless Auth Modal */}
+      {/* 5. Authentication Dialog (Protected & Unmodified) */}
       <AuthDialog
         isOpen={isAuthOpen}
         onSuccess={(authenticatedUser) => {
@@ -721,7 +734,7 @@ export default function Home() {
         onClose={() => setIsAuthOpen(false)}
       />
 
-      {/* 5. API Keys Configuration Modal */}
+      {/* 6. API Keys Configuration Modal */}
       <ApiKeysDialog
         isOpen={isApiKeysOpen}
         onClose={() => setIsApiKeysOpen(false)}

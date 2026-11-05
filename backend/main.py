@@ -155,16 +155,6 @@ def _origin_is_allowed(candidate: str, host_header: Optional[str]) -> bool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Validate configuration, initialize schema, and recover interrupted jobs."""
-    # Auto-generate secure runtime secrets on live deployments (e.g. Render) if operator has not set them
-    if not os.getenv("PYTEST_CURRENT_TEST"):
-        import secrets
-        if not os.getenv("OTP_PEPPER"):
-            os.environ["OTP_PEPPER"] = secrets.token_hex(32)
-            logger.warning("OTP_PEPPER missing from environment; auto-generated secure random 256-bit runtime secret.")
-        if not os.getenv("SESSION_SECRET"):
-            os.environ["SESSION_SECRET"] = secrets.token_hex(32)
-            logger.warning("SESSION_SECRET missing from environment; auto-generated secure random 256-bit runtime secret.")
-
     # 1. Fail fast on insecure/incomplete authentication configuration instead of
     #    letting the first request crash mid-login.
     try:

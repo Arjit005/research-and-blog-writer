@@ -195,9 +195,19 @@ def _execute_run_worker(
             if _job_is_cancelled(run_id, cancel_event):
                 raise InterruptedError("Research run was cancelled by user.")
 
+        stage_lock = threading.Lock()
+        completed_tasks_count = 0
+        stage_start_times: Dict[str, float] = {"stage_1": time.time()}
+
         def on_step(step_output: Any) -> None:
             _raise_if_cancelled()
             detail = ""
+            agent_role = ""
+            if hasattr(step_output, "agent"):
+                agent_role = str(getattr(step_output.agent, "role", ""))
+            elif hasattr(step_output, "agent_role"):
+                agent_role = str(getattr(step_output, "agent_role", ""))
+
             if hasattr(step_output, "tool"):
                 tool_name = getattr(step_output, "tool", "Tool")
                 tool_input = str(getattr(step_output, "tool_input", ""))[:60]
@@ -208,18 +218,88 @@ def _execute_run_worker(
                 detail = step_output.strip()[:80]
 
             if detail:
-                # SSE step details are user-visible: mask PII/secrets before storing.
-                safe_detail = mask_pii_and_secrets(detail)[:100]
-                db.append_job_event(run_id, "step", {"detail": safe_detail, "timestamp": time.time()})
+                safe_detail = mask_pii_and_secrets(detail)[:120]
+                now_ts = time.time()
+                payload = {
+                    "detail": safe_detail,
+                    "agent": agent_role or "Agent",
+                    "timestamp": now_ts,
+                }
+                db.append_job_event(run_id, "step", payload)
 
         def on_task(task_output: Any) -> None:
             _raise_if_cancelled()
-            nonlocal current_stage_idx
-            db.append_job_event(run_id, "task_done", {"timestamp": time.time()})
-            tracer.end_span(f"stage_{current_stage_idx}")
-            current_stage_idx += 1
-            if current_stage_idx < len(stage_names):
-                tracer.start_span(f"stage_{current_stage_idx}", f"CrewAI Stage: {stage_names[current_stage_idx]}", run_type="chain")
+            nonlocal completed_tasks_count
+            now_ts = time.time()
+
+            # Identify which task finished
+            task_agent_role = ""
+            if hasattr(task_output, "agent"):
+                task_agent_role = str(getattr(task_output.agent, "role", str(task_output.agent)))
+
+            with stage_lock:
+                completed_tasks_count += 1
+                completed_now = completed_tasks_count
+
+                if completed_now == 1:
+                    # Stage 1 (Lead Researcher) completed.
+                    s1_start = stage_start_times.get("stage_1", now_ts)
+                    s1_dur = round(now_ts - s1_start, 2)
+                    tracer.end_span("stage_0")
+                    # Parallel Stage 2 begins for both Diagram Architect and Technical Writer
+                    stage_start_times["stage_2_parallel"] = now_ts
+                    tracer.start_span("stage_1_parallel", "CrewAI Parallel Stage: Writer & Diagram Architect", run_type="chain")
+                    db.append_job_event(run_id, "task_done", {
+                        "completed_stage": 1,
+                        "agent": task_agent_role or "Senior Researcher",
+                        "duration_sec": s1_dur,
+                        "timestamp": now_ts,
+                        "parallel": False,
+                        "message": "Lead Research complete. Parallel generation underway.",
+                    })
+
+                elif completed_now == 2:
+                    # First of the two parallel agents finished
+                    p_start = stage_start_times.get("stage_2_parallel", now_ts)
+                    p_dur = round(now_ts - p_start, 2)
+                    db.append_job_event(run_id, "task_done", {
+                        "completed_stage": 2,
+                        "agent": task_agent_role or "Parallel Agent",
+                        "duration_sec": p_dur,
+                        "timestamp": now_ts,
+                        "parallel": True,
+                        "message": f"Parallel agent finished ({task_agent_role or 'Stage 2 agent'}). Awaiting partner agent.",
+                    })
+
+                elif completed_now == 3:
+                    # Both parallel Stage 2 agents have finished. Stage 3 (Editorial Director) begins.
+                    p_start = stage_start_times.get("stage_2_parallel", now_ts)
+                    p_dur = round(now_ts - p_start, 2)
+                    tracer.end_span("stage_1_parallel")
+                    stage_start_times["stage_3_review"] = now_ts
+                    tracer.start_span("stage_2_review", "CrewAI Stage: Editorial Review & Synthesis", run_type="chain")
+                    db.append_job_event(run_id, "task_done", {
+                        "completed_stage": 3,
+                        "agent": task_agent_role or "Parallel Agent",
+                        "duration_sec": p_dur,
+                        "timestamp": now_ts,
+                        "parallel": True,
+                        "message": "Parallel Stage complete. Both technical narrative and diagrams ready for Editorial Review.",
+                    })
+
+                elif completed_now >= 4:
+                    # Stage 3 (Quality Reviewer / Editorial Director) finished
+                    r_start = stage_start_times.get("stage_3_review", now_ts)
+                    r_dur = round(now_ts - r_start, 2)
+                    tracer.end_span("stage_2_review")
+                    db.append_job_event(run_id, "task_done", {
+                        "completed_stage": 4,
+                        "agent": task_agent_role or "Quality Reviewer",
+                        "duration_sec": r_dur,
+                        "timestamp": now_ts,
+                        "parallel": False,
+                        "message": "Editorial Director completed final quality review and audit.",
+                    })
 
         # Resolve API keys: user-specific credentials take precedence over environment
         user_keys = db.get_user_api_keys(user_id=user_id) if (user_id and hasattr(db, "get_user_api_keys")) else {}

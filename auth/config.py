@@ -134,28 +134,10 @@ def load_auth_config(reload: bool = False) -> AuthConfig:
         session_secret = _get_val("SESSION_SECRET")
 
         if not otp_pepper:
-            if not os.getenv("PYTEST_CURRENT_TEST"):
-                import secrets
-                otp_pepper = secrets.token_hex(32)
-                os.environ["OTP_PEPPER"] = otp_pepper
-                logger.warning(
-                    "OTP_PEPPER not configured in environment; auto-generated secure random 256-bit secret. "
-                    "Set OTP_PEPPER in your hosting dashboard for session persistence across restarts."
-                )
-            else:
-                raise ValueError(_secret_generation_hint("OTP_PEPPER"))
+            raise ValueError(_secret_generation_hint("OTP_PEPPER"))
 
         if not session_secret:
-            if not os.getenv("PYTEST_CURRENT_TEST"):
-                import secrets
-                session_secret = secrets.token_hex(32)
-                os.environ["SESSION_SECRET"] = session_secret
-                logger.warning(
-                    "SESSION_SECRET not configured in environment; auto-generated secure random 256-bit secret. "
-                    "Set SESSION_SECRET in your hosting dashboard for session persistence across restarts."
-                )
-            else:
-                raise ValueError(_secret_generation_hint("SESSION_SECRET"))
+            raise ValueError(_secret_generation_hint("SESSION_SECRET"))
 
     # ------------------------------------------------------------------------
     # Rest of config (identical to original, except the literal "true" above)

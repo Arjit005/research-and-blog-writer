@@ -248,12 +248,12 @@ class ResearchAndBlogWriter:
                 "Entity & Verified Source Registry with full URLs."
             ),
             agent=self.research(),
-            async_execution=True,
+            async_execution=False,
         )
 
     @task
     def analyze_the_research_provided_task(self) -> Task:
-        """Task 2 — Technical Synthesis & Diagram Design."""
+        """Task 2 — Technical Synthesis & Diagram Design (Parallel Stage 2)."""
         return Task(
             description=(
                 "Synthesize and architect the technical findings on '{topic}'. Organize insights into "
@@ -268,12 +268,13 @@ class ResearchAndBlogWriter:
                 "curated citations."
             ),
             agent=self.content_analyst(),
+            context=[self.research_the_given_topic_task()],
             async_execution=True,
         )
 
     @task
     def create_a_wellstructured_blog_post_task(self) -> Task:
-        """Task 3 — Deep Visual Blog Writing."""
+        """Task 3 — Deep Visual Blog Writing (Parallel Stage 2)."""
         return Task(
             description=(
                 "Write an authoritative, publication-ready deep-dive technical blog post (2,000 - 3,500 words) "
@@ -291,12 +292,13 @@ class ResearchAndBlogWriter:
                 "and complete verified-source references."
             ),
             agent=self.report_writer(),
-            context=[self.research_the_given_topic_task(), self.analyze_the_research_provided_task()],
+            context=[self.research_the_given_topic_task()],
+            async_execution=True,
         )
 
     @task
     def review_the_final_report_task(self) -> Task:
-        """Task 4 — Rigorous Quality Audit & Persistence."""
+        """Task 4 — Rigorous Quality Audit & Persistence (Stage 3)."""
         return Task(
             description=(
                 "Perform an exhaustive technical audit of the blog post on '{topic}'. Verify all technical "
@@ -311,9 +313,14 @@ class ResearchAndBlogWriter:
                 "verified for depth, diagram clarity, Mermaid syntax validity, and citation accuracy."
             ),
             agent=self.quality_reviewer(),
-            context=[self.research_the_given_topic_task(), self.create_a_wellstructured_blog_post_task()],
+            context=[
+                self.research_the_given_topic_task(),
+                self.analyze_the_research_provided_task(),
+                self.create_a_wellstructured_blog_post_task(),
+            ],
             tools=[SaveReportTool()],
             output_file="report.md",
+            async_execution=False,
         )
 
     # ------------------------------------------------------------------

@@ -50,6 +50,8 @@ class PipelineRunner:
         self.cancel_event = cancel_event or threading.Event()
         self.runtime_keys = runtime_keys or {}
         self.current_stage = 1
+        self._stage_lock = threading.Lock()
+        self._completed_task_count = 0
 
     # -- cancellation ------------------------------------------------------
     def request_cancel(self) -> None:
@@ -74,6 +76,25 @@ class PipelineRunner:
         """Invoked by CrewAI after each intermediate agent tool execution or thought."""
         self._raise_if_cancelled()
         try:
+            agent_role = ""
+            if hasattr(step_output, "agent"):
+                agent_role = str(getattr(step_output.agent, "role", ""))
+            elif hasattr(step_output, "agent_role"):
+                agent_role = str(getattr(step_output.agent_role, "role", str(step_output.agent_role)))
+
+            # Map agent role to correct parallel stage id:
+            # Stage 1: Senior Researcher
+            # Stage 2: Content Analyst & Blog Post Writer (concurrent)
+            # Stage 3: Quality Reviewer
+            stage_id = self.current_stage
+            role_lower = agent_role.lower()
+            if "research" in role_lower:
+                stage_id = 1
+            elif "analyst" in role_lower or "diagram" in role_lower or "writer" in role_lower or "blog" in role_lower:
+                stage_id = 2
+            elif "reviewer" in role_lower or "editor" in role_lower or "quality" in role_lower:
+                stage_id = 3
+
             detail = ""
             if hasattr(step_output, "tool"):
                 tool_name = getattr(step_output, "tool", "Tool")
@@ -92,8 +113,9 @@ class PipelineRunner:
             if detail:
                 self.event_queue.put({
                     "type": "step",
-                    "stage_id": self.current_stage,
-                    "stage_name": self.current_stage_name,
+                    "stage_id": stage_id,
+                    "stage_name": agent_role or self.current_stage_name,
+                    "agent": agent_role or self.current_stage_name,
                     "detail": detail,
                     "timestamp": time.time(),
                 })
@@ -103,17 +125,47 @@ class PipelineRunner:
             logger.debug(f"Error in step_callback: {e}")
 
     def task_callback(self, task_output: Any) -> None:
-        """Invoked by CrewAI when a task finishes successfully."""
+        """Invoked by CrewAI when a task finishes successfully.
+        
+        Guarantees that both parallel Stage 2 agents (Writer and Diagram Architect)
+        belong to Stage 2 and their independent completion order never incorrectly
+        advances to Editorial Director (Stage 3/4) until both have completed.
+        """
         self._raise_if_cancelled()
         try:
+            agent_role = ""
+            if hasattr(task_output, "agent"):
+                agent_role = str(getattr(task_output.agent, "role", str(task_output.agent)))
+
+            with self._stage_lock:
+                self._completed_task_count += 1
+                c = self._completed_task_count
+
+                if c == 1:
+                    # Researcher completed -> advance to Stage 2 (Parallel)
+                    self.current_stage = 2
+                    completed_stage = 1
+                elif c == 2:
+                    # First parallel agent completed -> remain in Stage 2
+                    self.current_stage = 2
+                    completed_stage = 2
+                elif c == 3:
+                    # Both parallel agents completed -> advance to Editorial Review
+                    self.current_stage = 3
+                    completed_stage = 3
+                else:
+                    # Final Editorial Review completed
+                    self.current_stage = 4
+                    completed_stage = 4
+
             self.event_queue.put({
                 "type": "task_done",
                 "stage_id": self.current_stage,
+                "completed_stage": completed_stage,
                 "stage_name": self.current_stage_name,
+                "agent": agent_role or self.current_stage_name,
                 "timestamp": time.time(),
             })
-            # Advance only after a successful task; never beyond the last stage.
-            self.current_stage = min(self.current_stage + 1, len(STAGE_NAMES))
         except InterruptedError:
             raise
         except Exception as e:

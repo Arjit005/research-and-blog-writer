@@ -600,6 +600,27 @@ def _ensure_users_google_id_unique_index(conn: Any, is_tidb: bool) -> None:
             raise
 
 
+def _ensure_system_cache_key_length(conn: Any, is_tidb: bool) -> None:
+    """Idempotently ensure system_cache.cache_key is VARCHAR(128) in TiDB to accommodate SHA-256 keys."""
+    if is_tidb:
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT CHARACTER_MAXIMUM_LENGTH
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'system_cache' AND COLUMN_NAME = 'cache_key'
+                """
+            )
+            row = cursor.fetchone()
+            max_len = row["CHARACTER_MAXIMUM_LENGTH"] if isinstance(row, dict) else (row[0] if row else None)
+            if max_len is not None and max_len < 128:
+                cursor.execute("ALTER TABLE `system_cache` MODIFY COLUMN `cache_key` VARCHAR(128)")
+                logger.info("Migrated system_cache.cache_key to VARCHAR(128) in TiDB.")
+        except Exception as exc:
+            logger.warning("Could not modify system_cache.cache_key column length in TiDB: %s", exc)
+
+
 def init_db():
     """Initialize database schemas and apply idempotent migrations on TiDB Cloud or SQLite.
 
@@ -619,6 +640,7 @@ def init_db():
                 _ensure_column_exists(conn, is_tidb, table, col, tidb_type)
 
             _ensure_users_google_id_unique_index(conn, is_tidb)
+            _ensure_system_cache_key_length(conn, is_tidb)
 
         else:
             # SQLite: execute all CREATE TABLE statements individually then indexes
@@ -636,6 +658,7 @@ def init_db():
                 _ensure_column_exists(conn, is_tidb, table, col, sqlite_type)
 
             _ensure_users_google_id_unique_index(conn, is_tidb)
+            _ensure_system_cache_key_length(conn, is_tidb)
 
         _ensure_job_event_unique_index(conn, is_tidb)
 
