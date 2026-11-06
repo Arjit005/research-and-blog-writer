@@ -495,6 +495,32 @@ TABLE_DEFINITIONS: List[Tuple[str, str, str]] = [
     ),
 
     # ------------------------------------------------------------------
+    # Active run claims (atomic distributed single-active-run lease per user)
+    # ------------------------------------------------------------------
+    (
+        "active_run_claims",
+        """
+        CREATE TABLE IF NOT EXISTS active_run_claims (
+            user_id      INT PRIMARY KEY,
+            run_id       VARCHAR(64) NOT NULL,
+            worker_id    VARCHAR(64) NOT NULL,
+            claimed_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            heartbeat_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_claim_run (run_id)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS active_run_claims (
+            user_id      INTEGER PRIMARY KEY,
+            run_id       TEXT NOT NULL,
+            worker_id    TEXT NOT NULL,
+            claimed_at   TEXT NOT NULL DEFAULT (datetime('now')),
+            heartbeat_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """,
+    ),
+
+    # ------------------------------------------------------------------
     # Password attempt log (brute-force throttling)
     # ------------------------------------------------------------------
     (

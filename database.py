@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import re
 import time
+import uuid
 import json
 import decimal
 import sqlite3
@@ -2268,37 +2269,74 @@ def create_research_job_atomic(
     tone: Optional[str] = None,
     audience: Optional[str] = None,
     target_length: Optional[str] = None,
+    worker_id: Optional[str] = None,
 ) -> Tuple[bool, Optional[str]]:
-    """Atomically create a new research job if and only if the user has no active jobs.
+    """Atomically create a new research job with guaranteed cross-process single-run invariant.
 
-    Guarantees cross-process concurrency safety without distributed locks:
-    Executes within an atomic transaction. If an active job ('pending' or 'running')
-    already exists for the user, insertion is rejected and the existing active run_id
-    is returned.
+    Architecture & TiDB Semantics:
+    TiDB does not support gap locking on range queries like `SELECT ... WHERE user_id = ? FOR UPDATE`.
+    Therefore, locking on non-existent rows is susceptible to concurrent phantom inserts.
+    To enforce bulletproof multi-process concurrency across TiDB and SQLite:
+    1. A dedicated `active_run_claims` table with a PRIMARY KEY on `user_id` is used.
+    2. Before or during job creation, `INSERT INTO active_run_claims (user_id, run_id, worker_id)` is attempted.
+    3. If another worker or process is already running a job for this user, the PRIMARY KEY / UNIQUE constraint
+       immediately trips with a duplicate key conflict, rejecting the concurrent submission atomically.
+    4. If claim insertion succeeds, the `research_jobs` row is created within the same atomic transaction.
+    5. When the job completes, cancels, or fails, the claim is released cleanly.
 
     Returns:
         (created: bool, active_run_id: Optional[str])
     """
+    resolved_worker = worker_id or f"worker_{os.getpid()}_{uuid.uuid4().hex[:6]}"
     with get_connection() as (conn, is_tidb):
         if user_id is not None:
-            if is_tidb:
-                # TiDB pessimistic / row locking on active jobs for this user
-                cursor = _exec(
-                    conn, is_tidb,
-                    "SELECT run_id FROM research_jobs WHERE user_id = ? AND status IN ('pending', 'running') FOR UPDATE",
-                    (user_id,),
-                )
-            else:
-                cursor = _exec(
-                    conn, is_tidb,
-                    "SELECT run_id FROM research_jobs WHERE user_id = ? AND status IN ('pending', 'running') LIMIT 1",
-                    (user_id,),
-                )
-            active_row = cursor.fetchone()
-            if active_row:
-                active_id = active_row["run_id"] if is_tidb else active_row[0]
+            # Check if there is an existing claim
+            cursor = _exec(conn, is_tidb, "SELECT run_id FROM active_run_claims WHERE user_id = ?", (user_id,))
+            claim_row = cursor.fetchone()
+            if claim_row:
+                active_id = claim_row["run_id"] if is_tidb else claim_row[0]
                 return False, active_id
 
+            # Also check existing active jobs table as defense-in-depth
+            cursor = _exec(
+                conn, is_tidb,
+                "SELECT run_id FROM research_jobs WHERE user_id = ? AND status IN ('pending', 'running') LIMIT 1",
+                (user_id,),
+            )
+            job_row = cursor.fetchone()
+            if job_row:
+                active_id = job_row["run_id"] if is_tidb else job_row[0]
+                # Sync claim
+                try:
+                    _exec(
+                        conn, is_tidb,
+                        "INSERT OR IGNORE INTO active_run_claims (user_id, run_id, worker_id) VALUES (?, ?, ?)"
+                        if not is_tidb else
+                        "INSERT IGNORE INTO active_run_claims (user_id, run_id, worker_id) VALUES (?, ?, ?)",
+                        (user_id, active_id, resolved_worker),
+                    )
+                except Exception:
+                    pass
+                return False, active_id
+
+            # Attempt atomic claim insertion
+            try:
+                _exec(
+                    conn, is_tidb,
+                    "INSERT INTO active_run_claims (user_id, run_id, worker_id) VALUES (?, ?, ?)",
+                    (user_id, run_id, resolved_worker),
+                )
+            except Exception as exc:
+                msg = str(exc).lower()
+                if "unique" in msg or "duplicate" in msg or "primary key" in msg or "1062" in msg:
+                    # Conflict: another concurrent worker claimed this user_id first!
+                    cur = _exec(conn, is_tidb, "SELECT run_id FROM active_run_claims WHERE user_id = ?", (user_id,))
+                    row = cur.fetchone()
+                    active_id = (row["run_id"] if is_tidb else row[0]) if row else "unknown"
+                    return False, active_id
+                raise
+
+        # Insert the research job row
         _exec(
             conn, is_tidb,
             """INSERT INTO research_jobs
@@ -2307,6 +2345,37 @@ def create_research_job_atomic(
             (run_id, user_id, topic, tone, audience, target_length),
         )
         return True, None
+
+
+def release_active_run_claim(run_id: str, user_id: Optional[int] = None) -> bool:
+    """Release active run claim when a job reaches a terminal state (completed/failed/cancelled)."""
+    with get_connection() as (conn, is_tidb):
+        if user_id is not None:
+            cursor = _exec(conn, is_tidb, "DELETE FROM active_run_claims WHERE user_id = ? AND run_id = ?", (user_id, run_id))
+        else:
+            cursor = _exec(conn, is_tidb, "DELETE FROM active_run_claims WHERE run_id = ?", (run_id,))
+        rowcount = getattr(cursor, "rowcount", None)
+        return bool(rowcount and rowcount > 0)
+
+
+def heartbeat_active_run_claim(run_id: str, worker_id: Optional[str] = None) -> bool:
+    """Update heartbeat timestamp for active run claim so healthy workers are not pruned."""
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with get_connection() as (conn, is_tidb):
+        if worker_id:
+            cursor = _exec(
+                conn, is_tidb,
+                "UPDATE active_run_claims SET heartbeat_at = ? WHERE run_id = ? AND worker_id = ?",
+                (now_str, run_id, worker_id),
+            )
+        else:
+            cursor = _exec(
+                conn, is_tidb,
+                "UPDATE active_run_claims SET heartbeat_at = ? WHERE run_id = ?",
+                (now_str, run_id),
+            )
+        rowcount = getattr(cursor, "rowcount", None)
+        return bool(rowcount and rowcount > 0)
 
 
 def create_research_job(
@@ -2347,6 +2416,9 @@ def update_research_job(
     resurrecting a job the user already cancelled (or a failed job from flipping
     itself back to ``running``). Metadata-only updates stay allowed.
 
+    When transitioning to a terminal status ('completed', 'failed', 'cancelled'),
+    the corresponding active_run_claims lease is automatically freed.
+
     Returns True when a row was actually updated.
     """
     updates = []
@@ -2374,6 +2446,13 @@ def update_research_job(
             sql += " AND status NOT IN ('cancelled', 'failed', 'completed')"
         cursor = _exec(conn, is_tidb, sql, tuple(params))
         rowcount = getattr(cursor, "rowcount", None)
+
+        if status in _TERMINAL_JOB_STATUSES:
+            try:
+                _exec(conn, is_tidb, "DELETE FROM active_run_claims WHERE run_id = ?", (run_id,))
+            except Exception:
+                pass
+
         if rowcount is None:
             return True
         return bool(rowcount > 0)
@@ -2407,47 +2486,66 @@ def get_active_user_job(user_id: int) -> Optional[Dict[str, Any]]:
         return _row_to_dict(row) if row else None
 
 
-def recover_interrupted_jobs(stale_after_seconds: int = 0) -> int:
-    """Mark jobs left in ``pending``/``running`` by a dead process as failed.
+def recover_interrupted_jobs(stale_after_seconds: int = 120) -> int:
+    """Mark jobs left in ``pending``/``running`` by a dead worker process as failed.
 
-    Background research workers run in in-process daemon threads and the
-    cancellation events live only in memory, so a restart orphans any in-flight
-    job forever. Call this from the FastAPI lifespan startup (after ``init_db``)
-    to fail such jobs with a clear reason and append a terminal SSE event so
-    reconnecting clients close their streams.
+    Multi-Worker Safety & Lease Architecture:
+    In a multi-worker cluster (e.g. 4 Gunicorn/Uvicorn workers), worker restarts must
+    NEVER indiscriminately abort running jobs belonging to other live, healthy workers.
+    Each active run maintains a lease in `active_run_claims` with periodic heartbeats.
 
-    ``stale_after_seconds`` limits the sweep to jobs whose ``updated_at`` is at
-    least that old (default 0 = every inherited pending/running job).
+    A job is considered abandoned ONLY if:
+    1. Its heartbeat in `active_run_claims` or its `updated_at` in `research_jobs` is
+       older than `stale_after_seconds` (default: 120 seconds).
+    2. Jobs with recent heartbeats are recognized as actively managed by other healthy
+       workers and are left untouched.
 
     Returns the number of recovered jobs.
     """
     try:
         stale_after = max(0, int(stale_after_seconds))
     except (TypeError, ValueError):
-        stale_after = 0
+        stale_after = 120
     now = datetime.now(timezone.utc)
     cutoff_str = (now - timedelta(seconds=stale_after)).strftime("%Y-%m-%d %H:%M:%S")
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
-    message = "interrupted by server restart"
+    message = "interrupted by worker crash or unhandled timeout"
 
     recovered_run_ids: List[str] = []
     with get_connection() as (conn, is_tidb):
+        # Identify stale jobs whose updated_at and claim heartbeat have both lapsed
         cursor = _exec(
             conn,
             is_tidb,
-            "SELECT run_id FROM research_jobs WHERE status IN ('pending', 'running') AND updated_at <= ?",
-            (cutoff_str,),
+            """
+            SELECT j.run_id 
+            FROM research_jobs j
+            LEFT JOIN active_run_claims c ON j.run_id = c.run_id
+            WHERE j.status IN ('pending', 'running')
+              AND j.updated_at <= ?
+              AND (c.heartbeat_at IS NULL OR c.heartbeat_at <= ?)
+            """,
+            (cutoff_str, cutoff_str),
         )
         rows = cursor.fetchall()
         recovered_run_ids = [str(_get_value(r, is_tidb, "run_id", 0)) for r in rows]
         if not recovered_run_ids:
             return 0
+
+        # Mark recovered jobs as failed
         cursor = _exec(
             conn,
             is_tidb,
             "UPDATE research_jobs SET status = 'failed', error_message = ?, updated_at = ? "
-            "WHERE status IN ('pending', 'running') AND updated_at <= ?",
-            (message, now_str, cutoff_str),
+            "WHERE run_id IN (" + ",".join("?" for _ in recovered_run_ids) + ")",
+            (message, now_str, *recovered_run_ids),
+        )
+        # Release orphaned claims
+        _exec(
+            conn,
+            is_tidb,
+            "DELETE FROM active_run_claims WHERE run_id IN (" + ",".join("?" for _ in recovered_run_ids) + ")",
+            tuple(recovered_run_ids),
         )
         rowcount = getattr(cursor, "rowcount", None)
         recovered_count = int(rowcount) if isinstance(rowcount, int) and rowcount >= 0 else len(recovered_run_ids)
