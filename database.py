@@ -2261,6 +2261,54 @@ def get_stats(user_id: Optional[int] = None):
 # Research Job Model & Event Ledger (SSE Resumption & Durable Executions)
 # ---------------------------------------------------------------------------
 
+def create_research_job_atomic(
+    run_id: str,
+    topic: str,
+    user_id: Optional[int] = None,
+    tone: Optional[str] = None,
+    audience: Optional[str] = None,
+    target_length: Optional[str] = None,
+) -> Tuple[bool, Optional[str]]:
+    """Atomically create a new research job if and only if the user has no active jobs.
+
+    Guarantees cross-process concurrency safety without distributed locks:
+    Executes within an atomic transaction. If an active job ('pending' or 'running')
+    already exists for the user, insertion is rejected and the existing active run_id
+    is returned.
+
+    Returns:
+        (created: bool, active_run_id: Optional[str])
+    """
+    with get_connection() as (conn, is_tidb):
+        if user_id is not None:
+            if is_tidb:
+                # TiDB pessimistic / row locking on active jobs for this user
+                cursor = _exec(
+                    conn, is_tidb,
+                    "SELECT run_id FROM research_jobs WHERE user_id = ? AND status IN ('pending', 'running') FOR UPDATE",
+                    (user_id,),
+                )
+            else:
+                cursor = _exec(
+                    conn, is_tidb,
+                    "SELECT run_id FROM research_jobs WHERE user_id = ? AND status IN ('pending', 'running') LIMIT 1",
+                    (user_id,),
+                )
+            active_row = cursor.fetchone()
+            if active_row:
+                active_id = active_row["run_id"] if is_tidb else active_row[0]
+                return False, active_id
+
+        _exec(
+            conn, is_tidb,
+            """INSERT INTO research_jobs
+               (run_id, user_id, topic, tone, audience, target_length, status)
+               VALUES (?, ?, ?, ?, ?, ?, 'pending')""",
+            (run_id, user_id, topic, tone, audience, target_length),
+        )
+        return True, None
+
+
 def create_research_job(
     run_id: str,
     topic: str,
@@ -2270,14 +2318,16 @@ def create_research_job(
     target_length: Optional[str] = None,
 ) -> None:
     """Create a new research job in 'pending' status."""
-    with get_connection() as (conn, is_tidb):
-        _exec(
-            conn, is_tidb,
-            """INSERT INTO research_jobs
-               (run_id, user_id, topic, tone, audience, target_length, status)
-               VALUES (?, ?, ?, ?, ?, ?, 'pending')""",
-            (run_id, user_id, topic, tone, audience, target_length),
-        )
+    created, _ = create_research_job_atomic(
+        run_id=run_id,
+        topic=topic,
+        user_id=user_id,
+        tone=tone,
+        audience=audience,
+        target_length=target_length,
+    )
+    if not created:
+        raise ValueError(f"User {user_id} already has an active research job in progress.")
 
 
 _TERMINAL_JOB_STATUSES = ("cancelled", "failed", "completed")

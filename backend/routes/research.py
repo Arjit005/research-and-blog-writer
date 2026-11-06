@@ -495,17 +495,10 @@ def create_research_run(
         )
     topic = safe_or_message
 
-    # 1. Enforce single concurrent run per user
-    active_job = db.get_active_user_job(user["id"])
-    if active_job:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"You already have a research run in progress (ID: {active_job['run_id']}). Wait for it to complete or cancel it.",
-        )
-
-    # 2. Generate run ID and initialize job in DB
+    # 1 & 2. Atomically check concurrency and initialize job in DB
+    # Uses database transaction to eliminate cross-process race conditions.
     run_id = f"run_{uuid.uuid4().hex}"
-    db.create_research_job(
+    created, active_run_id = db.create_research_job_atomic(
         run_id=run_id,
         topic=topic,
         user_id=user["id"],
@@ -513,6 +506,11 @@ def create_research_run(
         audience=body.audience,
         target_length=body.target_length,
     )
+    if not created:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"You already have a research run in progress (ID: {active_run_id}). Wait for it to complete or cancel it.",
+        )
 
     db.append_job_event(run_id, "run_start", {"run_id": run_id, "topic": topic, "timestamp": time.time()})
 
