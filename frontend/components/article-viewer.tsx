@@ -3,7 +3,8 @@
 import React, { useMemo, useState, useRef } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import rehypeSanitize from "rehype-sanitize";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 import { MermaidCanvas } from "./mermaid-canvas";
 import {
   Clock,
@@ -339,19 +340,6 @@ export function ArticleViewer({
 
         {/* Right Supported Toolbar Actions */}
         <div className="flex items-center gap-1.5 flex-wrap">
-          {/* Mobile TOC Button */}
-          {headings.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setShowTocMobile(!showTocMobile)}
-              className="xl:hidden flex items-center gap-1 px-2.5 py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border text-foreground rounded-xl text-xs transition"
-              title="Table of Contents"
-            >
-              <ListOrdered className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-              <span className="hidden sm:inline">TOC</span>
-            </button>
-          )}
-
           {/* Copy Article */}
           <button
             type="button"
@@ -441,39 +429,16 @@ export function ArticleViewer({
         </div>
       </div>
 
-      {/* Mobile TOC Drawer dropdown */}
-      {showTocMobile && headings.length > 0 && (
-        <div className="xl:hidden p-4 bg-surface border border-border rounded-2xl shadow-md">
-          <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">
-            Table of Contents
-          </h4>
-          <nav className="space-y-1.5 max-h-48 overflow-y-auto text-xs">
-            {headings.map((h, i) => (
-              <a
-                key={i}
-                href={`#${h.id}`}
-                onClick={() => setShowTocMobile(false)}
-                className={`block py-1 text-foreground hover:text-blue-600 dark:hover:text-blue-400 ${
-                  h.level === 3 ? "pl-3 text-muted-foreground" : "font-medium"
-                }`}
-              >
-                {h.text}
-              </a>
-            ))}
-          </nav>
-        </div>
-      )}
-
-      {/* 2. Main Content & Sticky TOC Layout */}
-      <div className="flex gap-8 items-start w-full">
+      {/* 2. Main Content Layout */}
+      <div className="w-full">
         {/* Center Article Reader Container */}
         <article
           ref={articleRef}
-          className="flex-1 min-w-0 bg-surface border border-border rounded-3xl p-6 sm:p-10 md:p-14 shadow-sm backdrop-blur-md"
+          className="w-full select-text selection:bg-blue-500/20 selection:text-blue-900 dark:selection:text-blue-100 bg-surface border border-border rounded-3xl p-6 sm:p-10 md:p-12 shadow-sm backdrop-blur-md"
         >
           <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            rehypePlugins={[rehypeSanitize]}
+            remarkPlugins={[remarkGfm, remarkMath]}
+            rehypePlugins={[rehypeKatex]}
             components={markdownComponents}
           >
             {content}
@@ -514,31 +479,6 @@ export function ArticleViewer({
             </div>
           )}
         </article>
-
-        {/* 3. Floating Sticky Table of Contents (Desktop XL+) */}
-        {!isFocusMode && headings.length > 0 && (
-          <aside className="hidden xl:block w-72 shrink-0 sticky top-36 p-5 bg-surface border border-border rounded-2xl shadow-sm max-h-[calc(100vh-160px)] overflow-y-auto">
-            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-foreground mb-3 pb-2 border-b border-border">
-              <ListOrdered className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-              <span>Outline</span>
-            </div>
-            <nav className="space-y-2 text-xs" aria-label="Table of contents">
-              {headings.map((heading, idx) => (
-                <a
-                  key={idx}
-                  href={`#${heading.id}`}
-                  className={`block transition-colors line-clamp-1 py-0.5 ${
-                    heading.level === 3
-                      ? "pl-3 text-muted-foreground hover:text-foreground text-[11px]"
-                      : "text-foreground hover:text-blue-600 dark:hover:text-blue-400 font-medium"
-                  }`}
-                >
-                  {heading.text}
-                </a>
-              ))}
-            </nav>
-          </aside>
-        )}
       </div>
     </div>
   );
