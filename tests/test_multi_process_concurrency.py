@@ -439,3 +439,119 @@ def test_cancellation_atomicity_rejects_article_write(tmp_path):
 
     # Confirm 0 articles persisted
     assert len(db.get_articles(user_id=user_id)) == 0
+
+
+def _worker_append_events(run_id: str, count: int, barrier, result_queue, db_path: str):
+    """Independent process appending sequenced events to the SSE event ledger."""
+    import os
+    os.environ["RESEARCH_STUDIO_DB_PATH"] = db_path
+    import database as worker_db
+
+    assigned_sequences = []
+    barrier.wait()
+    for i in range(count):
+        try:
+            seq = worker_db.append_job_event(
+                run_id,
+                "step",
+                {"worker_pid": os.getpid(), "index": i},
+            )
+            assigned_sequences.append(seq)
+        except Exception as exc:
+            assigned_sequences.append(f"err:{exc}")
+
+    result_queue.put({"pid": os.getpid(), "sequences": assigned_sequences})
+
+
+def test_concurrent_sse_event_sequences_gap_free_and_monotonic(tmp_path):
+    """Test 4 independent OS workers concurrently appending 100 events total (25 each) to one run."""
+    test_db = str(tmp_path / "sse_concurrency.db")
+    os.environ["RESEARCH_STUDIO_DB_PATH"] = test_db
+    db.init_db()
+
+    target_run_id = "run_sse_concurrency_100"
+    db.create_research_job_atomic(target_run_id, "SSE Concurrency Test", user_id=8899)
+
+    num_workers = 4
+    events_per_worker = 25
+    total_events = num_workers * events_per_worker
+
+    barrier = multiprocessing.Barrier(num_workers)
+    result_queue = multiprocessing.Queue()
+
+    processes = []
+    for _ in range(num_workers):
+        p = multiprocessing.Process(
+            target=_worker_append_events,
+            args=(target_run_id, events_per_worker, barrier, result_queue, test_db),
+        )
+        p.start()
+        processes.append(p)
+
+    for p in processes:
+        p.join(timeout=20)
+
+    # Collect results
+    all_assigned = []
+    for _ in range(num_workers):
+        res = result_queue.get(timeout=5)
+        for s in res["sequences"]:
+            assert not str(s).startswith("err:"), f"Worker event append failed: {s}"
+            all_assigned.append(s)
+
+    # 1. Total event count
+    assert len(all_assigned) == total_events == 100
+
+    # 2. Sequence uniqueness
+    assert len(set(all_assigned)) == 100, "Sequence numbers must be strictly unique"
+
+    # 3. Gap-free contiguous integers from 1 to 100
+    assert sorted(all_assigned) == list(range(1, 101)), "Sequence numbers must be gap-free 1..100"
+
+    # 4. Fetch events from database and verify persistence & resume with after_seq
+    persisted = db.get_job_events(target_run_id, after_seq_id=0, limit=200)
+    assert len(persisted) == 100
+    db_sequences = [e["seq_id"] for e in persisted]
+    assert db_sequences == list(range(1, 101))
+
+    # 5. SSE Resume test: reconnect after seq 50
+    resumed = db.get_job_events(target_run_id, after_seq_id=50, limit=200)
+    assert len(resumed) == 50
+    assert [e["seq_id"] for e in resumed] == list(range(51, 101))
+
+
+def test_concurrent_sse_events_across_different_runs(tmp_path):
+    """Test independent workers appending events concurrently to separate runs without interference."""
+    test_db = str(tmp_path / "sse_diff_runs.db")
+    os.environ["RESEARCH_STUDIO_DB_PATH"] = test_db
+    db.init_db()
+
+    run_a = "run_alpha_events"
+    run_b = "run_beta_events"
+    db.create_research_job_atomic(run_a, "Alpha Topic", user_id=9001)
+    db.create_research_job_atomic(run_b, "Beta Topic", user_id=9002)
+
+    barrier = multiprocessing.Barrier(2)
+    result_queue = multiprocessing.Queue()
+
+    p1 = multiprocessing.Process(
+        target=_worker_append_events,
+        args=(run_a, 20, barrier, result_queue, test_db),
+    )
+    p2 = multiprocessing.Process(
+        target=_worker_append_events,
+        args=(run_b, 20, barrier, result_queue, test_db),
+    )
+    p1.start()
+    p2.start()
+    p1.join(timeout=15)
+    p2.join(timeout=15)
+
+    ev_a = db.get_job_events(run_a, after_seq_id=0)
+    ev_b = db.get_job_events(run_b, after_seq_id=0)
+
+    assert len(ev_a) == 20
+    assert len(ev_b) == 20
+    assert [e["seq_id"] for e in ev_a] == list(range(1, 21))
+    assert [e["seq_id"] for e in ev_b] == list(range(1, 21))
+

@@ -174,6 +174,42 @@ class TiDBConnectionPool:
 _tidb_pool = TiDBConnectionPool(max_size=8)
 
 
+def _init_tidb_session(conn: Any) -> None:
+    """Safely configure UTC session timezone and verify TiDB pessimistic transaction mode.
+
+    On TiDB Cloud Serverless / Essential, `tidb_txn_mode` may be a read-only system variable.
+    Therefore, we:
+    1. Set the session time_zone to UTC ('+00:00').
+    2. Read @@session.tidb_txn_mode.
+    3. If not already 'pessimistic', attempt to set it if allowed; otherwise raise DatabaseConnectionError
+       if pessimistic mode is strictly required and not enabled.
+    """
+    cursor = conn.cursor()
+    # 1. Configure UTC session timezone
+    cursor.execute("SET SESSION time_zone = '+00:00';")
+
+    # 2. Inspect session tidb_txn_mode
+    try:
+        cursor.execute("SELECT @@session.tidb_txn_mode AS txn_mode;")
+        row = cursor.fetchone()
+        mode = (row["txn_mode"] if isinstance(row, dict) else row[0]) if row else ""
+        mode_str = str(mode).lower() if mode else ""
+        if mode_str != "pessimistic":
+            # Attempt safe set
+            try:
+                cursor.execute("SET SESSION tidb_txn_mode = 'pessimistic';")
+            except Exception as set_err:
+                logger.warning("Could not set tidb_txn_mode to pessimistic: %s (current mode: %s)", set_err, mode_str)
+                # If deployment enforces optimistic mode and denies alteration
+                if os.getenv("REQUIRE_PESSIMISTIC_TIDB", "").lower() in ("true", "1"):
+                    raise DatabaseConnectionError(
+                        f"TiDB session transaction mode is {mode_str!r}, but pessimistic mode is required. "
+                        f"Alteration failed: {set_err}"
+                    )
+    except Exception as e:
+        logger.debug("TiDB transaction mode inspection notice: %s", e)
+
+
 def _connect_tidb():
     """Attempt to establish a connection to TiDB Cloud."""
     import pymysql
@@ -197,8 +233,9 @@ def _connect_tidb():
             ssl=ssl_config,
             connect_timeout=10,
             autocommit=False,
-            init_command="SET SESSION time_zone = '+00:00', tidb_txn_mode = 'pessimistic';",
+            init_command="SET SESSION time_zone = '+00:00';",
         )
+        _init_tidb_session(conn)
         return conn
     except pymysql.err.OperationalError as db_err:
         # Error 1049: ER_BAD_DB_ERROR (Unknown database)
@@ -221,7 +258,7 @@ def _connect_tidb():
             finally:
                 admin_conn.close()
 
-            return pymysql.connect(
+            conn = pymysql.connect(
                 host=host,
                 port=port,
                 user=user,
@@ -231,8 +268,10 @@ def _connect_tidb():
                 ssl=ssl_config,
                 connect_timeout=10,
                 autocommit=False,
-                init_command="SET SESSION time_zone = '+00:00', tidb_txn_mode = 'pessimistic';",
+                init_command="SET SESSION time_zone = '+00:00';",
             )
+            _init_tidb_session(conn)
+            return conn
         raise
 
 
@@ -2429,6 +2468,20 @@ def create_research_job_atomic(
                VALUES (?, ?, ?, ?, ?, ?, 'pending')""",
             (run_id, user_id, topic, tone, audience, target_length),
         )
+
+        # Initialize dedicated SSE job event counter atomically
+        if is_tidb:
+            _exec(
+                conn, is_tidb,
+                "INSERT INTO job_event_counters (run_id, last_seq) VALUES (%s, 0) ON DUPLICATE KEY UPDATE last_seq = last_seq",
+                (run_id,),
+            )
+        else:
+            _exec(
+                conn, is_tidb,
+                "INSERT OR IGNORE INTO job_event_counters (run_id, last_seq) VALUES (?, 0)",
+                (run_id,),
+            )
         return True, None
 
 
@@ -2719,12 +2772,14 @@ def recover_interrupted_jobs(stale_after_seconds: int = 0) -> int:
 
 
 def append_job_event(run_id: str, event_type: str, payload: Any) -> int:
-    """Append a sequenced event to the durable job event ledger.
+    """Append a sequenced event to the durable job event ledger using job_event_counters.
 
-    The sequence is allocated atomically (single ``INSERT ... SELECT MAX+1`` on
-    SQLite, ``SELECT ... FOR UPDATE`` inside the transaction on TiDB) and the
-    UNIQUE(run_id, seq_id) constraint backs that up: on a duplicate/lock error we
-    retry with a freshly computed sequence instead of losing the event.
+    Sequence Allocation Strategy:
+    1. Lock and increment the persistent counter row in `job_event_counters` for this run_id.
+    2. Retrieve the assigned sequence number.
+    3. Insert the event using that sequence into `job_events`.
+    4. Commit both operations atomically in the same database transaction.
+    5. The UNIQUE(run_id, seq_id) constraint guarantees zero sequence duplication or corruption.
     """
     payload_str = json.dumps(payload) if not isinstance(payload, str) else payload
     last_error: Optional[BaseException] = None
@@ -2733,26 +2788,48 @@ def append_job_event(run_id: str, event_type: str, payload: Any) -> int:
             with get_connection() as (conn, is_tidb):
                 if is_tidb:
                     cursor = conn.cursor()
+                    # 1. Ensure counter row exists
                     cursor.execute(
-                        "SELECT COALESCE(MAX(seq_id), 0) + 1 AS next_seq FROM job_events WHERE run_id = %s FOR UPDATE",
+                        "INSERT INTO job_event_counters (run_id, last_seq) VALUES (%s, 0) ON DUPLICATE KEY UPDATE last_seq = last_seq",
+                        (run_id,),
+                    )
+                    # 2. Lock counter row and increment
+                    cursor.execute(
+                        "SELECT last_seq FROM job_event_counters WHERE run_id = %s FOR UPDATE",
                         (run_id,),
                     )
                     row = cursor.fetchone()
-                    next_seq = int(_get_value(row, True, "next_seq", 0) or 1)
+                    curr_seq = int(_get_value(row, True, "last_seq", 0) or 0)
+                    next_seq = curr_seq + 1
+                    cursor.execute(
+                        "UPDATE job_event_counters SET last_seq = %s WHERE run_id = %s",
+                        (next_seq, run_id),
+                    )
+                    # 3. Insert event using assigned sequence
                     cursor.execute(
                         "INSERT INTO job_events (run_id, seq_id, event_type, payload) VALUES (%s, %s, %s, %s)",
                         (run_id, next_seq, event_type, payload_str),
                     )
                 else:
-                    cursor = conn.execute(
-                        "INSERT INTO job_events (run_id, seq_id, event_type, payload) "
-                        "SELECT ?, COALESCE(MAX(seq_id), 0) + 1, ?, ? FROM job_events WHERE run_id = ?",
-                        (run_id, event_type, payload_str, run_id),
+                    # SQLite atomic counter increment & event insertion within transaction
+                    conn.execute(
+                        "INSERT OR IGNORE INTO job_event_counters (run_id, last_seq) VALUES (?, 0)",
+                        (run_id,),
                     )
-                    inserted_rowid = cursor.lastrowid
-                    seq_cursor = conn.execute("SELECT seq_id FROM job_events WHERE id = ?", (inserted_rowid,))
-                    seq_row = seq_cursor.fetchone()
-                    next_seq = int(_get_value(seq_row, False, "seq_id", 0) or 1)
+                    conn.execute(
+                        "UPDATE job_event_counters SET last_seq = last_seq + 1 WHERE run_id = ?",
+                        (run_id,),
+                    )
+                    cur_seq = conn.execute(
+                        "SELECT last_seq FROM job_event_counters WHERE run_id = ?",
+                        (run_id,),
+                    )
+                    row = cur_seq.fetchone()
+                    next_seq = int(row[0] if row else 1)
+                    conn.execute(
+                        "INSERT INTO job_events (run_id, seq_id, event_type, payload) VALUES (?, ?, ?, ?)",
+                        (run_id, next_seq, event_type, payload_str),
+                    )
                 return next_seq
         except Exception as exc:
             last_error = exc

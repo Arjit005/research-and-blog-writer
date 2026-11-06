@@ -495,6 +495,27 @@ TABLE_DEFINITIONS: List[Tuple[str, str, str]] = [
     ),
 
     # ------------------------------------------------------------------
+    # Job event counters (atomic persistent SSE sequence counter per run)
+    # ------------------------------------------------------------------
+    (
+        "job_event_counters",
+        """
+        CREATE TABLE IF NOT EXISTS job_event_counters (
+            run_id     VARCHAR(64) PRIMARY KEY,
+            last_seq   INT NOT NULL DEFAULT 0,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS job_event_counters (
+            run_id     TEXT PRIMARY KEY,
+            last_seq   INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """,
+    ),
+
+    # ------------------------------------------------------------------
     # User lease sequences (monotonic persistent fencing token counter per user)
     # ------------------------------------------------------------------
     (
