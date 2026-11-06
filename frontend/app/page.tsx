@@ -27,6 +27,8 @@ import {
   Cpu,
   Sun,
   Moon,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 
 const ACTIVE_RUN_STORAGE_KEY = "research-studio:active-run";
@@ -144,6 +146,22 @@ export default function Home() {
   const [activeTraceUrl, setActiveTraceUrl] = useState<string | null>(null);
   const [isApiKeysOpen, setIsApiKeysOpen] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [isSoundMuted, setIsSoundMuted] = useState(false);
+
+  useEffect(() => {
+    try {
+      const savedSound = localStorage.getItem("research-studio:sound-muted");
+      if (savedSound === "true") setIsSoundMuted(true);
+    } catch {}
+  }, []);
+
+  const toggleSoundMute = () => {
+    const next = !isSoundMuted;
+    setIsSoundMuted(next);
+    try {
+      localStorage.setItem("research-studio:sound-muted", String(next));
+    } catch {}
+  };
 
   useEffect(() => {
     try {
@@ -257,7 +275,9 @@ export default function Home() {
       }
 
       // Trigger browser notification and gentle completion chime
-      playChimeSound();
+      if (!isSoundMuted) {
+        playChimeSound();
+      }
       sendBrowserNotification(
         "Research Complete! 🎉",
         `Your research blog post for "${activeTopicRef.current || "topic"}" is ready to view.`
@@ -580,6 +600,22 @@ export default function Home() {
             </div>
           )}
 
+          {/* Sound Mute Toggle */}
+          <button
+            type="button"
+            onClick={toggleSoundMute}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border rounded-xl text-xs text-foreground transition"
+            title={isSoundMuted ? "Unmute completion sound" : "Mute completion sound"}
+            aria-label="Toggle Sound"
+          >
+            {isSoundMuted ? (
+              <VolumeX className="w-3.5 h-3.5 text-muted-foreground" />
+            ) : (
+              <Volume2 className="w-3.5 h-3.5 text-blue-500" />
+            )}
+            <span className="hidden sm:inline">{isSoundMuted ? "Muted" : "Sound"}</span>
+          </button>
+
           {/* Theme Toggle Button */}
           <button
             type="button"
@@ -719,10 +755,38 @@ export default function Home() {
               <h3 className="text-base font-bold text-slate-100 mb-1">
                 AI Squad Pipeline in Progress
               </h3>
-              <p className="text-xs text-slate-400 max-w-md mb-4">
+              <p className="text-xs text-slate-400 max-w-md mb-5">
                 Researching <strong className="text-slate-200">&ldquo;{activeTopic}&rdquo;</strong>. Watch real-time
                 agent telemetry and diagram synthesis in the Command Center.
               </p>
+
+              {/* Dynamic Stage Progress Bar */}
+              <div className="w-full max-w-xs mb-4">
+                <div className="flex justify-between text-[11px] font-medium text-slate-300 mb-1.5">
+                  <span>
+                    {runStage === 1 && "Lead Researcher Investigating..."}
+                    {runStage === 2 && "Parallel Writer & Diagram Architect Drafting..."}
+                    {runStage === 3 && "Integrating Technical Visuals..."}
+                    {runStage >= 4 && "Editorial Director Refining Post..."}
+                  </span>
+                  <span className="font-mono text-indigo-400 font-bold">
+                    {runStage === 1 && "25%"}
+                    {runStage === 2 && "60%"}
+                    {runStage === 3 && "80%"}
+                    {runStage >= 4 && "95%"}
+                  </span>
+                </div>
+                <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700/50">
+                  <div
+                    className="h-full bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 rounded-full transition-all duration-700 ease-out"
+                    style={{
+                      width:
+                        runStage === 1 ? "25%" : runStage === 2 ? "60%" : runStage === 3 ? "80%" : "95%",
+                    }}
+                  />
+                </div>
+              </div>
+
               <div className="flex items-center gap-2 text-xs font-mono text-slate-500">
                 <span>Stage {runStage}/4 Active</span>
                 <span>&bull;</span>
