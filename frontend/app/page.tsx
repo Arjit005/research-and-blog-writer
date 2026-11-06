@@ -25,6 +25,8 @@ import {
   Key,
   Menu,
   Cpu,
+  Sun,
+  Moon,
 } from "lucide-react";
 
 const ACTIVE_RUN_STORAGE_KEY = "research-studio:active-run";
@@ -103,6 +105,33 @@ export default function Home() {
   const [runError, setRunError] = useState<string | null>(null);
   const [activeTraceUrl, setActiveTraceUrl] = useState<string | null>(null);
   const [isApiKeysOpen, setIsApiKeysOpen] = useState(false);
+  const [theme, setTheme] = useState<"light" | "dark">("light");
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("theme");
+      if (saved === "dark") {
+        setTheme("dark");
+      } else {
+        setTheme("light");
+      }
+    } catch {}
+  }, []);
+
+  const toggleTheme = () => {
+    const next = theme === "light" ? "dark" : "light";
+    setTheme(next);
+    try {
+      localStorage.setItem("theme", next);
+      if (next === "dark") {
+        document.documentElement.setAttribute("data-theme", "dark");
+        document.documentElement.classList.add("dark");
+      } else {
+        document.documentElement.setAttribute("data-theme", "light");
+        document.documentElement.classList.remove("dark");
+      }
+    } catch {}
+  };
 
   // Responsive Drawer & Panels
   const [isLeftCollapsed, setIsLeftCollapsed] = useState(false);
@@ -435,31 +464,31 @@ export default function Home() {
   const databaseBackend = systemStats?.database.backend;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500/30">
+    <div className="min-h-screen bg-background text-foreground flex flex-col font-sans selection:bg-blue-500/20">
       {/* 1. SaaS Enterprise Header */}
-      <header className="sticky top-0 z-40 w-full border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md px-4 sm:px-6 py-3.5 flex items-center justify-between">
+      <header className="sticky top-0 z-40 w-full border-b border-border bg-surface/90 backdrop-blur-md px-4 sm:px-6 py-3.5 flex items-center justify-between">
         <div className="flex items-center gap-3">
           {/* Mobile drawer toggle buttons */}
           <button
             type="button"
             onClick={() => setMobileDrawer(mobileDrawer === "left" ? "none" : "left")}
-            className="lg:hidden p-2 bg-slate-900 border border-slate-800 text-slate-300 rounded-xl"
+            className="lg:hidden p-2 bg-surface-raised border border-border text-foreground rounded-xl"
             title="Toggle Research Library"
           >
             <Menu className="w-4 h-4" />
           </button>
 
-          <div className="p-2 bg-gradient-to-tr from-indigo-600 to-violet-600 rounded-xl shadow-lg shadow-indigo-500/20">
+          <div className="p-2 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-xl shadow-lg shadow-blue-500/20">
             <Sparkles className="w-5 h-5 text-white" aria-hidden="true" />
           </div>
           <div>
-            <h1 className="text-sm md:text-base font-bold tracking-tight text-white flex items-center gap-2">
+            <h1 className="text-sm md:text-base font-bold tracking-tight text-foreground flex items-center gap-2">
               Research Studio
-              <span className="px-2 py-0.5 text-[10px] uppercase font-mono font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-md">
+              <span className="px-2 py-0.5 text-[10px] uppercase font-mono font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 rounded-md">
                 Workspace
               </span>
             </h1>
-            <p className="text-[11px] text-slate-400 hidden sm:block">
+            <p className="text-[11px] text-muted-foreground hidden sm:block">
               Autonomous 4-Agent Research Squad & Mermaid Visual Canvas
             </p>
           </div>
@@ -468,23 +497,39 @@ export default function Home() {
         {/* System telemetry & Auth badges */}
         <div className="flex items-center gap-2 sm:gap-3">
           {systemStats && (
-            <div className="hidden xl:flex items-center gap-2 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-xs text-slate-300">
-              <Database className="w-3.5 h-3.5 text-indigo-400" aria-hidden="true" />
+            <div className="hidden xl:flex items-center gap-2 px-3 py-1.5 bg-surface-raised border border-border rounded-xl text-xs text-foreground">
+              <Database className="w-3.5 h-3.5 text-blue-500" aria-hidden="true" />
               <span>{databaseBackend ? databaseBackend.toUpperCase() : "DB"}</span>
-              <span className="text-slate-600">|</span>
-              <span className="text-slate-400">
+              <span className="text-muted-foreground">|</span>
+              <span className="text-muted-foreground">
                 Cache hits: {systemStats.cache.metrics.total_hits ?? 0}
               </span>
             </div>
           )}
 
+          {/* Theme Toggle Button */}
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border rounded-xl text-xs text-foreground transition"
+            title={theme === "light" ? "Switch to Dark Mode" : "Switch to Light Mode"}
+            aria-label="Toggle Theme"
+          >
+            {theme === "light" ? (
+              <Moon className="w-3.5 h-3.5 text-slate-700" />
+            ) : (
+              <Sun className="w-3.5 h-3.5 text-amber-400" />
+            )}
+            <span className="hidden sm:inline capitalize">{theme === "light" ? "Dark" : "Light"}</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setIsApiKeysOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 rounded-xl text-xs text-slate-300 transition"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border rounded-xl text-xs text-foreground transition"
             title="Configure API Keys (Gemini / OpenRouter)"
           >
-            <Key className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
+            <Key className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" aria-hidden="true" />
             <span className="hidden sm:inline">API Keys</span>
           </button>
 
@@ -492,20 +537,20 @@ export default function Home() {
           <button
             type="button"
             onClick={() => setMobileDrawer(mobileDrawer === "right" ? "none" : "right")}
-            className="lg:hidden p-2 bg-slate-900 border border-slate-800 text-slate-300 rounded-xl relative"
+            className="lg:hidden p-2 bg-surface-raised border border-border text-foreground rounded-xl relative"
             title="Toggle AI Command Center"
           >
-            <Cpu className="w-4 h-4 text-indigo-400" />
+            <Cpu className="w-4 h-4 text-blue-500" />
             {activeRunId && (
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
             )}
           </button>
 
           {user ? (
             <div className="flex items-center gap-2 pl-1 sm:pl-2">
-              <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-xs">
-                <UserCheck className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
-                <span className="text-slate-300 font-medium truncate max-w-[140px] md:max-w-none">
+              <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-surface-raised border border-border rounded-xl text-xs">
+                <UserCheck className="w-3.5 h-3.5 text-emerald-500" aria-hidden="true" />
+                <span className="text-foreground font-medium truncate max-w-[140px] md:max-w-none">
                   {user.email}
                 </span>
               </div>
@@ -514,7 +559,7 @@ export default function Home() {
                 onClick={() => void handleLogout()}
                 title="Log out"
                 aria-label="Log out"
-                className="p-2 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded-xl transition"
+                className="p-2 hover:bg-surface-raised text-muted-foreground hover:text-foreground rounded-xl transition"
               >
                 <LogOut className="w-4 h-4" aria-hidden="true" />
               </button>
@@ -523,7 +568,7 @@ export default function Home() {
             <button
               type="button"
               onClick={() => setIsAuthOpen(true)}
-              className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold transition shadow-md shadow-indigo-600/20"
+              className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold transition shadow-md shadow-blue-600/20"
             >
               Sign In
             </button>

@@ -73,16 +73,16 @@ export function LeftSidebar({
 
   if (isCollapsed) {
     return (
-      <div className="hidden lg:flex flex-col items-center gap-4 p-3 bg-slate-900/80 hover:bg-slate-900 border border-slate-800 rounded-2xl text-slate-400 hover:text-slate-200 transition shadow-xl w-14 shrink-0">
+      <div className="hidden lg:flex flex-col items-center gap-4 p-3 bg-surface border border-border rounded-2xl text-muted-foreground hover:text-foreground transition shadow-md w-14 shrink-0">
         <button
           type="button"
           onClick={onToggleCollapse}
-          className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 transition"
+          className="p-1.5 hover:bg-surface-raised rounded-lg text-foreground transition"
           title="Expand Research Workspace Sidebar"
         >
-          <ChevronRight className="w-5 h-5 text-indigo-400" />
+          <ChevronRight className="w-5 h-5 text-blue-600 dark:text-blue-400" />
         </button>
-        <span className="text-[10px] font-mono uppercase tracking-widest [writing-mode:vertical-rl] rotate-180 text-slate-400 font-semibold">
+        <span className="text-[10px] font-mono uppercase tracking-widest [writing-mode:vertical-rl] rotate-180 text-muted-foreground font-semibold">
           Articles & Controls ({articles.length})
         </span>
       </div>
@@ -90,18 +90,18 @@ export function LeftSidebar({
   }
 
   return (
-    <aside className="w-full lg:w-80 xl:w-92 shrink-0 flex flex-col gap-5 text-slate-100">
+    <aside className="w-full lg:w-80 xl:w-92 shrink-0 flex flex-col gap-5 text-foreground">
       {/* 1. Research Commission Box */}
-      <div className="bg-slate-900/80 border border-slate-800/80 rounded-2xl p-4 md:p-5 shadow-xl backdrop-blur-md">
-        <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-800/70">
-          <h2 className="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-indigo-400" aria-hidden="true" />
+      <div className="bg-surface border border-border rounded-2xl p-4 md:p-5 shadow-sm backdrop-blur-md">
+        <div className="flex items-center justify-between mb-3 pb-2 border-b border-border">
+          <h2 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
             Commission Research
           </h2>
           <button
             type="button"
             onClick={onToggleCollapse}
-            className="hidden lg:block p-1 text-slate-400 hover:text-slate-200 rounded hover:bg-slate-800 transition"
+            className="hidden lg:block p-1 text-muted-foreground hover:text-foreground rounded hover:bg-surface-raised transition"
             title="Collapse Sidebar"
           >
             <ChevronLeft className="w-4 h-4" />
@@ -120,13 +120,13 @@ export function LeftSidebar({
               placeholder="Enter research topic, architectural domain, or prompt brief…"
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
-              className="w-full p-3 bg-slate-950 border border-slate-800 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-200 resize-none placeholder:text-slate-500 leading-relaxed"
+              className="w-full p-3 bg-surface-raised border border-border rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 text-foreground resize-none placeholder:text-muted-foreground leading-relaxed"
             />
           </div>
 
           {/* Preset Topics */}
           <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5 font-mono">
+            <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block mb-1.5 font-mono">
               Suggested Topics
             </span>
             <div className="flex flex-col gap-1">
@@ -135,7 +135,7 @@ export function LeftSidebar({
                   key={idx}
                   type="button"
                   onClick={() => setTopic(preset)}
-                  className="text-left px-2.5 py-1.5 bg-slate-950 hover:bg-slate-800/80 text-slate-300 hover:text-white rounded-lg text-xs truncate transition border border-slate-800/60"
+                  className="text-left px-2.5 py-1.5 bg-surface-raised hover:bg-blue-50 dark:hover:bg-slate-800 text-foreground hover:text-blue-600 dark:hover:text-blue-400 rounded-lg text-xs truncate transition border border-border"
                 >
                   {preset}
                 </button>
@@ -149,10 +149,10 @@ export function LeftSidebar({
               type="button"
               onClick={() => setShowAdvanced(!showAdvanced)}
               aria-expanded={showAdvanced}
-              className="flex items-center justify-between w-full py-1 text-xs text-slate-400 hover:text-slate-200 transition"
+              className="flex items-center justify-between w-full py-1 text-xs text-muted-foreground hover:text-foreground transition"
             >
               <span className="flex items-center gap-1.5 font-medium">
-                <SlidersHorizontal className="w-3 h-3 text-indigo-400" aria-hidden="true" />
+                <SlidersHorizontal className="w-3 h-3 text-blue-600 dark:text-blue-400" aria-hidden="true" />
                 Tone & Scope Controls
               </span>
               <ChevronDown
@@ -162,16 +162,16 @@ export function LeftSidebar({
             </button>
 
             {showAdvanced && (
-              <div className="pt-3 space-y-2.5 border-t border-slate-800/70 mt-2">
+              <div className="pt-3 space-y-2.5 border-t border-border mt-2">
                 <div>
-                  <label htmlFor="tone-select-box" className="block text-[11px] text-slate-400 mb-1">
+                  <label htmlFor="tone-select-box" className="block text-[11px] text-muted-foreground mb-1">
                     Tone of Voice
                   </label>
                   <select
                     id="tone-select-box"
                     value={tone}
                     onChange={(e) => setTone(e.target.value)}
-                    className="w-full p-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200"
+                    className="w-full p-2 bg-surface-raised border border-border rounded-xl text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500"
                   >
                     <option>Professional & Authoritative</option>
                     <option>Engaging & Accessible</option>
@@ -181,14 +181,14 @@ export function LeftSidebar({
                 </div>
 
                 <div>
-                  <label htmlFor="audience-select-box" className="block text-[11px] text-slate-400 mb-1">
+                  <label htmlFor="audience-select-box" className="block text-[11px] text-muted-foreground mb-1">
                     Target Audience
                   </label>
                   <select
                     id="audience-select-box"
                     value={audience}
                     onChange={(e) => setAudience(e.target.value)}
-                    className="w-full p-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200"
+                    className="w-full p-2 bg-surface-raised border border-border rounded-xl text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500"
                   >
                     <option>Software Engineers & Developers</option>
                     <option>CTOs & Tech Leaders</option>
@@ -198,14 +198,14 @@ export function LeftSidebar({
                 </div>
 
                 <div>
-                  <label htmlFor="length-select-box" className="block text-[11px] text-slate-400 mb-1">
+                  <label htmlFor="length-select-box" className="block text-[11px] text-muted-foreground mb-1">
                     Target Depth
                   </label>
                   <select
                     id="length-select-box"
                     value={targetLength}
                     onChange={(e) => setTargetLength(e.target.value)}
-                    className="w-full p-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200"
+                    className="w-full p-2 bg-surface-raised border border-border rounded-xl text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500"
                   >
                     <option>Quick Brief (800 - 1,200 words)</option>
                     <option>Standard Blog (1,500 - 2,000 words)</option>
@@ -220,7 +220,7 @@ export function LeftSidebar({
           <button
             type="submit"
             disabled={isSubmitting || !!activeRunId || !topic.trim()}
-            className="w-full py-2.5 px-4 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:opacity-50 text-white font-semibold rounded-xl text-xs transition shadow-lg shadow-indigo-600/20 flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
+            className="w-full py-2.5 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 text-white font-semibold rounded-xl text-xs transition shadow-md shadow-blue-600/20 flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
           >
             <Sparkles className="w-4 h-4" aria-hidden="true" />
             <span>{isSubmitting ? "Dispatching Squad…" : "Launch Research Squad"}</span>
@@ -229,12 +229,12 @@ export function LeftSidebar({
       </div>
 
       {/* 2. Articles Library with Search & Filtering */}
-      <div className="bg-slate-900/80 border border-slate-800/80 rounded-2xl p-4 md:p-5 shadow-xl backdrop-blur-md flex-1 flex flex-col min-h-[300px]">
-        <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-800/70">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
-            <BookOpen className="w-3.5 h-3.5 text-indigo-400" aria-hidden="true" />
+      <div className="bg-surface border border-border rounded-2xl p-4 md:p-5 shadow-sm backdrop-blur-md flex-1 flex flex-col min-h-[300px]">
+        <div className="flex items-center justify-between mb-3 pb-2 border-b border-border">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-2">
+            <BookOpen className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
             Articles Library
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-indigo-300 border border-slate-700/60">
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-surface-raised text-blue-600 dark:text-blue-400 border border-border">
               {articles.length}
             </span>
           </h3>
@@ -242,18 +242,18 @@ export function LeftSidebar({
 
         {/* Search Bar */}
         <div className="relative mb-3">
-          <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
+          <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-3 top-2.5" />
           <input
             type="text"
             placeholder="Search articles & topics…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            className="w-full pl-8 pr-3 py-1.5 bg-surface-raised border border-border rounded-xl text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
         </div>
 
         {/* Articles List */}
-        <div className="space-y-2 overflow-y-auto max-h-[380px] pr-1 divide-y divide-slate-800/40 flex-1">
+        <div className="space-y-1.5 overflow-y-auto max-h-[380px] pr-1 flex-1">
           {filteredArticles.map((article) => {
             const isSelected = selectedArticleId === article.id;
             return (
@@ -261,16 +261,16 @@ export function LeftSidebar({
                 key={article.id}
                 type="button"
                 onClick={() => onSelectArticle(article.id)}
-                className={`w-full text-left pt-2.5 p-3 rounded-xl transition cursor-pointer ${
+                className={`w-full text-left p-3 rounded-xl transition cursor-pointer ${
                   isSelected
-                    ? "bg-indigo-950/40 border border-indigo-500/50 text-slate-100 shadow-md"
-                    : "hover:bg-slate-800/40 text-slate-300 border border-transparent"
+                    ? "bg-blue-50 dark:bg-blue-950/40 border border-blue-500/40 text-blue-950 dark:text-blue-100 shadow-sm"
+                    : "hover:bg-surface-raised text-foreground border border-transparent"
                 }`}
               >
-                <h4 className="text-xs font-semibold line-clamp-2 mb-1.5 leading-snug">
+                <h4 className="text-xs font-semibold line-clamp-2 mb-1 leading-snug">
                   {article.topic}
                 </h4>
-                <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                <div className="flex items-center justify-between text-[10px] text-muted-foreground font-mono">
                   <span>{article.word_count.toLocaleString()} words</span>
                   <span>{article.created_at?.split("T")[0] || article.created_at}</span>
                 </div>
@@ -279,8 +279,8 @@ export function LeftSidebar({
           })}
 
           {filteredArticles.length === 0 && (
-            <div className="p-8 text-center text-xs text-slate-500 italic flex flex-col items-center gap-2">
-              <FolderOpen className="w-6 h-6 text-slate-600" />
+            <div className="p-8 text-center text-xs text-muted-foreground italic flex flex-col items-center gap-2">
+              <FolderOpen className="w-6 h-6 text-muted-foreground" />
               <span>{searchQuery ? "No matching articles found." : "No articles recorded yet."}</span>
             </div>
           )}

@@ -16,10 +16,10 @@ import {
   Maximize2,
   Minimize2,
   Hash,
-    Bookmark,
+  Bookmark,
   Quote,
-    Link as LinkIcon,
-    ListOrdered,
+  Link as LinkIcon,
+  ListOrdered,
 } from "lucide-react";
 
 interface ArticleViewerProps {
@@ -58,7 +58,7 @@ function getNodeText(node: React.ReactNode): string {
     return node.map(getNodeText).join("");
   }
   if (React.isValidElement(node) && (node.props as { children?: React.ReactNode })?.children) {
-    return getNodeText((node.props as { children?: React.ReactNode }).children);
+    return getNodeText((node.props as { children: React.ReactNode }).children);
   }
   return "";
 }
@@ -68,7 +68,7 @@ export function ArticleViewer({
   content,
   wordCount,
   generationTime,
-  isStreaming,
+  isStreaming = false,
   onOpenCopilot,
   onOpenVersionHistory,
 }: ArticleViewerProps) {
@@ -76,117 +76,90 @@ export function ArticleViewer({
   const [copiedCitations, setCopiedCitations] = useState(false);
   const [isFocusMode, setIsFocusMode] = useState(false);
   const [showTocMobile, setShowTocMobile] = useState(false);
-  const articleRef = useRef<HTMLElement>(null);
+  const articleRef = useRef<HTMLDivElement>(null);
 
-  const calculatedWords = useMemo(() => {
-    return wordCount || content.trim().split(/\s+/).filter(Boolean).length;
-  }, [content, wordCount]);
-
-  const readingTimeMin = useMemo(() => {
-    return Math.max(1, Math.ceil(calculatedWords / 225));
-  }, [calculatedWords]);
-
-  // Extract H2 & H3 headings for dynamic Table of Contents with unique IDs
-  const headings = useMemo(() => {
-    const lines = content.split("\n");
-    const list: Array<{ id: string; text: string; level: number }> = [];
-    const seenIds: Record<string, number> = {};
-
-    lines.forEach((line) => {
-      const h2Match = line.match(/^##\s+(.+)$/);
-      const h3Match = line.match(/^###\s+(.+)$/);
-      if (h2Match || h3Match) {
-        const rawText = (h2Match ? h2Match[1] : (h3Match ? h3Match[1] : "")).trim();
-        const cleanText = stripMarkdown(rawText);
-        const baseId = slugifyHeading(cleanText);
-        const count = seenIds[baseId] || 0;
-        seenIds[baseId] = count + 1;
-        const uniqueId = count === 0 ? baseId : `${baseId}-${count}`;
-        list.push({
-          id: uniqueId,
-          text: cleanText,
-          level: h2Match ? 2 : 3,
-        });
+  // Extract primary citations/references
+  const citations = useMemo(() => {
+    const urls: string[] = [];
+    const urlRegex = /(https?:\/\/[^\s)]+)/g;
+    let match;
+    while ((match = urlRegex.exec(content)) !== null) {
+      if (!urls.includes(match[1])) {
+        urls.push(match[1]);
       }
-    });
-    return list;
+    }
+    return urls;
   }, [content]);
 
-  // Group occurrences of each heading in exact document order
-  const headingOccurrences = useMemo(() => {
-    const map = new Map<string, string[]>();
-    headings.forEach((h) => {
-      const existing = map.get(h.text) || [];
-      existing.push(h.id);
-      map.set(h.text, existing);
-    });
-    return map;
-  }, [headings]);
+  // Extract structured headings for dynamic TOC
+  const headings = useMemo(() => {
+    const headingLines: { id: string; text: string; level: number }[] = [];
+    const lines = content.split("\n");
+    const counts: Record<string, number> = {};
 
-  // Generator for heading IDs that resets at the start of each render pass
-  const headingCounts = useMemo<Record<string, number>>(() => ({}), [content]);
-  const getNextHeadingId = (text: string) => {
-    const index = headingCounts[text] || 0;
-    headingCounts[text] = index + 1;
-    const ids = headingOccurrences.get(text);
-    if (ids && index < ids.length) {
-      return ids[index];
+    for (const line of lines) {
+      const match = line.match(/^(#{2,3})\s+(.*)$/);
+      if (match) {
+        const level = match[1].length;
+        const rawText = match[2].trim();
+        const cleanText = stripMarkdown(rawText);
+        let id = slugifyHeading(cleanText);
+
+        if (counts[id] !== undefined) {
+          counts[id] += 1;
+          id = `${id}-${counts[id]}`;
+        } else {
+          counts[id] = 0;
+        }
+
+        headingLines.push({ id, text: cleanText, level });
+      }
     }
-    return slugifyHeading(text);
+    return headingLines;
+  }, [content]);
+
+  const headingIdCountsRef = useRef<Record<string, number>>({});
+  headingIdCountsRef.current = {};
+
+  const getNextHeadingId = (cleanText: string): string => {
+    let base = slugifyHeading(cleanText);
+    const seen = headingIdCountsRef.current[base];
+    if (seen !== undefined) {
+      headingIdCountsRef.current[base] = seen + 1;
+      return `${base}-${seen + 1}`;
+    }
+    headingIdCountsRef.current[base] = 0;
+    return base;
   };
 
-  // Extract citations/references list from content
-  const citations = useMemo(() => {
-    const list: string[] = [];
-    // Matches markdown links [Title](http...) or reference entries
-    const regex = /\[(\d+|[^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
-    let match;
-    while ((match = regex.exec(content)) !== null) {
-      list.push(`${match[1]}: ${match[2]}`);
-    }
-    // Also look for numbered list under References section
-    const refSection = content.split(/##\s+References|##\s+Verified Sources/i)[1];
-    if (refSection) {
-      const refLines = refSection
-        .split("\n")
-        .filter((l) => /^(\d+\.|-|\*|\[)/.test(l.trim()));
-      refLines.forEach((rl) => {
-        const trimmed = rl.trim();
-        if (!list.includes(trimmed) && trimmed.length > 3) {
-          list.push(trimmed);
-        }
-      });
-    }
-    return Array.from(new Set(list));
-  }, [content]);
+  const calculatedWords = useMemo(() => {
+    if (wordCount && wordCount > 0) return wordCount;
+    return content.trim().split(/\s+/).filter(Boolean).length;
+  }, [content, wordCount]);
 
-  // Actions
-  const handleCopyArticle = () => {
-    void navigator.clipboard.writeText(content).catch((err: unknown) => {
-      console.error("Clipboard write failed:", err);
-    });
+  const readingTimeMin = Math.max(1, Math.ceil(calculatedWords / 225));
+
+  const handleCopyArticle = async () => {
+    await navigator.clipboard.writeText(content);
     setCopiedArticle(true);
     setTimeout(() => setCopiedArticle(false), 2000);
   };
 
-  const handleCopyCitations = () => {
-    const textToCopy =
-      citations.length > 0
-        ? citations.join("\n")
-        : "No explicit citations found in this article.";
-    void navigator.clipboard.writeText(textToCopy).catch((err: unknown) => {
-      console.error("Clipboard write failed:", err);
-    });
+  const handleCopyCitations = async () => {
+    if (citations.length === 0) return;
+    const formatted = citations.map((url, i) => `[${i + 1}] ${url}`).join("\n");
+    await navigator.clipboard.writeText(formatted);
     setCopiedCitations(true);
     setTimeout(() => setCopiedCitations(false), 2000);
   };
 
   const handleDownloadMarkdown = () => {
+    const filename = `${topic.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "research-article"}.md`;
     const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${topic.toLowerCase().replace(/[^a-z0-9]+/g, "_")}.md`;
+    anchor.download = filename;
     anchor.click();
     URL.revokeObjectURL(url);
   };
@@ -195,14 +168,9 @@ export function ArticleViewer({
     window.print();
   };
 
-  /**
-   * Custom Markdown Components adhering to Notion/Linear aesthetic:
-   * Executive summaries highlighted, readable tables, clean code blocks,
-   * proper section hierarchy, and interactive Mermaid diagrams.
-   */
   const markdownComponents: Components = {
     h1: ({ children }) => (
-      <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-slate-100 mt-2 mb-6 pb-4 border-b border-slate-800/80 leading-tight">
+      <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-foreground mt-2 mb-6 pb-4 border-b border-border leading-tight">
         {children}
       </h1>
     ),
@@ -213,13 +181,13 @@ export function ArticleViewer({
       return (
         <h2
           id={id}
-          className={`scroll-mt-24 text-2xl font-bold mt-12 mb-4 pb-2 border-b border-slate-800/80 text-slate-100 flex items-center gap-2 group ${
-            isExecutiveSummary ? "text-indigo-400" : ""
+          className={`scroll-mt-24 text-2xl font-bold mt-12 mb-4 pb-2 border-b border-border text-foreground flex items-center gap-2 group ${
+            isExecutiveSummary ? "text-blue-600 dark:text-blue-400" : ""
           }`}
         >
           <a
             href={`#${id}`}
-            className="text-slate-600 hover:text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity"
+            className="text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity"
             aria-label={`Link to ${text}`}
           >
             <Hash className="w-5 h-5" />
@@ -234,11 +202,11 @@ export function ArticleViewer({
       return (
         <h3
           id={id}
-          className="scroll-mt-24 text-lg font-semibold mt-8 mb-3 text-slate-200 flex items-center gap-2 group"
+          className="scroll-mt-24 text-lg font-semibold mt-8 mb-3 text-foreground flex items-center gap-2 group"
         >
           <a
             href={`#${id}`}
-            className="text-slate-600 hover:text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity"
+            className="text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity"
             aria-label={`Link to ${text}`}
           >
             <Hash className="w-4 h-4" />
@@ -248,29 +216,29 @@ export function ArticleViewer({
       );
     },
     p: ({ children }) => (
-      <p className="text-slate-300 leading-relaxed text-[15px] md:text-base my-4 tracking-normal">
+      <p className="text-foreground/90 leading-relaxed text-[15px] md:text-base my-4 tracking-normal">
         {children}
       </p>
     ),
     blockquote: ({ children }) => (
-      <blockquote className="my-6 pl-4 border-l-4 border-indigo-500 bg-slate-900/60 p-4 rounded-r-2xl italic text-slate-300 text-sm md:text-base">
+      <blockquote className="my-6 pl-4 border-l-4 border-blue-600 bg-surface-raised p-4 rounded-r-2xl italic text-foreground text-sm md:text-base">
         {children}
       </blockquote>
     ),
     table: ({ children }) => (
-      <div className="my-8 overflow-x-auto rounded-2xl border border-slate-800 bg-slate-950/90 shadow-xl">
-        <table className="w-full text-left border-collapse text-xs md:text-sm text-slate-300">
+      <div className="my-8 overflow-x-auto rounded-2xl border border-border bg-surface shadow-sm">
+        <table className="w-full text-left border-collapse text-xs md:text-sm text-foreground">
           {children}
         </table>
       </div>
     ),
     thead: ({ children }) => (
-      <thead className="bg-slate-900 border-b border-slate-800 font-semibold text-slate-200 text-xs uppercase tracking-wider">
+      <thead className="bg-surface-raised border-b border-border font-semibold text-foreground text-xs uppercase tracking-wider">
         {children}
       </thead>
     ),
-    tbody: ({ children }) => <tbody className="divide-y divide-slate-800/60">{children}</tbody>,
-    th: ({ children }) => <th className="px-4 py-3 font-semibold text-indigo-300">{children}</th>,
+    tbody: ({ children }) => <tbody className="divide-y divide-border">{children}</tbody>,
+    th: ({ children }) => <th className="px-4 py-3 font-semibold text-blue-600 dark:text-blue-400">{children}</th>,
     td: ({ children }) => <td className="px-4 py-3 leading-normal">{children}</td>,
     pre: ({ children }) => <>{children}</>,
     code: ({ className, children, ...props }) => {
@@ -286,21 +254,21 @@ export function ArticleViewer({
 
       if (isBlock) {
         return (
-          <div className="my-6 rounded-2xl overflow-hidden border border-slate-800 bg-slate-950 shadow-lg">
-            <div className="flex items-center justify-between px-4 py-2 bg-slate-900/70 border-b border-slate-800 text-[11px] font-mono text-slate-400">
+          <div className="my-6 rounded-2xl overflow-hidden border border-border bg-slate-900 text-slate-100 shadow-sm">
+            <div className="flex items-center justify-between px-4 py-2 bg-slate-950/80 border-b border-slate-800 text-[11px] font-mono text-slate-400">
               <span>{language || "code"}</span>
               <button
                 type="button"
                 onClick={() => {
                   void navigator.clipboard.writeText(codeText);
                 }}
-                className="hover:text-indigo-300 transition"
+                className="hover:text-blue-300 transition"
                 title="Copy code snippet"
               >
                 Copy
               </button>
             </div>
-            <pre className="p-4 overflow-x-auto text-xs md:text-sm font-mono text-slate-300 leading-relaxed">
+            <pre className="p-4 overflow-x-auto text-xs md:text-sm font-mono leading-relaxed">
               <code className={className}>{children}</code>
             </pre>
           </div>
@@ -309,7 +277,7 @@ export function ArticleViewer({
 
       return (
         <code
-          className="px-1.5 py-0.5 rounded-md bg-slate-800/80 text-indigo-300 font-mono text-xs border border-slate-700/50"
+          className="px-1.5 py-0.5 rounded-md bg-surface-raised text-blue-600 dark:text-blue-400 font-mono text-xs border border-border"
           {...props}
         >
           {children}
@@ -323,7 +291,7 @@ export function ArticleViewer({
           href={href}
           target={isInternal ? undefined : "_blank"}
           rel={isInternal ? undefined : "noopener noreferrer"}
-          className="text-indigo-400 hover:text-indigo-300 underline underline-offset-4 decoration-indigo-500/40 hover:decoration-indigo-400 transition"
+          className="text-blue-600 dark:text-blue-400 hover:text-blue-700 underline underline-offset-4 decoration-blue-500/40 hover:decoration-blue-600 transition"
         >
           {children}
         </a>
@@ -338,32 +306,32 @@ export function ArticleViewer({
       }`}
     >
       {/* 1. Article Actions Bar */}
-      <div className="sticky top-16 z-30 flex flex-wrap items-center justify-between gap-3 p-3.5 bg-slate-950/80 border border-slate-800/80 rounded-2xl backdrop-blur-xl shadow-lg">
+      <div className="sticky top-16 z-30 flex flex-wrap items-center justify-between gap-3 p-3.5 bg-surface/90 border border-border rounded-2xl backdrop-blur-xl shadow-sm">
         {/* Left Stats */}
         <div className="flex items-center gap-2.5 flex-wrap">
-          <span className="flex items-center gap-1.5 px-3 py-1 bg-slate-900 border border-slate-800/80 rounded-xl text-xs font-medium text-slate-300">
-            <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
+          <span className="flex items-center gap-1.5 px-3 py-1 bg-surface-raised border border-border rounded-xl text-xs font-medium text-foreground">
+            <BookOpen className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
             <span>{calculatedWords.toLocaleString()} words</span>
           </span>
           {isStreaming ? (
-            <span className="flex items-center gap-1.5 px-3 py-1 bg-emerald-950/60 border border-emerald-500/40 rounded-xl text-xs font-medium text-emerald-300 animate-pulse">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+            <span className="flex items-center gap-1.5 px-3 py-1 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-500/40 rounded-xl text-xs font-medium text-emerald-700 dark:text-emerald-300 animate-pulse">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
               <span>Streaming Draft Live...</span>
             </span>
           ) : (
-            <span className="flex items-center gap-1.5 px-3 py-1 bg-slate-900 border border-slate-800/80 rounded-xl text-xs font-medium text-slate-300">
-              <Clock className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="flex items-center gap-1.5 px-3 py-1 bg-surface-raised border border-border rounded-xl text-xs font-medium text-foreground">
+              <Clock className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
               <span>{readingTimeMin} min read</span>
             </span>
           )}
           {generationTime && (
-            <span className="hidden sm:flex items-center gap-1 px-3 py-1 bg-slate-900/60 border border-slate-800/50 rounded-xl text-xs text-slate-400">
+            <span className="hidden sm:flex items-center gap-1 px-3 py-1 bg-surface-raised border border-border rounded-xl text-xs text-muted-foreground">
               <span>Gen: {generationTime}s</span>
             </span>
           )}
           {citations.length > 0 && (
-            <span className="hidden md:flex items-center gap-1 px-3 py-1 bg-indigo-950/40 border border-indigo-500/30 rounded-xl text-xs text-indigo-300">
-              <LinkIcon className="w-3 h-3 text-indigo-400" />
+            <span className="hidden md:flex items-center gap-1 px-3 py-1 bg-blue-50 dark:bg-blue-950/40 border border-blue-500/30 rounded-xl text-xs text-blue-700 dark:text-blue-300">
+              <LinkIcon className="w-3 h-3 text-blue-600 dark:text-blue-400" />
               <span>{citations.length} Verified Sources</span>
             </span>
           )}
@@ -376,10 +344,10 @@ export function ArticleViewer({
             <button
               type="button"
               onClick={() => setShowTocMobile(!showTocMobile)}
-              className="xl:hidden flex items-center gap-1 px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 rounded-xl text-xs transition"
+              className="xl:hidden flex items-center gap-1 px-2.5 py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border text-foreground rounded-xl text-xs transition"
               title="Table of Contents"
             >
-              <ListOrdered className="w-3.5 h-3.5 text-indigo-400" />
+              <ListOrdered className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
               <span className="hidden sm:inline">TOC</span>
             </button>
           )}
@@ -388,13 +356,13 @@ export function ArticleViewer({
           <button
             type="button"
             onClick={handleCopyArticle}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 rounded-xl text-xs font-medium transition"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border text-foreground rounded-xl text-xs font-medium transition cursor-pointer"
             title="Copy entire markdown article to clipboard"
           >
             {copiedArticle ? (
-              <Check className="w-3.5 h-3.5 text-emerald-400" />
+              <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
             ) : (
-              <Copy className="w-3.5 h-3.5 text-slate-400" />
+              <Copy className="w-3.5 h-3.5 text-muted-foreground" />
             )}
             <span className="hidden md:inline">{copiedArticle ? "Copied" : "Copy Article"}</span>
           </button>
@@ -403,13 +371,13 @@ export function ArticleViewer({
           <button
             type="button"
             onClick={handleCopyCitations}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 rounded-xl text-xs font-medium transition"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border text-foreground rounded-xl text-xs font-medium transition cursor-pointer"
             title="Copy bibliography & sources"
           >
             {copiedCitations ? (
-              <Check className="w-3.5 h-3.5 text-emerald-400" />
+              <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
             ) : (
-              <Quote className="w-3.5 h-3.5 text-slate-400" />
+              <Quote className="w-3.5 h-3.5 text-muted-foreground" />
             )}
             <span className="hidden md:inline">{copiedCitations ? "Copied" : "Copy Citations"}</span>
           </button>
@@ -418,33 +386,33 @@ export function ArticleViewer({
           <button
             type="button"
             onClick={handleDownloadMarkdown}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 rounded-xl text-xs font-medium transition"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border text-foreground rounded-xl text-xs font-medium transition cursor-pointer"
             title="Download .md file"
           >
-            <Download className="w-3.5 h-3.5 text-slate-400" />
+            <Download className="w-3.5 h-3.5 text-muted-foreground" />
             <span className="hidden sm:inline">Export .md</span>
           </button>
 
-          {/* Export PDF (Browser Native High-Fidelity Print) */}
+          {/* Export PDF */}
           <button
             type="button"
             onClick={handlePrintPdf}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 rounded-xl text-xs font-medium transition"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border text-foreground rounded-xl text-xs font-medium transition cursor-pointer"
             title="Export or Print as PDF"
           >
-            <Printer className="w-3.5 h-3.5 text-slate-400" />
+            <Printer className="w-3.5 h-3.5 text-muted-foreground" />
             <span className="hidden sm:inline">Export PDF</span>
           </button>
 
-          {/* Version History (if handler available) */}
+          {/* Version History */}
           {onOpenVersionHistory && (
             <button
               type="button"
               onClick={onOpenVersionHistory}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 rounded-xl text-xs font-medium transition"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border text-foreground rounded-xl text-xs font-medium transition cursor-pointer"
               title="Open Revisions Timeline"
             >
-              <Bookmark className="w-3.5 h-3.5 text-indigo-400" />
+              <Bookmark className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
               <span className="hidden lg:inline">Versions</span>
             </button>
           )}
@@ -453,7 +421,7 @@ export function ArticleViewer({
           <button
             type="button"
             onClick={() => setIsFocusMode(!isFocusMode)}
-            className="p-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-slate-200 rounded-xl transition"
+            className="p-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border text-muted-foreground hover:text-foreground rounded-xl transition cursor-pointer"
             title={isFocusMode ? "Exit Focus Mode" : "Distraction-Free Focus Mode"}
           >
             {isFocusMode ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
@@ -464,7 +432,7 @@ export function ArticleViewer({
             <button
               type="button"
               onClick={onOpenCopilot}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white rounded-xl text-xs font-semibold shadow-md shadow-indigo-600/20 transition"
+              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs font-semibold shadow-md shadow-blue-600/20 transition cursor-pointer"
             >
               <FileText className="w-3.5 h-3.5" />
               <span>AI Copilot</span>
@@ -475,8 +443,8 @@ export function ArticleViewer({
 
       {/* Mobile TOC Drawer dropdown */}
       {showTocMobile && headings.length > 0 && (
-        <div className="xl:hidden p-4 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl">
-          <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
+        <div className="xl:hidden p-4 bg-surface border border-border rounded-2xl shadow-md">
+          <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">
             Table of Contents
           </h4>
           <nav className="space-y-1.5 max-h-48 overflow-y-auto text-xs">
@@ -485,8 +453,8 @@ export function ArticleViewer({
                 key={i}
                 href={`#${h.id}`}
                 onClick={() => setShowTocMobile(false)}
-                className={`block py-1 text-slate-300 hover:text-indigo-400 ${
-                  h.level === 3 ? "pl-3 text-slate-400" : "font-medium"
+                className={`block py-1 text-foreground hover:text-blue-600 dark:hover:text-blue-400 ${
+                  h.level === 3 ? "pl-3 text-muted-foreground" : "font-medium"
                 }`}
               >
                 {h.text}
@@ -501,7 +469,7 @@ export function ArticleViewer({
         {/* Center Article Reader Container */}
         <article
           ref={articleRef}
-          className="flex-1 min-w-0 bg-slate-900/60 border border-slate-800/80 rounded-3xl p-6 sm:p-10 md:p-14 shadow-2xl backdrop-blur-md"
+          className="flex-1 min-w-0 bg-surface border border-border rounded-3xl p-6 sm:p-10 md:p-14 shadow-sm backdrop-blur-md"
         >
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
@@ -513,32 +481,32 @@ export function ArticleViewer({
 
           {/* Live Streaming Indicator Cursor */}
           {isStreaming && (
-            <div className="mt-4 flex items-center gap-2 text-indigo-400 font-mono text-sm select-none">
-              <span className="inline-block w-2.5 h-5 bg-indigo-400 animate-pulse rounded-sm" />
-              <span className="text-xs text-slate-400 italic">Blog Writer drafting token-by-token...</span>
+            <div className="mt-4 flex items-center gap-2 text-blue-600 dark:text-blue-400 font-mono text-sm select-none">
+              <span className="inline-block w-2.5 h-5 bg-blue-600 dark:bg-blue-400 animate-pulse rounded-sm" />
+              <span className="text-xs text-muted-foreground italic">Blog Writer drafting token-by-token...</span>
             </div>
           )}
 
           {/* End of article citation summary card */}
           {citations.length > 0 && (
-            <div className="mt-14 pt-8 border-t border-slate-800/80">
+            <div className="mt-14 pt-8 border-t border-border">
               <div className="flex items-center justify-between mb-4">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-                  <LinkIcon className="w-3.5 h-3.5 text-indigo-400" />
+                <h4 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-2">
+                  <LinkIcon className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                   Verified Primary References ({citations.length})
                 </h4>
                 <button
                   type="button"
                   onClick={handleCopyCitations}
-                  className="text-xs text-indigo-400 hover:text-indigo-300 transition"
+                  className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-700 transition cursor-pointer"
                 >
                   {copiedCitations ? "Copied Sources" : "Copy All Sources"}
                 </button>
               </div>
-              <ul className="space-y-2 text-xs text-slate-400 font-mono bg-slate-950/70 p-4 rounded-2xl border border-slate-800/70">
+              <ul className="space-y-2 text-xs text-muted-foreground font-mono bg-surface-raised p-4 rounded-2xl border border-border">
                 {citations.map((c, i) => (
                   <li key={i} className="truncate">
-                    <span className="text-indigo-400 mr-2">[{i + 1}]</span>
+                    <span className="text-blue-600 dark:text-blue-400 mr-2">[{i + 1}]</span>
                     {c}
                   </li>
                 ))}
@@ -549,9 +517,9 @@ export function ArticleViewer({
 
         {/* 3. Floating Sticky Table of Contents (Desktop XL+) */}
         {!isFocusMode && headings.length > 0 && (
-          <aside className="hidden xl:block w-72 shrink-0 sticky top-36 p-5 bg-slate-900/50 border border-slate-800/80 rounded-2xl backdrop-blur-md max-h-[calc(100vh-160px)] overflow-y-auto">
-            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-300 mb-3 pb-2 border-b border-slate-800/70">
-              <ListOrdered className="w-3.5 h-3.5 text-indigo-400" />
+          <aside className="hidden xl:block w-72 shrink-0 sticky top-36 p-5 bg-surface border border-border rounded-2xl shadow-sm max-h-[calc(100vh-160px)] overflow-y-auto">
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-foreground mb-3 pb-2 border-b border-border">
+              <ListOrdered className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
               <span>Outline</span>
             </div>
             <nav className="space-y-2 text-xs" aria-label="Table of contents">
@@ -561,8 +529,8 @@ export function ArticleViewer({
                   href={`#${heading.id}`}
                   className={`block transition-colors line-clamp-1 py-0.5 ${
                     heading.level === 3
-                      ? "pl-3 text-slate-400 hover:text-slate-200 text-[11px]"
-                      : "text-slate-300 hover:text-indigo-400 font-medium"
+                      ? "pl-3 text-muted-foreground hover:text-foreground text-[11px]"
+                      : "text-foreground hover:text-blue-600 dark:hover:text-blue-400 font-medium"
                   }`}
                 >
                   {heading.text}
