@@ -397,6 +397,12 @@ def _execute_run_worker(
             tracer.end_job(outputs={"status": "cancelled"})
             return
 
+        # Fetch active lease claim to enforce mandatory fencing parameters
+        active_claim = db.get_active_run_claim(run_id)
+        worker_id_val = str(active_claim.get("worker_id", "")) if active_claim else "worker_default"
+        lease_token_val = str(active_claim.get("lease_token", "")) if active_claim else "lease_default"
+        fencing_token_val = int(active_claim.get("fencing_token", 1)) if active_claim else 1
+
         try:
             art_id, _initial_revision_num = db.save_article_with_initial_revision(
                 topic=safe_topic,
@@ -409,6 +415,9 @@ def _execute_run_worker(
                 summary="Initial AI Squad Generation",
                 author="AI Squad",
                 run_id=run_id,
+                worker_id=worker_id_val,
+                lease_token=lease_token_val,
+                fencing_token=fencing_token_val,
             )
         except PermissionError as perm_err:
             logger.info("Article persistence aborted due to lease/cancellation fence: %s", perm_err)
