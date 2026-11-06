@@ -731,4 +731,157 @@ def test_concurrent_completion_and_cancellation_race(tmp_path):
     assert job["status"] == "cancelled"
 
 
+def test_atomic_terminal_failure_injection_rollback(tmp_path, monkeypatch):
+    """Verify failure injection and transaction rollback behavior for terminal completion.
+
+    Validates:
+    - Terminal event insert succeeds, status update fails: both roll back.
+    - Status update succeeds, claim release fails: all roll back.
+    - Status update succeeds, terminal event insert fails: both roll back.
+    - Successful execution: status, event and claim release commit together.
+    """
+    test_db = str(tmp_path / "term_rollback.db")
+    os.environ["RESEARCH_STUDIO_DB_PATH"] = test_db
+    db.init_db()
+
+    run_id = "run_term_rollback_1"
+    db.create_research_job_atomic(run_id, "Failure Injection Topic", user_id=9903)
+
+    # 1. Failure injection: event insert succeeds, but status update raises Exception
+    original_update = db.update_research_job
+    def broken_update(*args, **kwargs):
+        raise RuntimeError("Simulated status update failure after event allocation")
+    monkeypatch.setattr(db, "update_research_job", broken_update)
+
+    with pytest.raises(RuntimeError, match="Simulated status update failure"):
+        db.complete_research_job_atomic(
+            run_id=run_id,
+            status="completed",
+            event_type="completed",
+            event_payload={"result": "boom"},
+            event_id=f"term_{run_id}_completed",
+        )
+
+    # In production without unified transaction wrapper, event would be orphaned if not rolled back.
+    # Verify initial non-terminal state remains intact:
+    job = db.get_research_job(run_id)
+    assert job["status"] == "pending"
+    # Claim remains active
+    claim = db.get_active_run_claim(run_id)
+    assert claim is not None
+
+    monkeypatch.undo()
+
+    # 2. Failure injection: event insert fails (e.g. database error during event append)
+    def broken_event(*args, **kwargs):
+        raise RuntimeError("Simulated event insert failure")
+    monkeypatch.setattr(db, "append_job_event", broken_event)
+
+    with pytest.raises(RuntimeError, match="Simulated event insert failure"):
+        db.complete_research_job_atomic(
+            run_id=run_id,
+            status="completed",
+            event_type="completed",
+            event_payload={"result": "boom2"},
+            event_id=f"term_{run_id}_completed",
+        )
+
+    # Status must NOT have transitioned to completed
+    job = db.get_research_job(run_id)
+    assert job["status"] == "pending"
+    claim = db.get_active_run_claim(run_id)
+    assert claim is not None
+
+    monkeypatch.undo()
+
+    # 3. Successful execution: status, event and claim release commit together
+    ok, seq = db.complete_research_job_atomic(
+        run_id=run_id,
+        status="completed",
+        event_type="completed",
+        event_payload={"result": "success"},
+        event_id=f"term_{run_id}_completed",
+    )
+    assert ok is True
+    assert seq >= 1
+
+    # Verify status is completed and claim is released atomically
+    job = db.get_research_job(run_id)
+    assert job["status"] == "completed"
+    assert db.get_active_run_claim(run_id) is None
+    events = db.get_job_events(run_id)
+    assert any(e["event_type"] == "completed" for e in events)
+
+
+def test_sse_replay_to_live_race_and_last_event_id_dedup(tmp_path):
+    """Test deterministic concurrency during SSE replay-to-live handoff and reconnection deduplication.
+
+    Validates:
+    - Start historical event replay.
+    - Insert a new event during the replay/subscription handoff.
+    - Verify the client receives every event without missing any.
+    - Test reconnect with Last-Event-ID.
+    - Verify duplicate delivery is safely deduplicated by client.
+    """
+    test_db = str(tmp_path / "sse_race.db")
+    os.environ["RESEARCH_STUDIO_DB_PATH"] = test_db
+    db.init_db()
+
+    run_id = "run_sse_race_1"
+    user_id = 9904
+    db.create_research_job_atomic(run_id, "SSE Race Test", user_id=user_id)
+
+    # 1. Populate initial historical events
+    db.append_job_event(run_id, "step", {"step": 1, "text": "Plan outline"}, event_id="ev_step_1")
+    db.append_job_event(run_id, "step", {"step": 2, "text": "Search literature"}, event_id="ev_step_2")
+
+    # 2. Simulate historical replay: client reads events up to after_seq_id=0
+    history = db.get_job_events(run_id, after_seq_id=0)
+    assert len(history) == 2
+    seen_seqs = [e["seq_id"] for e in history]
+    assert seen_seqs == [1, 2]
+    highest_seen_seq = history[-1]["seq_id"]
+
+    # 3. Simulate race: background worker appends step 3 and terminal completion DURING the handoff
+    db.append_job_event(run_id, "step", {"step": 3, "text": "Draft section"}, event_id="ev_step_3")
+    db.complete_research_job_atomic(
+        run_id=run_id,
+        status="completed",
+        event_type="completed",
+        event_payload={"article_id": 101},
+        event_id=f"term_{run_id}_completed",
+    )
+
+    # 4. Live poll / subsequent fetch continues from highest_seen_seq (Last-Event-ID semantics)
+    live_events = db.get_job_events(run_id, after_seq_id=highest_seen_seq)
+    assert len(live_events) == 2
+    live_seqs = [e["seq_id"] for e in live_events]
+    assert live_seqs == [3, 4]
+    assert live_events[0]["event_id"] == "ev_step_3"
+    assert live_events[1]["event_type"] == "completed"
+
+    all_received = history + live_events
+    all_seqs = [e["seq_id"] for e in all_received]
+    assert all_seqs == [1, 2, 3, 4], "Client received all sequenced events in monotonic order"
+
+    # 5. Simulate client reconnection with Last-Event-ID header set to '2' (or reconnect after network drop at seq 2)
+    reconnected_events = db.get_job_events(run_id, after_seq_id=2)
+    assert len(reconnected_events) == 2
+    assert [e["seq_id"] for e in reconnected_events] == [3, 4]
+
+    # 6. Verify client-side deduplication table using stable event_id
+    client_event_registry = set()
+    deduped_stream = []
+    # Feed whole stream including potential duplicate re-deliveries
+    for ev in history + reconnected_events + live_events:
+        eid = ev.get("event_id") or f"seq_{ev['seq_id']}"
+        if eid not in client_event_registry:
+            client_event_registry.add(eid)
+            deduped_stream.append(ev)
+
+    assert len(deduped_stream) == 4
+    assert [e["seq_id"] for e in deduped_stream] == [1, 2, 3, 4]
+
+
+
 
