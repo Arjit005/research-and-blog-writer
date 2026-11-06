@@ -2288,6 +2288,7 @@ def create_research_job_atomic(
         (created: bool, active_run_id: Optional[str])
     """
     resolved_worker = worker_id or f"worker_{os.getpid()}_{uuid.uuid4().hex[:6]}"
+    lease_token = f"lease_{uuid.uuid4().hex}"
     with get_connection() as (conn, is_tidb):
         if user_id is not None:
             # Check if there is an existing claim
@@ -2310,10 +2311,10 @@ def create_research_job_atomic(
                 try:
                     _exec(
                         conn, is_tidb,
-                        "INSERT OR IGNORE INTO active_run_claims (user_id, run_id, worker_id) VALUES (?, ?, ?)"
+                        "INSERT OR IGNORE INTO active_run_claims (user_id, run_id, worker_id, lease_token, fencing_token) VALUES (?, ?, ?, ?, 1)"
                         if not is_tidb else
-                        "INSERT IGNORE INTO active_run_claims (user_id, run_id, worker_id) VALUES (?, ?, ?)",
-                        (user_id, active_id, resolved_worker),
+                        "INSERT IGNORE INTO active_run_claims (user_id, run_id, worker_id, lease_token, fencing_token) VALUES (?, ?, ?, ?, 1)",
+                        (user_id, active_id, resolved_worker, lease_token),
                     )
                 except Exception:
                     pass
@@ -2323,8 +2324,8 @@ def create_research_job_atomic(
             try:
                 _exec(
                     conn, is_tidb,
-                    "INSERT INTO active_run_claims (user_id, run_id, worker_id) VALUES (?, ?, ?)",
-                    (user_id, run_id, resolved_worker),
+                    "INSERT INTO active_run_claims (user_id, run_id, worker_id, lease_token, fencing_token) VALUES (?, ?, ?, ?, 1)",
+                    (user_id, run_id, resolved_worker, lease_token),
                 )
             except Exception as exc:
                 msg = str(exc).lower()
@@ -2358,22 +2359,34 @@ def release_active_run_claim(run_id: str, user_id: Optional[int] = None) -> bool
         return bool(rowcount and rowcount > 0)
 
 
-def heartbeat_active_run_claim(run_id: str, worker_id: Optional[str] = None) -> bool:
-    """Update heartbeat timestamp for active run claim so healthy workers are not pruned."""
+def heartbeat_active_run_claim(
+    run_id: str,
+    worker_id: Optional[str] = None,
+    lease_token: Optional[str] = None,
+) -> bool:
+    """Update heartbeat timestamp for active run claim and increment fencing token atomically.
+
+    Fencing & Lease Protection:
+    Ensures that a stale worker whose claim was expired or stolen cannot renew
+    or overwrite an active worker's lease.
+    """
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     with get_connection() as (conn, is_tidb):
+        conditions = ["run_id = ?"]
+        params: List[Any] = [now_str]
         if worker_id:
-            cursor = _exec(
-                conn, is_tidb,
-                "UPDATE active_run_claims SET heartbeat_at = ? WHERE run_id = ? AND worker_id = ?",
-                (now_str, run_id, worker_id),
-            )
-        else:
-            cursor = _exec(
-                conn, is_tidb,
-                "UPDATE active_run_claims SET heartbeat_at = ? WHERE run_id = ?",
-                (now_str, run_id),
-            )
+            conditions.append("worker_id = ?")
+        if lease_token:
+            conditions.append("lease_token = ?")
+        
+        sql = f"UPDATE active_run_claims SET heartbeat_at = ?, fencing_token = fencing_token + 1 WHERE {' AND '.join(conditions)}"
+        params.append(run_id)
+        if worker_id:
+            params.append(worker_id)
+        if lease_token:
+            params.append(lease_token)
+
+        cursor = _exec(conn, is_tidb, sql, tuple(params))
         rowcount = getattr(cursor, "rowcount", None)
         return bool(rowcount and rowcount > 0)
 
