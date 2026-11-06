@@ -216,6 +216,24 @@ export default function Home() {
     [closeStream, loadArticles, loadArticleDetail]
   );
 
+  const handleDeleteArticle = useCallback(
+    async (id: number) => {
+      if (!window.confirm("Are you sure you want to delete this article? This will free up database space.")) {
+        return;
+      }
+      try {
+        await api.deleteArticle(id);
+        if (selectedArticle?.id === id) {
+          setSelectedArticle(null);
+        }
+        await loadArticles();
+      } catch (err) {
+        alert(errorMessage(err, "Failed to delete article."));
+      }
+    },
+    [selectedArticle, loadArticles]
+  );
+
   const handleStreamError = useCallback(
     async (error: Error) => {
       setRunError(error.message);
@@ -595,6 +613,7 @@ export default function Home() {
             articles={articles}
             selectedArticleId={selectedArticle?.id ?? null}
             onSelectArticle={(id) => void loadArticleDetail(id)}
+            onDeleteArticle={handleDeleteArticle}
             isCollapsed={isLeftCollapsed}
             onToggleCollapse={() => setIsLeftCollapsed(!isLeftCollapsed)}
           />
@@ -729,6 +748,7 @@ export default function Home() {
                 void loadArticleDetail(id);
                 setMobileDrawer("none");
               }}
+              onDeleteArticle={handleDeleteArticle}
               isCollapsed={false}
               onToggleCollapse={() => setMobileDrawer("none")}
             />

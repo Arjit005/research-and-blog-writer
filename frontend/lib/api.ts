@@ -288,6 +288,12 @@ export const api = {
     return fetchJson(`/api/v1/articles/${id}`);
   },
 
+  async deleteArticle(id: number): Promise<{ success: boolean }> {
+    return fetchJson(`/api/v1/articles/${id}`, {
+      method: "DELETE",
+    });
+  },
+
   // Research Runs
   async startRun(params: {
     topic: string;

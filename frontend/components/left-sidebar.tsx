@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FolderOpen,
+  Trash2,
 } from "lucide-react";
 
 interface LeftSidebarProps {
@@ -28,6 +29,7 @@ interface LeftSidebarProps {
   articles: ArticleSummary[];
   selectedArticleId: number | null;
   onSelectArticle: (id: number) => void;
+  onDeleteArticle?: (id: number) => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
 }
@@ -54,6 +56,7 @@ export function LeftSidebar({
   articles,
   selectedArticleId,
   onSelectArticle,
+  onDeleteArticle,
   isCollapsed,
   onToggleCollapse,
 }: LeftSidebarProps) {
@@ -257,24 +260,42 @@ export function LeftSidebar({
           {filteredArticles.map((article) => {
             const isSelected = selectedArticleId === article.id;
             return (
-              <button
+              <div
                 key={article.id}
-                type="button"
-                onClick={() => onSelectArticle(article.id)}
-                className={`w-full text-left p-3 rounded-xl transition cursor-pointer ${
+                className={`group flex items-center justify-between p-2.5 rounded-xl transition ${
                   isSelected
                     ? "bg-blue-50 dark:bg-blue-950/40 border border-blue-500/40 text-blue-950 dark:text-blue-100 shadow-sm"
                     : "hover:bg-surface-raised text-foreground border border-transparent"
                 }`}
               >
-                <h4 className="text-xs font-semibold line-clamp-2 mb-1 leading-snug">
-                  {article.topic}
-                </h4>
-                <div className="flex items-center justify-between text-[10px] text-muted-foreground font-mono">
-                  <span>{article.word_count.toLocaleString()} words</span>
-                  <span>{article.created_at?.split("T")[0] || article.created_at}</span>
-                </div>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => onSelectArticle(article.id)}
+                  className="flex-1 text-left cursor-pointer overflow-hidden pr-2"
+                >
+                  <h4 className="text-xs font-semibold line-clamp-2 mb-1 leading-snug">
+                    {article.topic}
+                  </h4>
+                  <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-mono">
+                    <span>{article.word_count.toLocaleString()} words</span>
+                    <span>•</span>
+                    <span>{article.created_at?.split("T")[0] || article.created_at}</span>
+                  </div>
+                </button>
+                {onDeleteArticle && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteArticle(article.id);
+                    }}
+                    title="Delete article (free up space)"
+                    className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-500/10 text-muted-foreground hover:text-red-500 rounded-lg transition"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
             );
           })}
 
