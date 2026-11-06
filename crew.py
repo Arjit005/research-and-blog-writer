@@ -45,11 +45,11 @@ from security.guardrails import CitationGuard
 
 
 # Per-agent LLM generation settings (temperature / max_tokens) and iteration caps.
-# Research/audit work stays deterministic and cheap; drafting is more creative.
-RESEARCH_LLM_SETTINGS = {"temperature": 0.2, "max_tokens": 4000, "max_iter": 8}
-ANALYST_LLM_SETTINGS = {"temperature": 0.3, "max_tokens": 4000, "max_iter": 6}
-WRITER_LLM_SETTINGS = {"temperature": 0.6, "max_tokens": 6000, "max_iter": 5}
-REVIEWER_LLM_SETTINGS = {"temperature": 0.2, "max_tokens": 4000, "max_iter": 6}
+# Optimized iteration caps to avoid agent looping and drastically reduce run time.
+RESEARCH_LLM_SETTINGS = {"temperature": 0.2, "max_tokens": 3000, "max_iter": 3}
+ANALYST_LLM_SETTINGS = {"temperature": 0.3, "max_tokens": 3000, "max_iter": 3}
+WRITER_LLM_SETTINGS = {"temperature": 0.6, "max_tokens": 4000, "max_iter": 3}
+REVIEWER_LLM_SETTINGS = {"temperature": 0.2, "max_tokens": 3000, "max_iter": 2}
 
 
 def audit_report_citations(report_text: str) -> tuple[str, list[str], int]:

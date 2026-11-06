@@ -354,16 +354,16 @@ def _execute_run_worker(
         def _on_llm_chunk(source: Any, event: Any) -> None:
             if _job_is_cancelled(run_id, cancel_event):
                 return
-            # Strict requirement 4: Stream only the Blog Writer's draft content initially.
-            # Do not mix Researcher, Diagram Architect, and Editorial Director internal outputs into the article.
+            chunk_str = str(getattr(event, "chunk", "") or "")
+            if not chunk_str:
+                return
             agent_role = str(getattr(event, "agent_role", "") or "").lower()
             if not agent_role:
                 from_agent = getattr(event, "from_agent", None)
                 agent_role = str(getattr(from_agent, "role", "") or "").lower()
-            if "writer" in agent_role or "author" in agent_role or "blog" in agent_role:
-                chunk_str = str(getattr(event, "chunk", "") or "")
-                if chunk_str:
-                    broadcast_run_token(run_id, chunk_str)
+            # Stream Writer or any drafting agent tokens to live UI
+            if not agent_role or any(w in agent_role for w in ("writer", "author", "blog", "draft")):
+                broadcast_run_token(run_id, chunk_str)
 
         crewai_event_bus.register_handler(LLMStreamChunkEvent, _on_llm_chunk)
 
