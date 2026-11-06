@@ -36,6 +36,44 @@ interface StoredRun {
   topic: string;
 }
 
+function playChimeSound() {
+  try {
+    const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+    osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.15); // A5
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.5);
+  } catch {
+    // AudioContext blocked by user policy
+  }
+}
+
+function sendBrowserNotification(title: string, body: string) {
+  if (typeof window === "undefined" || !("Notification" in window)) return;
+  if (Notification.permission === "granted") {
+    new Notification(title, {
+      body,
+      icon: "/favicon.ico",
+    });
+  } else if (Notification.permission !== "denied") {
+    void Notification.requestPermission().then((permission) => {
+      if (permission === "granted") {
+        new Notification(title, {
+          body,
+          icon: "/favicon.ico",
+        });
+      }
+    });
+  }
+}
+
 function readStoredRun(): StoredRun | null {
   if (typeof window === "undefined") return null;
   try {
@@ -146,7 +184,12 @@ export default function Home() {
 
   const sseClientRef = useRef<ResumableSSEClient | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
+  const activeTopicRef = useRef<string>("");
   const selectedArticleRef = useRef<ArticleDetail | null>(null);
+
+  useEffect(() => {
+    activeTopicRef.current = activeTopic;
+  }, [activeTopic]);
 
   useEffect(() => {
     selectedArticleRef.current = selectedArticle;
@@ -212,6 +255,13 @@ export default function Home() {
       if (articleId) {
         await loadArticleDetail(articleId);
       }
+
+      // Trigger browser notification and gentle completion chime
+      playChimeSound();
+      sendBrowserNotification(
+        "Research Complete! 🎉",
+        `Your research blog post for "${activeTopicRef.current || "topic"}" is ready to view.`
+      );
     },
     [closeStream, loadArticles, loadArticleDetail]
   );
@@ -431,6 +481,11 @@ export default function Home() {
     setIsSubmitting(true);
     setRunError(null);
     try {
+      // Request browser notification permission early on user interaction
+      if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+        void Notification.requestPermission();
+      }
+
       const runRes = await api.createRun({
         topic: topic.trim(),
         tone,
