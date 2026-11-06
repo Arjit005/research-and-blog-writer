@@ -293,3 +293,53 @@ def test_save_report_tool_run_scoped_output_dir(tmp_path, monkeypatch):
     assert os.path.exists(saved_path)
     assert expected_dir in result
     assert not os.path.exists(os.path.join(tmp_path, "report.md"))
+
+
+
+# ---------------------------------------------------------------------------
+# DNS Rebinding & Pinned IP Socket Verification
+# ---------------------------------------------------------------------------
+def test_safe_fetch_pinned_ip_connects_to_exact_resolved_ip():
+    """Verify safe_fetch establishes TCP connection to the exact pinned IP and not through unverified re-resolution."""
+    from tools.scrape_tool import safe_fetch
+
+    pinned_ip = "93.184.216.34"
+    mock_sock = MagicMock()
+    mock_conn = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.getheader.return_value = "text/html; charset=utf-8"
+    mock_resp.read.side_effect = [b"<html><body><h1>Safe Pinned Content</h1></body></html>", b""]
+    mock_conn.getresponse.return_value = mock_resp
+
+    with patch("tools.scrape_tool.resolve_safe", return_value=("example.com", pinned_ip, 443)):
+        with patch("socket.create_connection", return_value=mock_sock) as mock_create_conn:
+            with patch("ssl.create_default_context") as mock_ssl_ctx:
+                mock_ctx_instance = MagicMock()
+                mock_ssl_ctx.return_value = mock_ctx_instance
+                mock_ctx_instance.wrap_socket.return_value = MagicMock()
+                with patch("http.client.HTTPSConnection", return_value=mock_conn):
+                    url, text = safe_fetch("https://example.com/page")
+
+                    # Verify create_connection was called directly with the PINNED IP
+                    mock_create_conn.assert_called_once_with((pinned_ip, 443), timeout=5.0)
+                    # Verify SNI server_hostname was the original domain name
+                    mock_ctx_instance.wrap_socket.assert_called_once()
+                    assert mock_ctx_instance.wrap_socket.call_args[1]["server_hostname"] == "example.com"
+                    assert "Safe Pinned Content" in text
+
+
+def test_resolve_safe_ipv6_loopback_and_mapped():
+    """Verify that IPv6 loopback (::1, [::1]) and IPv4-mapped IPv6 are strictly rejected."""
+    from tools.scrape_tool import resolve_safe
+
+    # Direct IPv6 loopback in URL
+    with pytest.raises(ValueError) as exc:
+        resolve_safe("http://[::1]/secret")
+    assert "forbidden" in str(exc.value).lower() or "restricted" in str(exc.value).lower()
+
+    # Hostname resolving to IPv4-mapped loopback ::ffff:127.0.0.1
+    with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("::ffff:127.0.0.1", 80, 0, 0))]):
+        with pytest.raises(ValueError) as exc:
+            resolve_safe("http://evil-rebind.com/status")
+        assert "forbidden" in str(exc.value).lower() or "restricted" in str(exc.value).lower()

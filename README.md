@@ -1,18 +1,133 @@
 # 🤖 Enterprise Multi-Agent AI Research & Visual Blog Studio
 
-> **Autonomous multi-agent research squad that conducts deep research and writes publication-ready technical blog posts with native Mermaid architecture diagrams and verified citations — powered by CrewAI, a free multi-model fallback chain (OpenRouter + Google Gemini), FastAPI, Next.js 16, and TiDB Cloud Serverless.**
+> **Autonomous multi-agent research squad that conducts deep research and writes publication-ready technical blog posts with native Mermaid architecture diagrams and verified citations — powered by CrewAI, a unit-tested multi-model failover chain (OpenRouter + Google Gemini), FastAPI, Next.js 16, and TiDB Cloud Serverless.**
 
 [![Python](https://img.shields.io/badge/Python-3.10%E2%80%933.13-3776AB?logo=python&logoColor=white)](https://python.org)
 [![CrewAI](https://img.shields.io/badge/CrewAI-Multi--Agent-FF6B35?logo=data:image/svg+xml;base64,&logoColor=white)](https://crewai.com)
-[![OpenRouter](https://img.shields.io/badge/OpenRouter-Multi--Model_Fallback-6366F1)](https://openrouter.ai)
+[![OpenRouter](https://img.shields.io/badge/OpenRouter-Multi--Model_Failover-6366F1)](https://openrouter.ai)
 [![Google Gemini](https://img.shields.io/badge/Google_Gemini-3.5_Flash-4285F4?logo=google&logoColor=white)](https://ai.google.dev)
 [![TiDB Cloud](https://img.shields.io/badge/TiDB_Cloud-Serverless_SQL-E30C34?logo=mysql&logoColor=white)](https://tidbcloud.com)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.162%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Next.js-16%20App%20Router-black?logo=next.js&logoColor=white)](https://nextjs.org)
 [![LangSmith](https://img.shields.io/badge/LangSmith-Stage--Level_Tracing-2563EB?logo=langchain&logoColor=white)](https://smith.langchain.com)
-[![OWASP LLM](https://img.shields.io/badge/OWASP-LLM_Top_10_Protected-0284C7)](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
-[![Tests](https://img.shields.io/badge/Tests-106%2B%20passing-success)](https://pytest.org)
+[![Tests](https://img.shields.io/badge/Tests-239%20passing-success)](https://pytest.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+
+---
+
+## 🌐 Live Deployment & Links
+
+- **Repository**: [https://github.com/Arjit005/research-and-blog-writer](https://github.com/Arjit005/research-and-blog-writer)
+- **Live Demo / Deployment**: [https://research-and-blog-studio.onrender.com](https://research-and-blog-studio.onrender.com) (or local via `http://localhost:8000`)
+
+---
+
+## 📋 Project Summary
+
+Research & Blog Writer is an end-to-end autonomous editorial squad application. It takes a research topic from a user, deploys a specialized 4-agent CrewAI pipeline (Researcher $\rightarrow$ Analyst $\rightarrow$ Writer $\rightarrow$ Reviewer), searches and scrapes live documentation with SSRF defense, renders embedded Mermaid diagrams, formats citations grounded in visited sources, and provides a real-time Markdown reader with side-by-side revision rollback and AI Copilot editing.
+
+### 🛠️ Tech Stack
+
+- **Multi-Agent Orchestration**: [CrewAI](https://crewai.com) with 4 specialized roles and parallel execution of diagram design and drafting tasks.
+- **LLM Failover Engine**: Custom unit-tested failover across Google Gemini models and free OpenRouter models with automatic fallback on HTTP 429 or outages.
+- **Backend API**: [FastAPI](https://fastapi.tiangolo.com) with database-grounded sliding window rate limiting, resumable SSE event streaming (`after_seq`), and session cookies with HttpOnly, SameSite, and dynamic `__Host-` / `Secure` flags.
+- **Frontend Workspace**: [Next.js 16](https://nextjs.org) (React 19) static export with Tailwind CSS, KaTeX math formula rendering (`remark-math`, `rehype-katex`), interactive Mermaid.js diagram viewer, audio chime, and Web Notification API.
+- **Database & Storage**: [TiDB Cloud Serverless](https://tidbcloud.com) (MySQL-compatible, TLS connection pooling) with automatic zero-config local SQLite fallback.
+- **Security & Guardrails**: Prompt-injection validators, SSRF link-local / loopback blocking, PII / secret redactors, and CitationGuard visited-URL verification.
+
+---
+
+## 🏗️ Architecture Diagram
+
+```
+[ User Browser / Next.js 16 UI ]
+              │
+              ▼ (POST /api/v1/runs / SSE /api/v1/runs/{id}/events)
+     [ FastAPI Backend ] ─── (Sliding Window Rate Limit & Auth)
+              │
+     ┌────────┴────────────────────────┐
+     ▼                                 ▼
+[ 4-Agent CrewAI Squad ]     [ Storage Layer ]
+ 1. Senior Researcher         • TiDB Cloud (Serverless MySQL)
+    (DuckDuckGo / Scraper)    • Local SQLite Fallback
+         │
+         ├───► Parallel Stage 2 ───┐
+         │     • Content Analyst   │
+         │     • Blog Post Writer  │
+         │                         │
+         ▼                         ▼
+ 4. Quality Reviewer ◄─────────────┘
+    (CitationGuard & Mermaid Syntax)
+         │
+         ▼
+[ Unit-Tested Failover LLM Chain ]
+   Gemini 3.5 Flash ──(429/Error)──► OpenRouter Models
+```
+
+---
+
+## ⚙️ Setup & Environment Variables
+
+Copy `.env.example` to `.env` and populate the necessary keys. Below is the reference list of required and optional environment variable key names (without sensitive values):
+
+```bash
+# Model Provider Keys
+GROQ_API_KEY
+GEMINI_API_KEY
+OPENROUTER_API_KEY
+BEATAPI_KEY
+
+# Search Providers (DuckDuckGo works out of the box with zero keys)
+SERPER_API_KEY
+
+# Persistent Database (TiDB Cloud Serverless - Optional, defaults to local SQLite)
+TIDB_HOST
+TIDB_PORT
+TIDB_USER
+TIDB_PASSWORD
+TIDB_DATABASE
+
+# Authentication & Session Security (Generate 32-byte hex keys for production)
+OTP_PEPPER
+SESSION_SECRET
+
+# Email Delivery / SMTP
+SMTP_HOST
+SMTP_PORT
+SMTP_USER
+SMTP_PASSWORD
+SMTP_FROM
+SMTP_USE_TLS
+
+# Security & Rate Limiting Controls
+OTP_TTL_SECONDS
+OTP_MAX_ATTEMPTS
+OTP_RESEND_COOLDOWN_SECONDS
+OTP_MAX_PER_EMAIL_PER_HOUR
+OTP_MAX_PER_IP_PER_HOUR
+SESSION_TTL_HOURS
+ALLOWED_EMAIL_DOMAINS
+
+# Dev Mode & Deployment Flags
+AUTH_DEV_MODE
+ENVIRONMENT
+AUTH_COOKIE_SECURE
+FRONTEND_ORIGIN
+```
+
+### Quickstart Commands
+
+```bash
+# 1. Install dependencies
+pip install -r requirements.txt
+cd frontend && npm install && cd ..
+
+# 2. Build frontend static export
+cd frontend && npm run build && cd ..
+
+# 3. Run FastAPI backend (serves frontend at http://localhost:8000)
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+```
 
 ---
 

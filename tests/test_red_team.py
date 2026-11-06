@@ -97,20 +97,19 @@ def test_redteam_4_redirect_to_localhost():
             return ("legit-site.com", "93.184.216.34", 443)
         return resolve_safe(url)
 
-    with patch("tools.scrape_tool.resolve_safe", side_effect=mock_resolve):
-        with patch("urllib.request.build_opener") as mock_opener:
-            mock_instance = MagicMock()
-            mock_resp = MagicMock()
-            mock_resp.getcode.return_value = 302
-            mock_resp.headers = {"Location": "http://127.0.0.1:8000/admin"}
-            mock_resp.__enter__.return_value = mock_resp
-            mock_resp.__exit__.return_value = None
-            mock_instance.open.return_value = mock_resp
-            mock_opener.return_value = mock_instance
+    mock_conn = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.status = 302
+    mock_resp.getheader.return_value = "http://127.0.0.1:8000/admin"
+    mock_conn.getresponse.return_value = mock_resp
 
-            with pytest.raises(ValueError) as exc:
-                safe_fetch("https://legit-site.com/redirect-service")
-            assert "forbidden" in str(exc.value).lower() or "restricted" in str(exc.value).lower()
+    with patch("tools.scrape_tool.resolve_safe", side_effect=mock_resolve):
+        with patch("socket.create_connection", return_value=MagicMock()):
+            with patch("ssl.create_default_context"):
+                with patch("http.client.HTTPSConnection", return_value=mock_conn):
+                    with pytest.raises(ValueError) as exc:
+                        safe_fetch("https://legit-site.com/redirect-service")
+                    assert "forbidden" in str(exc.value).lower() or "restricted" in str(exc.value).lower()
 
 
 # ---------------------------------------------------------------------------
@@ -131,10 +130,12 @@ def test_redteam_6_huge_page_size_cap():
     class HugeStream:
         def __init__(self):
             self.bytes_read = 0
-            self.headers = {"Content-Type": "text/html"}
+            self.status = 200
 
-        def getcode(self):
-            return 200
+        def getheader(self, name):
+            if name.lower() == "content-type":
+                return "text/html; charset=utf-8"
+            return None
 
         def read(self, chunk_size):
             if self.bytes_read >= MAX_RESPONSE_BYTES + 1024:
@@ -142,21 +143,16 @@ def test_redteam_6_huge_page_size_cap():
             self.bytes_read += chunk_size
             return b"A" * chunk_size
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            pass
+    mock_conn = MagicMock()
+    mock_conn.getresponse.return_value = HugeStream()
 
     with patch("tools.scrape_tool.resolve_safe", return_value=("legit-cdn.com", "93.184.216.34", 443)):
-        with patch("urllib.request.build_opener") as mock_opener:
-            mock_instance = MagicMock()
-            mock_instance.open.return_value = HugeStream()
-            mock_opener.return_value = mock_instance
-
-            with pytest.raises(ValueError) as exc:
-                safe_fetch("https://legit-cdn.com/huge-archive.html")
-            assert "exceeded" in str(exc.value).lower() or "2 mb" in str(exc.value).lower()
+        with patch("socket.create_connection", return_value=MagicMock()):
+            with patch("ssl.create_default_context"):
+                with patch("http.client.HTTPSConnection", return_value=mock_conn):
+                    with pytest.raises(ValueError) as exc:
+                        safe_fetch("https://legit-cdn.com/huge-archive.html")
+                    assert "exceeded" in str(exc.value).lower() or "2 mb" in str(exc.value).lower()
 
 
 # ---------------------------------------------------------------------------

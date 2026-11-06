@@ -104,20 +104,24 @@ def test_otp_flow_and_me_profile():
     # Verify cookie was set
     assert "session_token" in verify_resp.cookies or "__Host-session_token" in verify_resp.cookies
 
-    # 3. Access /me profile using cookie
-    me_resp = client.get("/api/v1/auth/me", cookies=verify_resp.cookies)
+    # 3. Access /me profile using cookie set on client
+    client.cookies.update(verify_resp.cookies)
+    me_resp = client.get("/api/v1/auth/me")
     assert me_resp.status_code == 200
     assert me_resp.json()["email"] == test_email
 
     # Access /me profile using Bearer Authorization Header
+    client.cookies.clear()
     bearer_resp = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert bearer_resp.status_code == 200
     assert bearer_resp.json()["email"] == test_email
 
     # 4. Logout
-    logout_resp = client.post("/api/v1/auth/logout", cookies=verify_resp.cookies)
+    client.cookies.update(verify_resp.cookies)
+    logout_resp = client.post("/api/v1/auth/logout")
     assert logout_resp.status_code == 200
     assert logout_resp.json()["success"] is True
+    client.cookies.clear()
 
     # 5. Accessing /me after logout should return 401
     unauth_resp = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})

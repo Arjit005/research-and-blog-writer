@@ -17,11 +17,12 @@ re-sanitized again on read (defense-in-depth against legacy cache entries).
 from __future__ import annotations
 
 import re
+import ssl
+import http.client
 import socket
 import hashlib
 import ipaddress
-import urllib.request
-import urllib.error
+import urllib.parse
 from urllib.parse import urlparse, urljoin
 from typing import Any, Dict, List, Optional, Tuple, Type
 from bs4 import BeautifulSoup, Comment
@@ -106,7 +107,13 @@ def resolve_safe(url: str) -> Tuple[str, str, int]:
 
 
 def safe_fetch(url: str, max_redirects: int = MAX_REDIRECTS) -> Tuple[str, str]:
-    """Fetch URL with manual redirect checking, streaming size limits, and timeout protection.
+    """Fetch URL with pinned-IP socket connection, manual redirect validation, streaming size limits, and timeout protection.
+
+    Security guarantees:
+    1. Connects directly to the pre-validated IP address (defeats DNS rebinding / second DNS lookup).
+    2. Preserves the logical hostname for Host header, TLS SNI, and certificate validation.
+    3. Re-validates every redirect hop (up to max_redirects) independently against private/loopback/cloud metadata IP ranges.
+    4. Limits response body streaming to MAX_RESPONSE_BYTES (2 MB) to prevent denial of service.
 
     Returns:
         (final_url, response_text)
@@ -115,68 +122,91 @@ def safe_fetch(url: str, max_redirects: int = MAX_REDIRECTS) -> Tuple[str, str]:
 
     for hop in range(max_redirects + 1):
         hostname, safe_ip, port = resolve_safe(current_url)
+        parsed = urlparse(current_url)
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
 
-        req = urllib.request.Request(
-            current_url,
-            headers={
+        # 1. Establish TCP socket directly to the validated IP to defeat DNS rebinding
+        try:
+            raw_sock = socket.create_connection((safe_ip, port), timeout=CONNECT_TIMEOUT)
+            raw_sock.settimeout(READ_TIMEOUT)
+        except (socket.timeout, TimeoutError) as e:
+            raise ValueError(f"Connection timeout connecting to {safe_ip}:{port}: {e}")
+        except Exception as e:
+            raise ValueError(f"Network error connecting to {safe_ip}:{port}: {e}")
+
+        conn: Optional[http.client.HTTPConnection] = None
+        try:
+            if parsed.scheme == "https":
+                # Create TLS context verifying host certificate and TLS SNI
+                ssl_ctx = ssl.create_default_context()
+                tls_sock = ssl_ctx.wrap_socket(raw_sock, server_hostname=hostname)
+                conn = http.client.HTTPSConnection(hostname, port=port, timeout=READ_TIMEOUT)
+                conn.sock = tls_sock
+            else:
+                conn = http.client.HTTPConnection(hostname, port=port, timeout=READ_TIMEOUT)
+                conn.sock = raw_sock
+
+            headers = {
+                "Host": hostname if (port == 80 and parsed.scheme == "http") or (port == 443 and parsed.scheme == "https") else f"{hostname}:{port}",
                 "User-Agent": "ResearchStudioBot/2.0 (+https://github.com/Arjit005/research-and-blog-writer)",
                 "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9",
-            },
-        )
+                "Connection": "close",
+            }
 
-        class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-            def redirect_request(self, req, fp, code, msg, headers, newurl):
-                return None  # Disable auto redirects to inspect every hop manually
+            conn.request("GET", path, headers=headers)
+            resp = conn.getresponse()
+            status_code = resp.status
 
-        opener = urllib.request.build_opener(NoRedirectHandler)
-
-        try:
-            with opener.open(req, timeout=CONNECT_TIMEOUT + READ_TIMEOUT) as resp:
-                status_code = resp.getcode()
-                if status_code in (301, 302, 303, 307, 308):
-                    location = resp.headers.get("Location")
-                    if not location:
-                        raise ValueError(f"HTTP {status_code} missing Location header.")
-                    next_url = urljoin(current_url, location)
-                    resolve_safe(next_url)
-                    current_url = next_url
-                    continue
-
-                content_type = resp.headers.get_content_type() if hasattr(resp.headers, "get_content_type") else "text/html"
-
-                if content_type not in ("text/html", "text/plain", "application/xhtml+xml"):
-                    raise ValueError(f"Unsupported content type '{content_type}'. Only text pages permitted.")
-
-                # Stream response up to MAX_RESPONSE_BYTES
-                chunks = []
-                bytes_read = 0
-                while True:
-                    chunk = resp.read(65536)
-                    if not chunk:
-                        break
-                    bytes_read += len(chunk)
-                    if bytes_read > MAX_RESPONSE_BYTES:
-                        raise ValueError(f"Response size exceeded {MAX_RESPONSE_BYTES // (1024 * 1024)} MB limit.")
-                    chunks.append(chunk)
-
-                encoding = resp.headers.get_content_charset() or "utf-8"
-                raw_bytes = b"".join(chunks)
-                text = raw_bytes.decode(encoding, errors="replace")
-                return current_url, text
-
-        except urllib.error.HTTPError as e:
-            if e.code in (301, 302, 303, 307, 308):
-                location = e.headers.get("Location")
+            # Handle redirects manually
+            if status_code in (301, 302, 303, 307, 308):
+                location = resp.getheader("Location")
                 if not location:
-                    raise ValueError(f"HTTP {e.code} missing Location header.")
+                    raise ValueError(f"HTTP {status_code} missing Location header.")
                 next_url = urljoin(current_url, location)
-                # Re-validate target URL
+                # Re-validate destination URL
                 resolve_safe(next_url)
                 current_url = next_url
                 continue
-            raise ValueError(f"HTTP Error {e.code}: {e.reason}")
-        except urllib.error.URLError as e:
-            raise ValueError(f"Network error: {e.reason}")
+
+            if status_code >= 400:
+                raise ValueError(f"HTTP Error {status_code}: {resp.reason}")
+
+            content_type_header = resp.getheader("Content-Type") or "text/html"
+            content_type = content_type_header.split(";")[0].strip().lower()
+
+            if content_type not in ("text/html", "text/plain", "application/xhtml+xml"):
+                raise ValueError(f"Unsupported content type '{content_type}'. Only text pages permitted.")
+
+            # Stream response up to MAX_RESPONSE_BYTES
+            chunks = []
+            bytes_read = 0
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                bytes_read += len(chunk)
+                if bytes_read > MAX_RESPONSE_BYTES:
+                    raise ValueError(f"Response size exceeded {MAX_RESPONSE_BYTES // (1024 * 1024)} MB limit.")
+                chunks.append(chunk)
+
+            # Determine encoding
+            encoding = "utf-8"
+            match = re.search(r"charset=([\w-]+)", content_type_header, re.IGNORECASE)
+            if match:
+                encoding = match.group(1).strip()
+
+            raw_bytes = b"".join(chunks)
+            text = raw_bytes.decode(encoding, errors="replace")
+            return current_url, text
+
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     raise ValueError(f"Exceeded maximum redirect limit of {max_redirects} hops.")
 
