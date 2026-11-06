@@ -187,7 +187,7 @@ def _connect_tidb():
     ssl_config = _get_tidb_ssl()
 
     try:
-        return pymysql.connect(
+        conn = pymysql.connect(
             host=host,
             port=port,
             user=user,
@@ -197,7 +197,9 @@ def _connect_tidb():
             ssl=ssl_config,
             connect_timeout=10,
             autocommit=False,
+            init_command="SET SESSION time_zone = '+00:00', tidb_txn_mode = 'pessimistic';",
         )
+        return conn
     except pymysql.err.OperationalError as db_err:
         # Error 1049: ER_BAD_DB_ERROR (Unknown database)
         if db_err.args and db_err.args[0] == 1049:
@@ -229,6 +231,7 @@ def _connect_tidb():
                 ssl=ssl_config,
                 connect_timeout=10,
                 autocommit=False,
+                init_command="SET SESSION time_zone = '+00:00', tidb_txn_mode = 'pessimistic';",
             )
         raise
 
