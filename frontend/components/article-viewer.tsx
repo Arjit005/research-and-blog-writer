@@ -21,16 +21,19 @@ import {
   Quote,
   Link as LinkIcon,
   ListOrdered,
+  ShieldCheck,
 } from "lucide-react";
 
 interface ArticleViewerProps {
   topic: string;
   content: string;
+  articleId?: number;
   wordCount?: number;
   generationTime?: number;
   isStreaming?: boolean;
   onOpenCopilot?: () => void;
   onOpenVersionHistory?: () => void;
+  onOpenQualityAuditor?: () => void;
 }
 
 function stripMarkdown(text: string): string {
@@ -72,6 +75,7 @@ export function ArticleViewer({
   isStreaming = false,
   onOpenCopilot,
   onOpenVersionHistory,
+  onOpenQualityAuditor,
 }: ArticleViewerProps) {
   const [copiedArticle, setCopiedArticle] = useState(false);
   const [copiedCitations, setCopiedCitations] = useState(false);
@@ -414,6 +418,19 @@ export function ArticleViewer({
           >
             {isFocusMode ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
+
+          {/* Quality Auditor Button */}
+          {onOpenQualityAuditor && (
+            <button
+              type="button"
+              onClick={onOpenQualityAuditor}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 rounded-xl text-xs font-semibold transition cursor-pointer"
+              title="Open Section 8 Quality Assurance & Evidence Auditor"
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>Evidence Auditor</span>
+            </button>
+          )}
 
           {/* AI Copilot Drawer */}
           {onOpenCopilot && (

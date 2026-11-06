@@ -17,6 +17,7 @@ import { AICommandCenter, SquadLog } from "@/components/ai-command-center";
 import { CopilotDrawer } from "@/components/copilot-drawer";
 import { ApiKeysDialog } from "@/components/api-keys-dialog";
 import { SettingsModal } from "@/components/settings-modal";
+import { QualityAuditorDrawer } from "@/components/quality-auditor-drawer";
 import {
   Sparkles,
   BookOpen,
@@ -148,6 +149,7 @@ export default function Home() {
   const [activeTraceUrl, setActiveTraceUrl] = useState<string | null>(null);
   const [isApiKeysOpen, setIsApiKeysOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isQualityAuditorOpen, setIsQualityAuditorOpen] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [isSoundMuted, setIsSoundMuted] = useState(false);
 
@@ -755,10 +757,12 @@ export default function Home() {
             <ArticleViewer
               topic={selectedArticle.topic}
               content={selectedArticle.content}
+              articleId={selectedArticle.id}
               wordCount={selectedArticle.word_count}
               generationTime={selectedArticle.generation_time_sec}
               onOpenCopilot={() => setIsCopilotOpen(true)}
               onOpenVersionHistory={() => setIsCopilotOpen(true)}
+              onOpenQualityAuditor={() => setIsQualityAuditorOpen(true)}
             />
           ) : activeRunId && streamingDraft.trim() ? (
             <ArticleViewer
@@ -979,6 +983,14 @@ export default function Home() {
         isSoundMuted={isSoundMuted}
         onSoundMuteToggle={toggleSoundMute}
       />
+      {/* 8. Research Quality Auditor Drawer (Section 8) */}
+      {selectedArticle && (
+        <QualityAuditorDrawer
+          isOpen={isQualityAuditorOpen}
+          onClose={() => setIsQualityAuditorOpen(false)}
+          articleId={selectedArticle.id}
+        />
+      )}
     </div>
   );
 }

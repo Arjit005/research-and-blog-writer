@@ -109,6 +109,20 @@ def get_article(article_id: int, user: Dict[str, Any] = Depends(get_current_user
     )
 
 
+@router.get("/{article_id}/audit")
+def audit_article(article_id: int, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    """Execute independent Research Quality Assurance Audit on the article (Section 8)."""
+    from core.quality_auditor import ResearchQualityAuditor
+
+    article = db.get_article(article_id, user_id=user["id"])
+    if not article:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Article not found.")
+
+    auditor = ResearchQualityAuditor()
+    report = auditor.audit_report(str(article.get("content", "")))
+    return report.model_dump()
+
+
 @router.delete("/{article_id}")
 def delete_article(article_id: int, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, bool]:
     """Delete an article and its associated revisions."""
