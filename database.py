@@ -1197,15 +1197,59 @@ def save_article_with_initial_revision(
     user_id: Optional[int] = None,
     summary: str = "Initial AI Squad Generation",
     author: str = "AI Squad",
+    run_id: Optional[str] = None,
+    worker_id: Optional[str] = None,
+    lease_token: Optional[str] = None,
+    fencing_token: Optional[int] = None,
 ) -> Tuple[int, int]:
-    """Atomically insert an article and its revision #1 in a single transaction.
+    """Atomically insert an article and its revision #1 with mandatory lease and cancellation validation.
 
-    Returns ``(article_id, revision_num)``. Keeping the article row and its first
-    snapshot in one transaction avoids orphaned articles (and lets callers write
-    the terminal job status last).
+    Guarantees:
+    1. If `run_id` is provided, verifies within the SAME transaction that:
+       - The job in `research_jobs` is still active and has NOT been cancelled or completed.
+       - If lease/fencing tokens are supplied, verifies the active lease in `active_run_claims` has NOT
+         expired (`lease_expires_at >= UTC_NOW`) and matches `worker_id`, `lease_token`, and `fencing_token`.
+    2. If cancelled or lease expired, raises `PermissionError` or returns `(0, 0)` without writing any rows.
+    3. Keeps the article row and its first snapshot in one atomic transaction.
     """
     word_count = len(content.split())
     with get_connection() as (conn, is_tidb):
+        # 1. Atomic lease and cancellation validation
+        if run_id:
+            # Check research_jobs status inside transaction
+            cur_job = _exec(conn, is_tidb, "SELECT status FROM research_jobs WHERE run_id = ?", (run_id,))
+            job_row = cur_job.fetchone()
+            if not job_row:
+                raise ValueError(f"Run {run_id} not found.")
+            current_status = job_row["status"] if is_tidb else job_row[0]
+            if current_status in ("cancelled", "failed", "completed"):
+                raise PermissionError(f"Cannot save article: run {run_id} is already in terminal state '{current_status}'.")
+
+            # Check active_run_claims lease validity
+            if user_id is not None or lease_token or fencing_token is not None:
+                cur_claim = _exec(conn, is_tidb, "SELECT worker_id, lease_token, fencing_token, lease_expires_at FROM active_run_claims WHERE run_id = ?", (run_id,))
+                claim_row = cur_claim.fetchone()
+                if not claim_row:
+                    raise PermissionError(f"Cannot save article: active lease claim for run {run_id} has expired or was revoked.")
+
+                c_worker = claim_row["worker_id"] if is_tidb else claim_row[0]
+                c_lease = claim_row["lease_token"] if is_tidb else claim_row[1]
+                c_fencing = claim_row["fencing_token"] if is_tidb else claim_row[2]
+                c_expires = claim_row["lease_expires_at"] if is_tidb else claim_row[3]
+
+                # Validate worker, lease, and fencing token
+                if worker_id and c_worker != worker_id:
+                    raise PermissionError(f"Stale worker {worker_id} rejected; current owner is {c_worker}.")
+                if lease_token and c_lease != lease_token:
+                    raise PermissionError("Stale lease token rejected.")
+                if fencing_token is not None and c_fencing != fencing_token:
+                    raise PermissionError(f"Stale fencing token {fencing_token} rejected; current generation is {c_fencing}.")
+
+                # Validate lease expiry timestamp
+                now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                if str(c_expires) < now_str:
+                    raise PermissionError(f"Lease expired at {c_expires} (current: {now_str}).")
+
         cursor = _exec(
             conn,
             is_tidb,

@@ -397,17 +397,23 @@ def _execute_run_worker(
             tracer.end_job(outputs={"status": "cancelled"})
             return
 
-        art_id, _initial_revision_num = db.save_article_with_initial_revision(
-            topic=safe_topic,
-            content=clean_content,
-            tone=tone,
-            audience=audience,
-            target_length=target_length,
-            generation_time=elapsed,
-            user_id=user_id,
-            summary="Initial AI Squad Generation",
-            author="AI Squad",
-        )
+        try:
+            art_id, _initial_revision_num = db.save_article_with_initial_revision(
+                topic=safe_topic,
+                content=clean_content,
+                tone=tone,
+                audience=audience,
+                target_length=target_length,
+                generation_time=elapsed,
+                user_id=user_id,
+                summary="Initial AI Squad Generation",
+                author="AI Squad",
+                run_id=run_id,
+            )
+        except PermissionError as perm_err:
+            logger.info("Article persistence aborted due to lease/cancellation fence: %s", perm_err)
+            tracer.end_job(outputs={"status": "cancelled", "reason": str(perm_err)})
+            return
 
         readability = calculate_readability(clean_content)
         tracer.log_evaluation("flesch_reading_ease", readability.get("score", 0.0), comment=readability.get("grade"))

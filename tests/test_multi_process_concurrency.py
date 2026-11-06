@@ -378,3 +378,64 @@ def test_cancellation_race_during_llm_execution(tmp_path):
     # Verify no article was persisted
     articles = db.get_articles(user_id=user_id)
     assert len(articles) == 0, "No article should be saved after cancellation"
+
+
+
+def test_stale_worker_article_write_rejected_under_fencing(tmp_path):
+    """Test that a stale worker cannot write articles when its lease token or fencing token is invalid."""
+    test_db = str(tmp_path / "stale_write.db")
+    os.environ["RESEARCH_STUDIO_DB_PATH"] = test_db
+    db.init_db()
+
+    user_id = 5566
+    run_id = "run_stale_write_1"
+    worker_a = "worker_alpha"
+
+    created, _ = db.create_research_job_atomic(run_id, "Stale Write Topic", user_id=user_id, worker_id=worker_a)
+    assert created is True
+
+    # Attempting to save article with wrong worker_id or wrong fencing token MUST be rejected
+    with pytest.raises(PermissionError) as exc:
+        db.save_article_with_initial_revision(
+            topic="Stale Write Topic",
+            content="# Stale content",
+            user_id=user_id,
+            run_id=run_id,
+            worker_id="worker_imposter",
+            lease_token="lease_invalid",
+            fencing_token=999,
+        )
+    assert "rejected" in str(exc.value).lower() or "stale" in str(exc.value).lower()
+
+    # Verify no articles were inserted
+    articles = db.get_articles(user_id=user_id)
+    assert len(articles) == 0
+
+
+def test_cancellation_atomicity_rejects_article_write(tmp_path):
+    """Test that if cancellation commits first, any subsequent article write for that run is rejected."""
+    test_db = str(tmp_path / "cancel_atomic.db")
+    os.environ["RESEARCH_STUDIO_DB_PATH"] = test_db
+    db.init_db()
+
+    user_id = 7788
+    run_id = "run_cancel_atomic_1"
+
+    created, _ = db.create_research_job_atomic(run_id, "Atomic Cancel Topic", user_id=user_id)
+    assert created is True
+
+    # User cancels run
+    db.update_research_job(run_id, status="cancelled")
+
+    # Worker attempts to write article for the cancelled run
+    with pytest.raises(PermissionError) as exc:
+        db.save_article_with_initial_revision(
+            topic="Atomic Cancel Topic",
+            content="# Late content from cancelled run",
+            user_id=user_id,
+            run_id=run_id,
+        )
+    assert "cancelled" in str(exc.value).lower() or "terminal" in str(exc.value).lower()
+
+    # Confirm 0 articles persisted
+    assert len(db.get_articles(user_id=user_id)) == 0
