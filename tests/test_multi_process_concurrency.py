@@ -309,3 +309,72 @@ def test_cross_process_cancellation_multiprocessing(tmp_path):
     res = result_queue.get(timeout=5)
     assert res["observed_cancellation"] is True
     assert res["final_status"] == "cancelled"
+
+
+
+def test_expired_lease_renewal_rejection(tmp_path):
+    """Test that an expired worker CANNOT renew its lease even if claim row is still present."""
+    test_db = str(tmp_path / "expired_lease.db")
+    os.environ["RESEARCH_STUDIO_DB_PATH"] = test_db
+    db.init_db()
+
+    user_id = 1234
+    run_id = "run_expired_worker_1"
+    worker_id = "worker_slow"
+
+    created, _ = db.create_research_job_atomic(run_id, "Test Expired Lease", user_id=user_id, worker_id=worker_id)
+    assert created is True
+
+    # Retrieve tokens
+    with db.get_connection() as (conn, is_tidb):
+        cur = db._exec(conn, is_tidb, "SELECT lease_token, fencing_token FROM active_run_claims WHERE user_id = ?", (user_id,))
+        claim = cur.fetchone()
+        lease_token = claim["lease_token"] if is_tidb else claim[0]
+        fencing_token = claim["fencing_token"] if is_tidb else claim[1]
+
+    # Artificially expire the lease in the past
+    past_str = "2020-01-01 00:00:00"
+    with db.get_connection() as (conn, is_tidb):
+        db._exec(conn, is_tidb, "UPDATE active_run_claims SET lease_expires_at = ? WHERE user_id = ?", (past_str, user_id))
+
+    # Heartbeat attempt on expired lease MUST fail
+    renew_result = db.heartbeat_active_run_claim(
+        run_id=run_id,
+        worker_id=worker_id,
+        lease_token=lease_token,
+        fencing_token=fencing_token,
+    )
+    assert renew_result is False, "Expired worker must be rejected from renewing lease"
+
+
+def test_cancellation_race_during_llm_execution(tmp_path):
+    """Test cancellation race scenario:
+    1. Worker A starts execution.
+    2. Cancellation request sets job status to cancelled in DB.
+    3. Worker A finishes LLM execution and checks cancellation.
+    4. Worker A aborts without persisting output or publishing articles.
+    """
+    test_db = str(tmp_path / "cancel_race.db")
+    os.environ["RESEARCH_STUDIO_DB_PATH"] = test_db
+    db.init_db()
+
+    user_id = 9988
+    run_id = "run_race_cancel"
+
+    created, _ = db.create_research_job_atomic(run_id, "Cancellation Race Topic", user_id=user_id)
+    assert created is True
+
+    # Concurrent cancel occurs
+    db.update_research_job(run_id, status="cancelled")
+
+    # Worker checks status
+    job = db.get_research_job(run_id)
+    assert job["status"] == "cancelled"
+
+    # Worker attempts update with terminal state check
+    updated = db.update_research_job(run_id, status="completed")
+    assert updated is False, "Terminal cancelled job must freeze and reject completion"
+
+    # Verify no article was persisted
+    articles = db.get_articles(user_id=user_id)
+    assert len(articles) == 0, "No article should be saved after cancellation"

@@ -381,7 +381,7 @@ def _execute_run_worker(
             except Exception:
                 pass
 
-        # Check if cancelled while kickoff was executing
+        # Check if cancelled while kickoff was executing (prior to persisting output)
         if _job_is_cancelled(run_id, cancel_event):
             tracer.end_job(outputs={"status": "cancelled"})
             return
@@ -391,6 +391,11 @@ def _execute_run_worker(
         clean_content, mermaid_code = extract_mermaid(raw_content)
         # Mask PII / secrets before persisting anything user-visible.
         clean_content = mask_pii_and_secrets(clean_content)
+
+        # Fencing & Cancellation race check: Verify run is not cancelled right before writing
+        if _job_is_cancelled(run_id, cancel_event):
+            tracer.end_job(outputs={"status": "cancelled"})
+            return
 
         art_id, _initial_revision_num = db.save_article_with_initial_revision(
             topic=safe_topic,

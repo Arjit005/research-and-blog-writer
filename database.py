@@ -2346,12 +2346,17 @@ def create_research_job_atomic(
                 cur_f = _exec(conn, is_tidb, "SELECT current_fencing FROM user_lease_sequences WHERE user_id = ?", (user_id,))
                 fencing_token = int(_get_value(cur_f.fetchone(), False, "current_fencing", 0) or 1)
 
-            # Attempt atomic claim insertion with monotonic fencing token
+            # Attempt atomic claim insertion with monotonic fencing token and lease expiration
+            now_dt = datetime.now(timezone.utc)
+            expires_dt = now_dt + timedelta(seconds=120)
+            now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+            expires_str = expires_dt.strftime("%Y-%m-%d %H:%M:%S")
+
             try:
                 _exec(
                     conn, is_tidb,
-                    "INSERT INTO active_run_claims (user_id, run_id, worker_id, lease_token, fencing_token) VALUES (?, ?, ?, ?, ?)",
-                    (user_id, run_id, resolved_worker, lease_token, fencing_token),
+                    "INSERT INTO active_run_claims (user_id, run_id, worker_id, lease_token, fencing_token, claimed_at, heartbeat_at, lease_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (user_id, run_id, resolved_worker, lease_token, fencing_token, now_str, now_str, expires_str),
                 )
             except Exception as exc:
                 msg = str(exc).lower()
@@ -2379,35 +2384,43 @@ def heartbeat_active_run_claim(
     worker_id: Optional[str] = None,
     lease_token: Optional[str] = None,
     fencing_token: Optional[int] = None,
+    extend_seconds: int = 120,
 ) -> bool:
-    """Update heartbeat timestamp for active run claim verifying lease and fencing token.
+    """Update heartbeat timestamp and extend lease_expires_at, strictly validating expiry.
 
     Fencing & Lease Protection:
-    Ensures that a stale worker whose claim was expired or stolen cannot renew
-    or overwrite an active worker's lease.
-    Heartbeats do not increment the fencing generation; fencing generations increment
-    only when a new lease is claimed.
+    Ensures that a stale or expired worker whose lease lapsed cannot renew
+    or overwrite an active worker's lease, even if the row has not yet been deleted
+    by a recovery sweep.
+    Requires:
+    - Matching run_id
+    - Matching worker_id
+    - Matching lease_token
+    - Matching fencing_token
+    - Current database time <= lease_expires_at (not yet expired)
     """
-    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    now_dt = datetime.now(timezone.utc)
+    new_expires_dt = now_dt + timedelta(seconds=max(30, extend_seconds))
+    now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+    new_expires_str = new_expires_dt.strftime("%Y-%m-%d %H:%M:%S")
+
     with get_connection() as (conn, is_tidb):
-        conditions = ["run_id = ?"]
-        params: List[Any] = [now_str]
+        conditions = [
+            "run_id = ?",
+            "lease_expires_at >= ?",  # Enforce lease has NOT expired
+        ]
+        params: List[Any] = [now_str, new_expires_str, run_id, now_str]
         if worker_id:
             conditions.append("worker_id = ?")
-        if lease_token:
-            conditions.append("lease_token = ?")
-        if fencing_token is not None:
-            conditions.append("fencing_token = ?")
-
-        sql = f"UPDATE active_run_claims SET heartbeat_at = ? WHERE {' AND '.join(conditions)}"
-        params.append(run_id)
-        if worker_id:
             params.append(worker_id)
         if lease_token:
+            conditions.append("lease_token = ?")
             params.append(lease_token)
         if fencing_token is not None:
+            conditions.append("fencing_token = ?")
             params.append(fencing_token)
 
+        sql = f"UPDATE active_run_claims SET heartbeat_at = ?, lease_expires_at = ? WHERE {' AND '.join(conditions)}"
         cursor = _exec(conn, is_tidb, sql, tuple(params))
         rowcount = getattr(cursor, "rowcount", None)
         return bool(rowcount and rowcount > 0)

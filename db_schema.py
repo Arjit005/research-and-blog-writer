@@ -529,6 +529,7 @@ TABLE_DEFINITIONS: List[Tuple[str, str, str]] = [
             fencing_token      BIGINT NOT NULL DEFAULT 1,
             claimed_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             heartbeat_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            lease_expires_at   DATETIME NOT NULL,
             INDEX idx_claim_run (run_id)
         )
         """,
@@ -540,7 +541,8 @@ TABLE_DEFINITIONS: List[Tuple[str, str, str]] = [
             lease_token        TEXT NOT NULL,
             fencing_token      INTEGER NOT NULL DEFAULT 1,
             claimed_at         TEXT NOT NULL DEFAULT (datetime('now')),
-            heartbeat_at       TEXT NOT NULL DEFAULT (datetime('now'))
+            heartbeat_at       TEXT NOT NULL DEFAULT (datetime('now')),
+            lease_expires_at   TEXT NOT NULL
         )
         """,
     ),
