@@ -1,0 +1,64 @@
+{
+  // ==============================================================
+  // Suggested Fallback Profiles (DECLARATIVE)
+  // ==============================================================
+  // These profiles are reference configurations. They are NOT wired
+  // into runtime unless llm_fallback.py or app config loading reads
+  // them. Verify model IDs against each provider before enabling.
+  // ==============================================================
+
+  "version": 1,
+  "updated": "2026-11-06",
+
+  "profiles": [
+    {
+      "id": "agent_practical_2026_11",
+      "name": "Practical Agent Fallback (User-Suggested)",
+      "description": "Fast primary, quality secondary, stable multilingual, large-context, then auto-router safety net.",
+      "enabled": false,
+      "runtime_wired": false,
+      "order": [
+        {
+          "rank": 1,
+          "provider": "groq",
+          "model": "groq/openai/gpt-oss-120b",
+          "reason": "Fast primary model",
+          "verification_needed": true
+        },
+        {
+          "rank": 2,
+          "provider": "google_gemini",
+          "model": "gemini/gemini-3.8-flash",
+          "reason": "Large context and strong quality",
+          "verification_needed": true
+        },
+        {
+          "rank": 3,
+          "provider": "openrouter",
+          "model": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+          "reason": "Stable text model with reported Hindi support",
+          "verification_needed": true
+        },
+        {
+          "rank": 4,
+          "provider": "openrouter",
+          "model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+          "reason": "Large-context fallback",
+          "verification_needed": true
+        },
+        {
+          "rank": 5,
+          "provider": "openrouter",
+          "model": "openrouter/free",
+          "reason": "Auto-router safety net",
+          "verification_needed": true
+        }
+      ],
+      "notes": [
+        "Groq limits are organization-level; multiple keys on the same account do not increase limits.",
+        "OpenRouter ':free' models may have aggregate/request limits.",
+        "Confirm all model IDs before making this profile active in runtime."
+      ]
+    }
+  ]
+}

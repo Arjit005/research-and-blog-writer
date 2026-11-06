@@ -3,7 +3,7 @@ name = "research_and_blog_writer"
 version = "0.1.0"
 description = "A crewAI multi-agent system that researches any topic and generates a quality-checked blog post"
 authors = [{ name = "Arjit Katiyar" }]
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "crewai[google-genai,litellm,tools]>=1.15.21,<2.0.0",
     "streamlit>=1.63.0",
@@ -22,6 +22,15 @@ dependencies = [
     "langsmith>=0.1.0",
     "google-auth>=2.30.0",
     "requests>=2.31.0",
+    # Security: minimum patched versions for pip-audit findings (transitive deps pinned as floors where safe)
+    "pillow>=13.0.0",
+    "aiohttp>=3.14.4",
+    "certifi>=2026.10.18",
+    "multidict>=6.9.1",
+    "opentelemetry-api>=1.44.0,<1.45",
+    "pyasn1>=0.6.5",
+    "PyJWT>=2.15.0",
+    "urllib3>=2.8.0",
 ]
 
 [build-system]

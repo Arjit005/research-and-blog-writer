@@ -1,0 +1,41 @@
+{
+  // ==============================================================
+  // API Keys Template (REFERENCE ONLY)
+  // ==============================================================
+  // This project reads API keys from environment variables / .env.
+  // DO NOT store real secrets in this file and DO NOT commit a
+  // populated copy. Use .env.example -> .env for actual values.
+  //
+  // Each entry maps to a provider in config/free_models.jsonc.
+  // ==============================================================
+
+  "keys": {
+    "groq": {
+      "GROQ_API_KEY": "your_groq_api_key_here",
+      "source": "https://console.groq.com/keys",
+      "free_tier_notes": "Free tier available without credit card. Rate limits are organization-level."
+    },
+    "google_gemini": {
+      "GEMINI_API_KEY": "your_gemini_api_key_here",
+      "source": "https://aistudio.google.com/apikey",
+      "free_tier_notes": "Free tier; billing not required for basic access. Quotas vary by model."
+    },
+    "openrouter": {
+      "OPENROUTER_API_KEY": "your_openrouter_api_key_here",
+      "OPEN_ROUTER_API_KEY": "optional_alias",
+      "source": "https://openrouter.ai/keys",
+      "free_tier_notes": "Many free models use ':free'. 'openrouter/free' can auto-select a free model. Aggregate/request limits may apply."
+    },
+    "beatapi": {
+      "BEATAPI_KEY": "your_beatapi_key_here",
+      "BEAT_API_KEY": "optional_alias",
+      "source": "https://beatapi.io",
+      "free_tier_notes": "OpenAI-compatible endpoint with selected free models."
+    },
+    "serper_optional": {
+      "SERPER_API_KEY": "your_serper_api_key_here_optional",
+      "source": "https://serper.dev",
+      "free_tier_notes": "Optional search fallback (not an LLM provider)."
+    }
+  }
+}

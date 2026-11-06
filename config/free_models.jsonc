@@ -1,0 +1,394 @@
+{
+  // ==============================================================
+  // Free AI Models Registry
+  // ==============================================================
+  // Declarative catalog of free-tier AI models and the API keys
+  // (environment variables) that grant access to them.
+  //
+  // Source of truth for runtime behavior remains llm_fallback.py.
+  // Keep IDs/prefixes here consistent when changing runtime chains.
+  //
+  // Model availability, quotas, and exact IDs change upstream.
+  // Entries marked verification_needed should be confirmed against
+  // each provider's current catalog before runtime enablement.
+  //
+  // DO NOT store real secrets in this file. Use .env / .env.example.
+  // ==============================================================
+
+  "version": 2,
+  "updated": "2026-11-06",
+
+  "providers": [
+    {
+      "id": "groq",
+      "name": "Groq",
+      "website": "https://console.groq.com/keys",
+      "api_style": "openai_compatible",
+      "base_url": "https://api.groq.com/openai/v1",
+      "model_id_prefix": "groq/",
+      "api_keys": [
+        {
+          "env": "GROQ_API_KEY",
+          "required": false,
+          "description": "Groq API key. Free tier available without credit card; rate limits are organization-level."
+        }
+      ],
+      "priority": 1,
+      "notes": "Very fast inference. Suggested as primary in agent fallback profiles when configured and model IDs are verified.",
+      "models": [
+        {
+          "id": "groq/openai/gpt-oss-120b",
+          "label": "GPT-OSS 120B (Groq)",
+          "tier": "free",
+          "context_window": null,
+          "modalities": ["text"],
+          "strengths": ["fast", "reasoning", "general"],
+          "recommended_for": ["research", "analysis", "writing"],
+          "enabled": true,
+          "verification_needed": true,
+          "notes": "User-suggested free chat model (Sep 2026 report). Confirm exact Groq model ID before runtime use."
+        },
+        {
+          "id": "groq/openai/gpt-oss-20b",
+          "label": "GPT-OSS 20B (Groq)",
+          "tier": "free",
+          "context_window": null,
+          "modalities": ["text"],
+          "strengths": ["fast", "lightweight"],
+          "recommended_for": ["routing", "light_tasks", "fallback"],
+          "enabled": true,
+          "verification_needed": true,
+          "notes": "User-suggested free chat model. Confirm exact Groq model ID."
+        },
+        {
+          "id": "groq/qwen/qwen3.6-27b",
+          "label": "Qwen 3.6 27B (Groq)",
+          "tier": "free",
+          "context_window": null,
+          "modalities": ["text"],
+          "strengths": ["general", "multilingual", "fast"],
+          "recommended_for": ["research", "analysis"],
+          "enabled": true,
+          "verification_needed": true,
+          "notes": "User-suggested free chat model. Confirm exact Groq model ID/naming."
+        }
+      ]
+    },
+    {
+      "id": "google_gemini",
+      "name": "Google Gemini (AI Studio)",
+      "website": "https://aistudio.google.com/apikey",
+      "api_style": "google_generativeai",
+      "model_id_prefix": "gemini/",
+      "api_keys": [
+        {
+          "env": "GEMINI_API_KEY",
+          "required": false,
+          "description": "Google AI Studio API key (free tier, billing not required for basic access; quotas vary by model)."
+        }
+      ],
+      "priority": 2,
+      "notes": "Large context and strong quality on supported models. Verify model names in AI Studio/LiteLLM before runtime use.",
+      "models": [
+        {
+          "id": "gemini/gemini-3.8-flash",
+          "label": "Gemini 3.8 Flash",
+          "tier": "free",
+          "context_window": null,
+          "modalities": ["text"],
+          "strengths": ["fast", "quality", "large_context_candidate"],
+          "recommended_for": ["research", "analysis", "writing"],
+          "enabled": true,
+          "verification_needed": true
+        },
+        {
+          "id": "gemini/gemini-3.6-flash",
+          "label": "Gemini 3.6 Flash",
+          "tier": "free",
+          "context_window": null,
+          "modalities": ["text"],
+          "strengths": ["fast", "general"],
+          "recommended_for": ["research", "analysis"],
+          "enabled": true,
+          "verification_needed": true
+        },
+        {
+          "id": "gemini/gemini-3.5-flash",
+          "label": "Gemini 3.5 Flash",
+          "tier": "free",
+          "context_window": null,
+          "modalities": ["text"],
+          "strengths": ["fast", "general", "high_quota"],
+          "recommended_for": ["research", "analysis", "review"],
+          "enabled": true
+        },
+        {
+          "id": "gemini/gemini-3.5-flash-lite",
+          "label": "Gemini 3.5 Flash-Lite",
+          "tier": "free",
+          "context_window": null,
+          "modalities": ["text"],
+          "strengths": ["ultra_fast", "high_quota", "low_latency"],
+          "recommended_for": ["routing", "light_tasks"],
+          "enabled": true,
+          "verification_needed": true
+        },
+        {
+          "id": "gemini/gemini-3.1-flash-lite",
+          "label": "Gemini 3.1 Flash-Lite",
+          "tier": "free",
+          "context_window": null,
+          "modalities": ["text"],
+          "strengths": ["lightweight", "fast"],
+          "recommended_for": ["fallback", "light_tasks"],
+          "enabled": true,
+          "verification_needed": true
+        },
+        {
+          "id": "gemini/gemma-4",
+          "label": "Gemma 4",
+          "tier": "free",
+          "context_window": null,
+          "modalities": ["text"],
+          "strengths": ["open_model_family", "general"],
+          "recommended_for": ["fallback", "general"],
+          "enabled": true,
+          "verification_needed": true,
+          "notes": "Confirm whether exposed as gemini/gemma-* or a specific Gemma 4 variant in the active API."
+        },
+        {
+          "id": "gemini/gemini-2.5-flash",
+          "label": "Gemini 2.5 Flash",
+          "tier": "free",
+          "context_window": null,
+          "modalities": ["text"],
+          "strengths": ["stable", "fallback"],
+          "recommended_for": ["fallback"],
+          "enabled": true
+        },
+        {
+          "id": "gemini/gemini-2.5-flash-lite",
+          "label": "Gemini 2.5 Flash-Lite",
+          "tier": "free",
+          "context_window": null,
+          "modalities": ["text"],
+          "strengths": ["lightweight", "fallback"],
+          "recommended_for": ["fallback"],
+          "enabled": true
+        }
+      ]
+    },
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "website": "https://openrouter.ai/keys",
+      "api_style": "openrouter",
+      "model_id_prefix": "openrouter/",
+      "api_keys": [
+        {
+          "env": "OPENROUTER_API_KEY",
+          "aliases": ["OPEN_ROUTER_API_KEY"],
+          "required": false,
+          "description": "OpenRouter API key. Many free models use ':free' suffix; free-tier aggregate/request limits may apply."
+        }
+      ],
+      "priority": 3,
+      "notes": "Aggregates upstream free models. 'openrouter/free' can auto-select a free model (special router option). On detected daily quota exhaustion, runtime may skip remaining OpenRouter candidates.",
+      "models": [
+        {
+          "id": "openrouter/free",
+          "label": "OpenRouter Auto (Free Router)",
+          "tier": "free",
+          "context_window": null,
+          "modalities": ["text"],
+          "strengths": ["auto_routing", "safety_net"],
+          "recommended_for": ["last_resort", "fallback"],
+          "enabled": true,
+          "verification_needed": true,
+          "notes": "Special OpenRouter option that selects a free model automatically."
+        },
+        {
+          "id": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+          "label": "Llama 3.3 70B Instruct (Free)",
+          "tier": "free",
+          "context_window": 131072,
+          "modalities": ["text"],
+          "strengths": ["stable", "general", "hindi_support_reported"],
+          "recommended_for": ["general", "multilingual", "fallback"],
+          "enabled": true,
+          "verification_needed": true,
+          "notes": "User-reported stable text-only model (131K context)."
+        },
+        {
+          "id": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+          "label": "NVIDIA Nemotron 3 Ultra 550B (Free)",
+          "tier": "free",
+          "context_window": 1000000,
+          "modalities": ["text"],
+          "strengths": ["deep_analysis", "writing", "large_context"],
+          "recommended_for": ["large_context", "writing", "analysis"],
+          "enabled": true,
+          "verification_needed": true,
+          "notes": "User-reported ~1M context; confirm current OpenRouter listing."
+        },
+        {
+          "id": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+          "label": "NVIDIA Nemotron 3.5 Super VL (Free)",
+          "tier": "free",
+          "context_window": 1000000,
+          "modalities": ["text", "image"],
+          "strengths": ["multimodal", "long_context", "robust"],
+          "recommended_for": ["multimodal", "research", "fallback"],
+          "enabled": true,
+          "verification_needed": true
+        },
+        {
+          "id": "openrouter/nvidia/nemotron-3.5-lightning:free",
+          "label": "NVIDIA Nemotron 3.5 Lightning (Free)",
+          "tier": "free",
+          "context_window": 1000000,
+          "modalities": ["text"],
+          "strengths": ["fast", "long_context", "reliable"],
+          "recommended_for": ["research", "analysis"],
+          "enabled": true
+        },
+        {
+          "id": "openrouter/cohere/north-mini-code:free",
+          "label": "Cohere North Mini Code (Free)",
+          "tier": "free",
+          "context_window": 256000,
+          "modalities": ["text"],
+          "strengths": ["coding", "structured_output"],
+          "recommended_for": ["coding", "structured_tasks"],
+          "enabled": true
+        },
+        {
+          "id": "openrouter/dots-studio/dots-3-note-preview:free",
+          "label": "Dots Studio Dots3-Note Preview (Free)",
+          "tier": "free",
+          "context_window": 512000,
+          "modalities": ["text"],
+          "strengths": ["synthesis", "long_context"],
+          "recommended_for": ["analysis", "writing"],
+          "enabled": true,
+          "verification_needed": true,
+          "notes": "Confirm exact OpenRouter model slug."
+        },
+        {
+          "id": "openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+          "label": "NVIDIA Nemotron 3 Nano Omni Reasoning (Free)",
+          "tier": "free",
+          "context_window": null,
+          "modalities": ["text"],
+          "strengths": ["reasoning", "fast"],
+          "recommended_for": ["analysis", "review"],
+          "enabled": true,
+          "verification_needed": true,
+          "notes": "Slug may vary on OpenRouter; verify exact ID."
+        },
+        {
+          "id": "openrouter/nvidia/nemotron-nano-12b-v2-vl:free",
+          "label": "NVIDIA Nemotron Nano 12B VL (Free, image input)",
+          "tier": "free",
+          "context_window": null,
+          "modalities": ["text", "image"],
+          "strengths": ["vision", "image_input"],
+          "recommended_for": ["image_tasks"],
+          "enabled": true,
+          "verification_needed": true,
+          "notes": "Use when image input is needed. Verify exact OpenRouter slug (:free suffix may differ)."
+        },
+        {
+          "id": "openrouter/openai/gpt-oss-120b:free",
+          "label": "GPT-OSS 120B (Free, via OpenRouter)",
+          "tier": "free",
+          "context_window": null,
+          "modalities": ["text"],
+          "strengths": ["reasoning", "coding_candidate"],
+          "recommended_for": ["reasoning", "coding", "fallback"],
+          "enabled": true,
+          "verification_needed": true,
+          "notes": "User-reported free reasoning/coding option on OpenRouter. Confirm exact provider/model slug."
+        },
+        {
+          "id": "openrouter/poolside/laguna-m1:free",
+          "label": "Poolside Laguna M.1 (Free)",
+          "tier": "free",
+          "context_window": null,
+          "modalities": ["text"],
+          "strengths": ["coding", "reasoning_candidate"],
+          "recommended_for": ["coding", "fallback"],
+          "enabled": true,
+          "verification_needed": true,
+          "notes": "User-reported free coding/reasoning option. Confirm exact OpenRouter slug and availability."
+        },
+        {
+          "id": "openrouter/google/gemma-4-31b-it:free",
+          "label": "Google Gemma 4 31B IT (Free, via OpenRouter)",
+          "tier": "free",
+          "context_window": 262000,
+          "modalities": ["text"],
+          "strengths": ["instruction_following", "general"],
+          "recommended_for": ["fallback", "general"],
+          "enabled": true
+        }
+      ]
+    },
+    {
+      "id": "beatapi",
+      "name": "BeatAPI",
+      "website": "https://beatapi.io",
+      "api_style": "openai_compatible",
+      "base_url": "https://api.beatapi.io/v1",
+      "model_id_prefix": "beatapi/",
+      "api_keys": [
+        {
+          "env": "BEATAPI_KEY",
+          "aliases": ["BEAT_API_KEY"],
+          "required": false,
+          "description": "BeatAPI key for OpenAI-compatible free models."
+        }
+      ],
+      "priority": 4,
+      "notes": "OpenAI-compatible endpoint. Included for coverage; verify current free model names.",
+      "models": [
+        {
+          "id": "beatapi/glm-5.3-flash-free",
+          "label": "GLM 5.3 Flash (Free)",
+          "tier": "free",
+          "context_window": null,
+          "modalities": ["text"],
+          "strengths": ["general", "structured_output"],
+          "recommended_for": ["analysis", "writing"],
+          "enabled": true
+        },
+        {
+          "id": "beatapi/deepseek-v4.1-flash-free",
+          "label": "DeepSeek V4.1 Flash (Free)",
+          "tier": "free",
+          "context_window": null,
+          "modalities": ["text"],
+          "strengths": ["reasoning", "technical"],
+          "recommended_for": ["research", "technical_writing"],
+          "enabled": true
+        },
+        {
+          "id": "beatapi/hy4-free",
+          "label": "Tencent Hunyuan 4 (Free)",
+          "tier": "free",
+          "context_window": null,
+          "modalities": ["text"],
+          "strengths": ["general", "fallback"],
+          "recommended_for": ["fallback"],
+          "enabled": true
+        }
+      ]
+    }
+  ],
+
+  "fallback_policy": {
+    "description": "Runtime fallback is implemented in llm_fallback.py. This section documents suggested/config profiles, not active runtime behavior.",
+    "runtime_implemented_order_note": "Check llm_fallback.py for the currently active provider order and model chains.",
+    "suggested_profiles": "See config/fallback_profiles.jsonc"
+  }
+}

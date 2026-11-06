@@ -49,6 +49,19 @@ crew.log                # Execution logs
 # --- Misc ---
 *.bak
 
+# --- Local audit/security scan cache ---
+.pip-audit-cache/
+
+# --- Test/coverage artifacts ---
+.coverage
+.coverage.*
+htmlcov/
+pytest-of-Dell/
+
+# --- Local CrewAI storage (if created in workspace) ---
+crewai/
+.crewai-test-storage/
+
 # --- Frontend (Next.js / Node) ---
 frontend/node_modules/
 frontend/.next/

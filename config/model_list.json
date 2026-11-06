@@ -1,0 +1,37 @@
+{
+  "version": 2,
+  "updated": "2026-11-06",
+  "source": "config/free_models.jsonc",
+  "runtime_note": "Declarative list only. Active runtime chains are implemented in llm_fallback.py.",
+  "models": [
+    { "provider": "groq", "env": "GROQ_API_KEY", "id": "groq/openai/gpt-oss-120b", "label": "GPT-OSS 120B (Groq)", "tier": "free", "modalities": ["text"], "verification_needed": true },
+    { "provider": "groq", "env": "GROQ_API_KEY", "id": "groq/openai/gpt-oss-20b", "label": "GPT-OSS 20B (Groq)", "tier": "free", "modalities": ["text"], "verification_needed": true },
+    { "provider": "groq", "env": "GROQ_API_KEY", "id": "groq/qwen/qwen3.6-27b", "label": "Qwen 3.6 27B (Groq)", "tier": "free", "modalities": ["text"], "verification_needed": true },
+
+    { "provider": "google_gemini", "env": "GEMINI_API_KEY", "id": "gemini/gemini-3.8-flash", "label": "Gemini 3.8 Flash", "tier": "free", "modalities": ["text"], "verification_needed": true },
+    { "provider": "google_gemini", "env": "GEMINI_API_KEY", "id": "gemini/gemini-3.6-flash", "label": "Gemini 3.6 Flash", "tier": "free", "modalities": ["text"], "verification_needed": true },
+    { "provider": "google_gemini", "env": "GEMINI_API_KEY", "id": "gemini/gemini-3.5-flash", "label": "Gemini 3.5 Flash", "tier": "free", "modalities": ["text"], "verification_needed": false },
+    { "provider": "google_gemini", "env": "GEMINI_API_KEY", "id": "gemini/gemini-3.5-flash-lite", "label": "Gemini 3.5 Flash-Lite", "tier": "free", "modalities": ["text"], "verification_needed": true },
+    { "provider": "google_gemini", "env": "GEMINI_API_KEY", "id": "gemini/gemini-3.1-flash-lite", "label": "Gemini 3.1 Flash-Lite", "tier": "free", "modalities": ["text"], "verification_needed": true },
+    { "provider": "google_gemini", "env": "GEMINI_API_KEY", "id": "gemini/gemma-4", "label": "Gemma 4", "tier": "free", "modalities": ["text"], "verification_needed": true },
+    { "provider": "google_gemini", "env": "GEMINI_API_KEY", "id": "gemini/gemini-2.5-flash", "label": "Gemini 2.5 Flash", "tier": "free", "modalities": ["text"], "verification_needed": false },
+    { "provider": "google_gemini", "env": "GEMINI_API_KEY", "id": "gemini/gemini-2.5-flash-lite", "label": "Gemini 2.5 Flash-Lite", "tier": "free", "modalities": ["text"], "verification_needed": false },
+
+    { "provider": "openrouter", "env": "OPENROUTER_API_KEY", "id": "openrouter/free", "label": "OpenRouter Auto (Free Router)", "tier": "free", "modalities": ["text"], "verification_needed": true },
+    { "provider": "openrouter", "env": "OPENROUTER_API_KEY", "id": "openrouter/meta-llama/llama-3.3-70b-instruct:free", "label": "Llama 3.3 70B Instruct (Free)", "tier": "free", "modalities": ["text"], "context_window": 131072, "verification_needed": true },
+    { "provider": "openrouter", "env": "OPENROUTER_API_KEY", "id": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free", "label": "Nemotron 3 Ultra 550B (Free)", "tier": "free", "modalities": ["text"], "context_window": 1000000, "verification_needed": true },
+    { "provider": "openrouter", "env": "OPENROUTER_API_KEY", "id": "openrouter/nvidia/nemotron-3.5-super-vl:free", "label": "Nemotron 3.5 Super VL (Free)", "tier": "free", "modalities": ["text", "image"], "context_window": 1000000, "verification_needed": true },
+    { "provider": "openrouter", "env": "OPENROUTER_API_KEY", "id": "openrouter/nvidia/nemotron-3.5-lightning:free", "label": "Nemotron 3.5 Lightning (Free)", "tier": "free", "modalities": ["text"], "context_window": 1000000, "verification_needed": false },
+    { "provider": "openrouter", "env": "OPENROUTER_API_KEY", "id": "openrouter/cohere/north-mini-code:free", "label": "Cohere North Mini Code (Free)", "tier": "free", "modalities": ["text"], "context_window": 256000, "verification_needed": false },
+    { "provider": "openrouter", "env": "OPENROUTER_API_KEY", "id": "openrouter/dots-studio/dots-3-note-preview:free", "label": "Dots3-Note Preview (Free)", "tier": "free", "modalities": ["text"], "context_window": 512000, "verification_needed": true },
+    { "provider": "openrouter", "env": "OPENROUTER_API_KEY", "id": "openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "label": "Nemotron 3 Nano Omni Reasoning (Free)", "tier": "free", "modalities": ["text"], "verification_needed": true },
+    { "provider": "openrouter", "env": "OPENROUTER_API_KEY", "id": "openrouter/nvidia/nemotron-nano-12b-v2-vl:free", "label": "Nemotron Nano 12B VL (Free)", "tier": "free", "modalities": ["text", "image"], "verification_needed": true },
+    { "provider": "openrouter", "env": "OPENROUTER_API_KEY", "id": "openrouter/openai/gpt-oss-120b:free", "label": "GPT-OSS 120B (Free, via OpenRouter)", "tier": "free", "modalities": ["text"], "verification_needed": true },
+    { "provider": "openrouter", "env": "OPENROUTER_API_KEY", "id": "openrouter/poolside/laguna-m1:free", "label": "Poolside Laguna M.1 (Free)", "tier": "free", "modalities": ["text"], "verification_needed": true },
+    { "provider": "openrouter", "env": "OPENROUTER_API_KEY", "id": "openrouter/google/gemma-4-31b-it:free", "label": "Gemma 4 31B IT (Free, via OpenRouter)", "tier": "free", "modalities": ["text"], "context_window": 262000, "verification_needed": false },
+
+    { "provider": "beatapi", "env": "BEATAPI_KEY", "id": "beatapi/glm-5.3-flash-free", "label": "GLM 5.3 Flash (Free)", "tier": "free", "modalities": ["text"], "verification_needed": false },
+    { "provider": "beatapi", "env": "BEATAPI_KEY", "id": "beatapi/deepseek-v4.1-flash-free", "label": "DeepSeek V4.1 Flash (Free)", "tier": "free", "modalities": ["text"], "verification_needed": false },
+    { "provider": "beatapi", "env": "BEATAPI_KEY", "id": "beatapi/hy4-free", "label": "Tencent Hunyuan 4 (Free)", "tier": "free", "modalities": ["text"], "verification_needed": false }
+  ]
+}

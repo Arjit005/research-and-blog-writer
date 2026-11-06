@@ -53,6 +53,18 @@ os.environ.setdefault("LLM_DISABLED", "true")
 import pytest  # noqa: E402
 
 
+@pytest.fixture(autouse=True, scope="session")
+def crewai_storage_dir(tmp_path_factory):
+    """Give CrewAI a writable temp storage dir so its SQLite task-output DB
+    does not touch %LOCALAPPDATA% / user profile paths (which can be
+    unwritable in CI/sandboxes) and does not pollute developer state."""
+    path = tmp_path_factory.mktemp("crewai_storage")
+    mp = pytest.MonkeyPatch()
+    mp.setenv("CREWAI_STORAGE_DIR", str(path))
+    yield path
+    mp.undo()
+
+
 def _remove_test_db_files() -> None:
     import gc
     gc.collect()
