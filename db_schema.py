@@ -467,7 +467,7 @@ TABLE_DEFINITIONS: List[Tuple[str, str, str]] = [
     ),
 
     # ------------------------------------------------------------------
-    # Job events (resumable SSE ledger)
+    # Job events (resumable SSE ledger with idempotent event_id)
     # ------------------------------------------------------------------
     (
         "job_events",
@@ -476,10 +476,12 @@ TABLE_DEFINITIONS: List[Tuple[str, str, str]] = [
             id         INT AUTO_INCREMENT PRIMARY KEY,
             run_id     VARCHAR(64) NOT NULL,
             seq_id     INT NOT NULL,
+            event_id   VARCHAR(64) NULL,
             event_type VARCHAR(50) NOT NULL,
             payload    MEDIUMTEXT NOT NULL,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE KEY uk_event_run_seq (run_id, seq_id)
+            UNIQUE KEY uk_event_run_seq (run_id, seq_id),
+            UNIQUE KEY uk_event_run_event_id (run_id, event_id)
         )
         """,
         """
@@ -487,6 +489,7 @@ TABLE_DEFINITIONS: List[Tuple[str, str, str]] = [
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             run_id     TEXT NOT NULL,
             seq_id     INTEGER NOT NULL,
+            event_id   TEXT NULL,
             event_type TEXT NOT NULL,
             payload    TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -615,6 +618,7 @@ SQLITE_EXTRA_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_chat_user           ON chat_history(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_telem_user          ON telemetry_runs(user_id)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uk_event_run_event_id ON job_events(run_id, event_id) WHERE event_id IS NOT NULL",
 ]
 
 # ---------------------------------------------------------------------------
@@ -633,6 +637,7 @@ MIGRATION_COLUMNS: List[Tuple[str, str, str, str]] = [
     ("research_jobs",       "trace_url",    "VARCHAR(512) NULL", "TEXT"),
     ("users",               "password_hash","VARCHAR(255) NULL", "TEXT"),
     ("users",               "google_id",    "VARCHAR(255) NULL", "TEXT NULL"),
+    ("job_events",          "event_id",     "VARCHAR(64) NULL",  "TEXT NULL"),
 ]
 
 

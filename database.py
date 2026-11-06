@@ -533,12 +533,7 @@ def _ensure_column_exists(conn: Any, is_tidb: bool, table: str, col: str, col_ty
 
 
 def _ensure_job_event_unique_index(conn: Any, is_tidb: bool) -> None:
-    """Idempotently enforce UNIQUE(run_id, seq_id) on the job event ledger.
-
-    The original schema only created a *non-unique* index, so the duplicate-key
-    retry in ``append_job_event`` could never fire and concurrent workers could
-    persist duplicate ``seq_id`` values (breaking resumable SSE).
-    """
+    """Idempotently enforce UNIQUE(run_id, seq_id) and UNIQUE(run_id, event_id) on job_events."""
     try:
         if is_tidb:
             cursor = conn.cursor()
@@ -557,35 +552,48 @@ def _ensure_job_event_unique_index(conn: Any, is_tidb: bool) -> None:
                 column = row["COLUMN_NAME"] if isinstance(row, dict) else row[3]
                 entry = indexes.setdefault(name, {"non_unique": non_unique, "columns": []})
                 entry["columns"].append(column)
-            if "uk_event_run_seq" in indexes or any(e["columns"] == ["run_id", "seq_id"] for e in indexes.values()):
-                return
-            try:
-                cursor.execute("ALTER TABLE job_events ADD UNIQUE KEY uk_event_run_seq (run_id, seq_id)")
-            except Exception as exc:
-                if "1061" in str(exc) or "Duplicate key name" in str(exc):
-                    return
-                logger.warning("Could not add UNIQUE(run_id, seq_id) to job_events: %s", exc)
+
+            # 1. UNIQUE(run_id, seq_id)
+            if not ("uk_event_run_seq" in indexes or any(e["columns"] == ["run_id", "seq_id"] for e in indexes.values())):
+                try:
+                    cursor.execute("ALTER TABLE job_events ADD UNIQUE KEY uk_event_run_seq (run_id, seq_id)")
+                except Exception as exc:
+                    if "1061" not in str(exc) and "Duplicate key name" not in str(exc):
+                        logger.warning("Could not add UNIQUE(run_id, seq_id) to job_events: %s", exc)
+
+            # 2. UNIQUE(run_id, event_id)
+            if not ("uk_event_run_event_id" in indexes or any(e["columns"] == ["run_id", "event_id"] for e in indexes.values())):
+                try:
+                    cursor.execute("ALTER TABLE job_events ADD UNIQUE KEY uk_event_run_event_id (run_id, event_id)")
+                except Exception as exc:
+                    if "1061" not in str(exc) and "Duplicate key name" not in str(exc):
+                        logger.warning("Could not add UNIQUE(run_id, event_id) to job_events: %s", exc)
         else:
             cursor = conn.execute("PRAGMA index_list(job_events)")
+            existing_indices = {}
             for idx_row in cursor.fetchall():
                 index_name = idx_row[1]
                 is_unique = bool(idx_row[2])
-                if not is_unique:
-                    continue
                 cols_cursor = conn.execute(f"PRAGMA index_info({index_name})")
-                columns = [r[2] for r in cols_cursor.fetchall()]
-                if columns == ["run_id", "seq_id"]:
-                    return
-            conn.execute("DROP INDEX IF EXISTS idx_event_run_seq")
-            try:
-                conn.execute(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS uk_event_run_seq ON job_events(run_id, seq_id)"
-                )
-            except sqlite3.IntegrityError:
-                logger.warning(
-                    "job_events already contains duplicate (run_id, seq_id) rows; "
-                    "cannot create unique index until ledger is de-duplicated."
-                )
+                cols = [r[2] for r in cols_cursor.fetchall()]
+                existing_indices[index_name] = {"unique": is_unique, "columns": cols}
+
+            # 1. UNIQUE(run_id, seq_id)
+            has_seq_idx = any(v["unique"] and v["columns"] == ["run_id", "seq_id"] for v in existing_indices.values())
+            if not has_seq_idx:
+                conn.execute("DROP INDEX IF EXISTS idx_event_run_seq")
+                try:
+                    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_event_run_seq ON job_events(run_id, seq_id)")
+                except sqlite3.IntegrityError:
+                    pass
+
+            # 2. UNIQUE(run_id, event_id)
+            has_ev_idx = any(v["unique"] and v["columns"] == ["run_id", "event_id"] for v in existing_indices.values())
+            if not has_ev_idx:
+                try:
+                    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_event_run_event_id ON job_events(run_id, event_id) WHERE event_id IS NOT NULL")
+                except sqlite3.IntegrityError:
+                    pass
     except Exception as exc:  # pragma: no cover - defensive migration path
         logger.warning("Job event unique-index migration skipped: %s", exc)
 
@@ -2771,15 +2779,17 @@ def recover_interrupted_jobs(stale_after_seconds: int = 0) -> int:
     return recovered_count
 
 
-def append_job_event(run_id: str, event_type: str, payload: Any) -> int:
-    """Append a sequenced event to the durable job event ledger using job_event_counters.
+def append_job_event(run_id: str, event_type: str, payload: Any, event_id: Optional[str] = None) -> int:
+    """Append a sequenced event to the durable job event ledger using job_event_counters with event idempotency.
 
-    Sequence Allocation Strategy:
-    1. Lock and increment the persistent counter row in `job_event_counters` for this run_id.
-    2. Retrieve the assigned sequence number.
-    3. Insert the event using that sequence into `job_events`.
-    4. Commit both operations atomically in the same database transaction.
-    5. The UNIQUE(run_id, seq_id) constraint guarantees zero sequence duplication or corruption.
+    Idempotency & Sequence Allocation:
+    1. If `event_id` is supplied: check if `(run_id, event_id)` was already committed.
+       If found, return the existing `seq_id` immediately without incrementing the sequence counter.
+    2. Atomically lock and increment the persistent counter row in `job_event_counters` for this run_id.
+    3. Insert the event with `(run_id, seq_id, event_id, event_type, payload)` in the SAME transaction.
+    4. If another concurrent process inserts the identical `(run_id, event_id)`, catch the duplicate key
+       conflict, rollback, and return the already committed event's `seq_id`.
+    5. On any unexpected failure or rollback, the counter increment rolls back cleanly with zero sequence gaps.
     """
     payload_str = json.dumps(payload) if not isinstance(payload, str) else payload
     last_error: Optional[BaseException] = None
@@ -2788,12 +2798,22 @@ def append_job_event(run_id: str, event_type: str, payload: Any) -> int:
             with get_connection() as (conn, is_tidb):
                 if is_tidb:
                     cursor = conn.cursor()
-                    # 1. Ensure counter row exists
+                    # 1. Pre-check idempotency if event_id provided
+                    if event_id:
+                        cursor.execute(
+                            "SELECT seq_id FROM job_events WHERE run_id = %s AND event_id = %s",
+                            (run_id, event_id),
+                        )
+                        row = cursor.fetchone()
+                        if row:
+                            return int(_get_value(row, True, "seq_id", 0))
+
+                    # 2. Ensure counter row exists
                     cursor.execute(
                         "INSERT INTO job_event_counters (run_id, last_seq) VALUES (%s, 0) ON DUPLICATE KEY UPDATE last_seq = last_seq",
                         (run_id,),
                     )
-                    # 2. Lock counter row and increment
+                    # 3. Lock counter row and increment
                     cursor.execute(
                         "SELECT last_seq FROM job_event_counters WHERE run_id = %s FOR UPDATE",
                         (run_id,),
@@ -2805,13 +2825,22 @@ def append_job_event(run_id: str, event_type: str, payload: Any) -> int:
                         "UPDATE job_event_counters SET last_seq = %s WHERE run_id = %s",
                         (next_seq, run_id),
                     )
-                    # 3. Insert event using assigned sequence
+                    # 4. Insert event using assigned sequence and optional event_id
                     cursor.execute(
-                        "INSERT INTO job_events (run_id, seq_id, event_type, payload) VALUES (%s, %s, %s, %s)",
-                        (run_id, next_seq, event_type, payload_str),
+                        "INSERT INTO job_events (run_id, seq_id, event_id, event_type, payload) VALUES (%s, %s, %s, %s, %s)",
+                        (run_id, next_seq, event_id, event_type, payload_str),
                     )
                 else:
                     # SQLite atomic counter increment & event insertion within transaction
+                    if event_id:
+                        cur_exist = conn.execute(
+                            "SELECT seq_id FROM job_events WHERE run_id = ? AND event_id = ?",
+                            (run_id, event_id),
+                        )
+                        exist_row = cur_exist.fetchone()
+                        if exist_row:
+                            return int(exist_row[0])
+
                     conn.execute(
                         "INSERT OR IGNORE INTO job_event_counters (run_id, last_seq) VALUES (?, 0)",
                         (run_id,),
@@ -2827,12 +2856,28 @@ def append_job_event(run_id: str, event_type: str, payload: Any) -> int:
                     row = cur_seq.fetchone()
                     next_seq = int(row[0] if row else 1)
                     conn.execute(
-                        "INSERT INTO job_events (run_id, seq_id, event_type, payload) VALUES (?, ?, ?, ?)",
-                        (run_id, next_seq, event_type, payload_str),
+                        "INSERT INTO job_events (run_id, seq_id, event_id, event_type, payload) VALUES (?, ?, ?, ?, ?)",
+                        (run_id, next_seq, event_id, event_type, payload_str),
                     )
                 return next_seq
         except Exception as exc:
             last_error = exc
+            # Handle duplicate key on (run_id, event_id) if racing another insert
+            err_msg = str(exc).lower()
+            if event_id and ("uk_event_run_event_id" in err_msg or "unique" in err_msg or "1062" in err_msg):
+                try:
+                    with get_connection() as (conn, is_tidb):
+                        cur = _exec(
+                            conn, is_tidb,
+                            "SELECT seq_id FROM job_events WHERE run_id = ? AND event_id = ?",
+                            (run_id, event_id),
+                        )
+                        row = cur.fetchone()
+                        if row:
+                            return int(_get_value(row, is_tidb, "seq_id", 0))
+                except Exception:
+                    pass
+
             if attempt < _MAX_WRITE_RETRIES - 1 and _is_retryable_write_error(exc):
                 time.sleep(0.01 * (attempt + 1))
                 continue
@@ -2846,7 +2891,7 @@ def get_job_events(run_id: str, after_seq_id: int = 0, limit: int = 2000) -> Lis
     with get_connection() as (conn, is_tidb):
         cursor = _exec(
             conn, is_tidb,
-            "SELECT seq_id, event_type, payload, created_at FROM job_events WHERE run_id = ? AND seq_id > ? ORDER BY seq_id ASC LIMIT ?",
+            "SELECT seq_id, event_id, event_type, payload, created_at FROM job_events WHERE run_id = ? AND seq_id > ? ORDER BY seq_id ASC LIMIT ?",
             (run_id, after_seq_id, safe_limit),
         )
         rows = cursor.fetchall()

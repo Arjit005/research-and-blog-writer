@@ -555,3 +555,89 @@ def test_concurrent_sse_events_across_different_runs(tmp_path):
     assert [e["seq_id"] for e in ev_a] == list(range(1, 21))
     assert [e["seq_id"] for e in ev_b] == list(range(1, 21))
 
+
+def test_sse_event_idempotency_and_duplicate_retry(tmp_path):
+    """Test that appending an event with an existing event_id returns the original seq_id without gaps."""
+    test_db = str(tmp_path / "sse_idempotent.db")
+    os.environ["RESEARCH_STUDIO_DB_PATH"] = test_db
+    db.init_db()
+
+    run_id = "run_idempotent_1"
+    db.create_research_job_atomic(run_id, "Idempotent Topic", user_id=9090)
+
+    # 1. First append with event_id
+    seq1 = db.append_job_event(run_id, "step", {"step": 1}, event_id="evt_unique_1")
+    assert seq1 == 1
+
+    # 2. Duplicate retry with same event_id
+    seq1_retry = db.append_job_event(run_id, "step", {"step": 1, "retry": True}, event_id="evt_unique_1")
+    assert seq1_retry == 1, "Duplicate event_id must return original seq_id"
+
+    # 3. Next new event should receive next sequential number (2, not 3) - zero gaps!
+    seq2 = db.append_job_event(run_id, "step", {"step": 2}, event_id="evt_unique_2")
+    assert seq2 == 2, "Sequence counter must remain contiguous after duplicate retry"
+
+    # 4. Confirm exactly 2 rows exist in DB
+    events = db.get_job_events(run_id)
+    assert len(events) == 2
+    assert [e["seq_id"] for e in events] == [1, 2]
+    assert [e["event_id"] for e in events] == ["evt_unique_1", "evt_unique_2"]
+
+
+def _worker_append_duplicate_events(run_id: str, event_id: str, barrier, result_queue, db_path: str):
+    """Worker attempting to insert the exact same logical event_id simultaneously."""
+    import os
+    os.environ["RESEARCH_STUDIO_DB_PATH"] = db_path
+    import database as worker_db
+
+    barrier.wait()
+    try:
+        seq = worker_db.append_job_event(
+            run_id,
+            "duplicate_step",
+            {"worker_pid": os.getpid()},
+            event_id=event_id,
+        )
+        result_queue.put({"pid": os.getpid(), "seq": seq, "status": "ok"})
+    except Exception as exc:
+        result_queue.put({"pid": os.getpid(), "error": str(exc), "status": "err"})
+
+
+def test_concurrent_duplicate_event_submissions_race(tmp_path):
+    """Test 4 concurrent processes attempting to commit the EXACT SAME event_id at the same instant."""
+    test_db = str(tmp_path / "sse_race_idempotency.db")
+    os.environ["RESEARCH_STUDIO_DB_PATH"] = test_db
+    db.init_db()
+
+    run_id = "run_race_idempotent"
+    db.create_research_job_atomic(run_id, "Race Idempotent", user_id=9091)
+    shared_event_id = "shared_event_alpha_999"
+
+    num_workers = 4
+    barrier = multiprocessing.Barrier(num_workers)
+    result_queue = multiprocessing.Queue()
+
+    processes = []
+    for _ in range(num_workers):
+        p = multiprocessing.Process(
+            target=_worker_append_duplicate_events,
+            args=(run_id, shared_event_id, barrier, result_queue, test_db),
+        )
+        p.start()
+        processes.append(p)
+
+    for p in processes:
+        p.join(timeout=15)
+
+    results = [result_queue.get(timeout=5) for _ in range(num_workers)]
+    for r in results:
+        assert r["status"] == "ok", f"Worker failed: {r}"
+        assert r["seq"] == 1, "All 4 racing workers must observe the identical seq_id 1"
+
+    # Verify only 1 physical event was persisted
+    persisted = db.get_job_events(run_id)
+    assert len(persisted) == 1
+    assert persisted[0]["seq_id"] == 1
+    assert persisted[0]["event_id"] == shared_event_id
+
+
