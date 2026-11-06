@@ -495,6 +495,27 @@ TABLE_DEFINITIONS: List[Tuple[str, str, str]] = [
     ),
 
     # ------------------------------------------------------------------
+    # User lease sequences (monotonic persistent fencing token counter per user)
+    # ------------------------------------------------------------------
+    (
+        "user_lease_sequences",
+        """
+        CREATE TABLE IF NOT EXISTS user_lease_sequences (
+            user_id         INT PRIMARY KEY,
+            current_fencing BIGINT NOT NULL DEFAULT 0,
+            updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS user_lease_sequences (
+            user_id         INTEGER PRIMARY KEY,
+            current_fencing INTEGER NOT NULL DEFAULT 0,
+            updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """,
+    ),
+
+    # ------------------------------------------------------------------
     # Active run claims (atomic distributed single-active-run lease per user)
     # ------------------------------------------------------------------
     (

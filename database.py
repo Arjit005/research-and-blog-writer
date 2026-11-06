@@ -2320,12 +2320,38 @@ def create_research_job_atomic(
                     pass
                 return False, active_id
 
-            # Attempt atomic claim insertion
+            # Atomically allocate monotonically increasing fencing token for this user
+            if is_tidb:
+                _exec(
+                    conn, is_tidb,
+                    """
+                    INSERT INTO user_lease_sequences (user_id, current_fencing)
+                    VALUES (%s, 1)
+                    ON DUPLICATE KEY UPDATE current_fencing = current_fencing + 1
+                    """,
+                    (user_id,),
+                )
+                cur_f = _exec(conn, is_tidb, "SELECT current_fencing FROM user_lease_sequences WHERE user_id = %s", (user_id,))
+                fencing_token = int(_get_value(cur_f.fetchone(), True, "current_fencing", 0) or 1)
+            else:
+                _exec(
+                    conn, is_tidb,
+                    """
+                    INSERT INTO user_lease_sequences (user_id, current_fencing)
+                    VALUES (?, 1)
+                    ON CONFLICT(user_id) DO UPDATE SET current_fencing = current_fencing + 1
+                    """,
+                    (user_id,),
+                )
+                cur_f = _exec(conn, is_tidb, "SELECT current_fencing FROM user_lease_sequences WHERE user_id = ?", (user_id,))
+                fencing_token = int(_get_value(cur_f.fetchone(), False, "current_fencing", 0) or 1)
+
+            # Attempt atomic claim insertion with monotonic fencing token
             try:
                 _exec(
                     conn, is_tidb,
-                    "INSERT INTO active_run_claims (user_id, run_id, worker_id, lease_token, fencing_token) VALUES (?, ?, ?, ?, 1)",
-                    (user_id, run_id, resolved_worker, lease_token),
+                    "INSERT INTO active_run_claims (user_id, run_id, worker_id, lease_token, fencing_token) VALUES (?, ?, ?, ?, ?)",
+                    (user_id, run_id, resolved_worker, lease_token, fencing_token),
                 )
             except Exception as exc:
                 msg = str(exc).lower()
@@ -2348,27 +2374,19 @@ def create_research_job_atomic(
         return True, None
 
 
-def release_active_run_claim(run_id: str, user_id: Optional[int] = None) -> bool:
-    """Release active run claim when a job reaches a terminal state (completed/failed/cancelled)."""
-    with get_connection() as (conn, is_tidb):
-        if user_id is not None:
-            cursor = _exec(conn, is_tidb, "DELETE FROM active_run_claims WHERE user_id = ? AND run_id = ?", (user_id, run_id))
-        else:
-            cursor = _exec(conn, is_tidb, "DELETE FROM active_run_claims WHERE run_id = ?", (run_id,))
-        rowcount = getattr(cursor, "rowcount", None)
-        return bool(rowcount and rowcount > 0)
-
-
 def heartbeat_active_run_claim(
     run_id: str,
     worker_id: Optional[str] = None,
     lease_token: Optional[str] = None,
+    fencing_token: Optional[int] = None,
 ) -> bool:
-    """Update heartbeat timestamp for active run claim and increment fencing token atomically.
+    """Update heartbeat timestamp for active run claim verifying lease and fencing token.
 
     Fencing & Lease Protection:
     Ensures that a stale worker whose claim was expired or stolen cannot renew
     or overwrite an active worker's lease.
+    Heartbeats do not increment the fencing generation; fencing generations increment
+    only when a new lease is claimed.
     """
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     with get_connection() as (conn, is_tidb):
@@ -2378,14 +2396,44 @@ def heartbeat_active_run_claim(
             conditions.append("worker_id = ?")
         if lease_token:
             conditions.append("lease_token = ?")
-        
-        sql = f"UPDATE active_run_claims SET heartbeat_at = ?, fencing_token = fencing_token + 1 WHERE {' AND '.join(conditions)}"
+        if fencing_token is not None:
+            conditions.append("fencing_token = ?")
+
+        sql = f"UPDATE active_run_claims SET heartbeat_at = ? WHERE {' AND '.join(conditions)}"
         params.append(run_id)
         if worker_id:
             params.append(worker_id)
         if lease_token:
             params.append(lease_token)
+        if fencing_token is not None:
+            params.append(fencing_token)
 
+        cursor = _exec(conn, is_tidb, sql, tuple(params))
+        rowcount = getattr(cursor, "rowcount", None)
+        return bool(rowcount and rowcount > 0)
+
+
+def release_active_run_claim(
+    run_id: str,
+    user_id: Optional[int] = None,
+    lease_token: Optional[str] = None,
+    fencing_token: Optional[int] = None,
+) -> bool:
+    """Release active run claim verifying lease ownership."""
+    with get_connection() as (conn, is_tidb):
+        conditions = ["run_id = ?"]
+        params: List[Any] = [run_id]
+        if user_id is not None:
+            conditions.append("user_id = ?")
+            params.append(user_id)
+        if lease_token:
+            conditions.append("lease_token = ?")
+            params.append(lease_token)
+        if fencing_token is not None:
+            conditions.append("fencing_token = ?")
+            params.append(fencing_token)
+
+        sql = f"DELETE FROM active_run_claims WHERE {' AND '.join(conditions)}"
         cursor = _exec(conn, is_tidb, sql, tuple(params))
         rowcount = getattr(cursor, "rowcount", None)
         return bool(rowcount and rowcount > 0)
@@ -2421,39 +2469,59 @@ def update_research_job(
     result_article_id: Optional[int] = None,
     error_message: Optional[str] = None,
     trace_url: Optional[str] = None,
+    lease_token: Optional[str] = None,
+    fencing_token: Optional[int] = None,
 ) -> bool:
-    """Update status/metadata of an existing research job.
+    """Update status/metadata of an existing research job with optional fencing validation.
 
     Terminal jobs are frozen: a status transition is only applied while the job is
     still ``pending``/``running``. This prevents a slow background worker from
     resurrecting a job the user already cancelled (or a failed job from flipping
     itself back to ``running``). Metadata-only updates stay allowed.
 
+    When lease_token / fencing_token is provided, validates that the caller still holds
+    the active lease; if the lease was lost or overtaken by a newer worker, the update
+    is rejected immediately.
+
     When transitioning to a terminal status ('completed', 'failed', 'cancelled'),
     the corresponding active_run_claims lease is automatically freed.
 
     Returns True when a row was actually updated.
     """
-    updates = []
-    params: List[Any] = []
-    if status is not None:
-        updates.append("status = ?")
-        params.append(status)
-    if result_article_id is not None:
-        updates.append("result_article_id = ?")
-        params.append(result_article_id)
-    if error_message is not None:
-        updates.append("error_message = ?")
-        params.append(error_message)
-    if trace_url is not None:
-        updates.append("trace_url = ?")
-        params.append(trace_url)
-
-    if not updates:
-        return False
-
-    params.append(run_id)
     with get_connection() as (conn, is_tidb):
+        # Validate fencing / lease ownership if provided
+        if lease_token or fencing_token is not None:
+            cur = _exec(conn, is_tidb, "SELECT lease_token, fencing_token FROM active_run_claims WHERE run_id = ?", (run_id,))
+            claim = cur.fetchone()
+            if not claim:
+                # Claim expired or stolen
+                return False
+            cur_lease = claim["lease_token"] if is_tidb else claim[0]
+            cur_fencing = claim["fencing_token"] if is_tidb else claim[1]
+            if lease_token and cur_lease != lease_token:
+                return False
+            if fencing_token is not None and cur_fencing != fencing_token:
+                return False
+
+        updates = []
+        params: List[Any] = []
+        if status is not None:
+            updates.append("status = ?")
+            params.append(status)
+        if result_article_id is not None:
+            updates.append("result_article_id = ?")
+            params.append(result_article_id)
+        if error_message is not None:
+            updates.append("error_message = ?")
+            params.append(error_message)
+        if trace_url is not None:
+            updates.append("trace_url = ?")
+            params.append(trace_url)
+
+        if not updates:
+            return False
+
+        params.append(run_id)
         sql = f"UPDATE research_jobs SET {', '.join(updates)} WHERE run_id = ?"
         if status is not None:
             sql += " AND status NOT IN ('cancelled', 'failed', 'completed')"
@@ -2499,7 +2567,7 @@ def get_active_user_job(user_id: int) -> Optional[Dict[str, Any]]:
         return _row_to_dict(row) if row else None
 
 
-def recover_interrupted_jobs(stale_after_seconds: int = 120) -> int:
+def recover_interrupted_jobs(stale_after_seconds: int = 0) -> int:
     """Mark jobs left in ``pending``/``running`` by a dead worker process as failed.
 
     Multi-Worker Safety & Lease Architecture:
@@ -2507,9 +2575,9 @@ def recover_interrupted_jobs(stale_after_seconds: int = 120) -> int:
     NEVER indiscriminately abort running jobs belonging to other live, healthy workers.
     Each active run maintains a lease in `active_run_claims` with periodic heartbeats.
 
-    A job is considered abandoned ONLY if:
+    A job is considered abandoned if:
     1. Its heartbeat in `active_run_claims` or its `updated_at` in `research_jobs` is
-       older than `stale_after_seconds` (default: 120 seconds).
+       older than `stale_after_seconds` (default: 0 = immediate sweep of orphaned/expired jobs).
     2. Jobs with recent heartbeats are recognized as actively managed by other healthy
        workers and are left untouched.
 
@@ -2518,11 +2586,11 @@ def recover_interrupted_jobs(stale_after_seconds: int = 120) -> int:
     try:
         stale_after = max(0, int(stale_after_seconds))
     except (TypeError, ValueError):
-        stale_after = 120
+        stale_after = 0
     now = datetime.now(timezone.utc)
     cutoff_str = (now - timedelta(seconds=stale_after)).strftime("%Y-%m-%d %H:%M:%S")
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
-    message = "interrupted by worker crash or unhandled timeout"
+    message = "interrupted by server restart"
 
     recovered_run_ids: List[str] = []
     with get_connection() as (conn, is_tidb):
