@@ -641,3 +641,94 @@ def test_concurrent_duplicate_event_submissions_race(tmp_path):
     assert persisted[0]["event_id"] == shared_event_id
 
 
+def test_atomic_terminal_completion_and_idempotent_retry(tmp_path):
+    """Test atomic terminal status transition, terminal event persistence, and duplicate retry."""
+    test_db = str(tmp_path / "atomic_term.db")
+    os.environ["RESEARCH_STUDIO_DB_PATH"] = test_db
+    db.init_db()
+
+    run_id = "run_term_atomic_1"
+    created, _ = db.create_research_job_atomic(run_id, "Atomic Terminal Test", user_id=9901)
+    assert created is True
+
+    # Initial non-terminal state
+    job_before = db.get_research_job(run_id)
+    assert job_before["status"] == "pending"
+
+    # Complete atomically
+    ok, seq = db.complete_research_job_atomic(
+        run_id=run_id,
+        status="completed",
+        event_type="completed",
+        event_payload={"result": "success"},
+        event_id=f"term_{run_id}_completed",
+        trace_url="https://trace.example.com",
+    )
+    assert ok is True
+    assert seq == 1
+
+    # Verify atomic update
+    job_after = db.get_research_job(run_id)
+    assert job_after["status"] == "completed"
+    assert job_after["trace_url"] == "https://trace.example.com"
+
+    # Terminal event must be in job_events
+    events = db.get_job_events(run_id)
+    assert len(events) == 1
+    assert events[0]["seq_id"] == 1
+    assert events[0]["event_type"] == "completed"
+
+    # Claim must be released
+    claim = db.get_active_run_claim(run_id)
+    assert claim is None
+
+    # Duplicate retry must return original sequence and return updated=False without changing state
+    retry_ok, retry_seq = db.complete_research_job_atomic(
+        run_id=run_id,
+        status="completed",
+        event_type="completed",
+        event_payload={"result": "duplicate retry"},
+        event_id=f"term_{run_id}_completed",
+    )
+    assert retry_ok is False
+    assert retry_seq == 1
+    assert len(db.get_job_events(run_id)) == 1
+
+
+def test_concurrent_completion_and_cancellation_race(tmp_path):
+    """Test race between worker completion and user cancellation."""
+    test_db = str(tmp_path / "term_race.db")
+    os.environ["RESEARCH_STUDIO_DB_PATH"] = test_db
+    db.init_db()
+
+    run_id = "run_term_race_1"
+    db.create_research_job_atomic(run_id, "Race Completion Cancellation", user_id=9902)
+
+    # Cancellation wins first
+    cancelled_ok, cancel_seq = db.complete_research_job_atomic(
+        run_id=run_id,
+        status="cancelled",
+        event_type="cancelled",
+        event_payload={"message": "User cancelled"},
+        event_id=f"term_{run_id}_cancelled",
+    )
+    assert cancelled_ok is True
+    assert cancel_seq == 1
+
+    # Worker late completion attempts atomic completion
+    complete_ok, complete_seq = db.complete_research_job_atomic(
+        run_id=run_id,
+        status="completed",
+        event_type="completed",
+        event_payload={"result": "Late article"},
+        event_id=f"term_{run_id}_completed",
+    )
+    # Must be rejected because run is already terminal
+    assert complete_ok is False
+
+    # Job remains cancelled
+    job = db.get_research_job(run_id)
+    assert job["status"] == "cancelled"
+
+
+

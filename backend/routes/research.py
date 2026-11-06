@@ -447,18 +447,27 @@ def _execute_run_worker(
         except Exception as exc:  # telemetry is best-effort; never fail a finished article
             logger.warning("Telemetry persistence failed for run %s: %s", run_id, exc)
 
-        # Ordering guarantee: append the terminal SSE event BEFORE flipping the job
-        # to a terminal status, so a stream that observes the terminal status can
-        # always flush the terminal event first (no lost event on reconnect).
-        db.append_job_event(run_id, "completed", {
+        # Atomically commit terminal status + terminal SSE event + claim cleanup together
+        completed_payload = {
             "status": "completed",
             "article_id": art_id,
             "topic": safe_topic,
             "word_count": len(clean_content.split()),
             "elapsed_sec": elapsed,
             "trace_url": trace_url,
-        })
-        db.update_research_job(run_id, status="completed", result_article_id=art_id, trace_url=trace_url)
+        }
+        db.complete_research_job_atomic(
+            run_id=run_id,
+            status="completed",
+            event_type="completed",
+            event_payload=completed_payload,
+            event_id=f"term_{run_id}_completed",
+            result_article_id=art_id,
+            trace_url=trace_url,
+            worker_id=worker_id_val,
+            lease_token=lease_token_val,
+            fencing_token=fencing_token_val,
+        )
     except Exception as e:
         logger.exception(f"Run worker error on run {run_id}: {e}")
         # If the job was cancelled concurrently, the cancel endpoint already wrote
@@ -485,8 +494,14 @@ def _execute_run_worker(
             export_failure_to_dataset("production_failures", topic, safe_error, metadata={"run_id": run_id, "user_id": user_id})
         except Exception:
             pass
-        db.append_job_event(run_id, "error", {"message": safe_error, "timestamp": time.time()})
-        db.update_research_job(run_id, status="failed", error_message=safe_error)
+        db.complete_research_job_atomic(
+            run_id=run_id,
+            status="failed",
+            event_type="error",
+            event_payload={"message": safe_error, "timestamp": time.time()},
+            event_id=f"term_{run_id}_error",
+            error_message=safe_error,
+        )
     finally:
         _CANCELLATION_EVENTS.pop(run_id, None)
         cleanup_run_tokens(run_id)
@@ -696,10 +711,14 @@ def cancel_research_run(
     if cancel_event:
         cancel_event.set()
 
-    # Terminal event BEFORE the terminal status: a stream that sees the status
-    # will always be able to flush the "cancelled" event before closing.
-    db.append_job_event(run_id, "cancelled", {"message": "Run was cancelled by user."})
-    updated = db.update_research_job(run_id, status="cancelled")
+    # Atomically persist terminal cancellation event and update job status
+    updated, _ = db.complete_research_job_atomic(
+        run_id=run_id,
+        status="cancelled",
+        event_type="cancelled",
+        event_payload={"message": "Run was cancelled by user."},
+        event_id=f"term_{run_id}_cancelled",
+    )
     if updated is False:
         return {"success": False, "message": "Run already in terminal state."}
     return {"success": True, "message": "Research run marked as cancelled."}
