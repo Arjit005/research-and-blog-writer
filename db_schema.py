@@ -595,6 +595,150 @@ TABLE_DEFINITIONS: List[Tuple[str, str, str]] = [
         )
         """,
     ),
+
+    # ------------------------------------------------------------------
+    # Visual Research System: visuals library and evidence assets
+    # ------------------------------------------------------------------
+    (
+        "research_visuals",
+        """
+        CREATE TABLE IF NOT EXISTS research_visuals (
+            id                    INT AUTO_INCREMENT PRIMARY KEY,
+            user_id               INT NOT NULL,
+            article_id            INT NULL,
+            run_id                VARCHAR(64) NULL,
+            visual_type           VARCHAR(32) NOT NULL,
+            origin_type           VARCHAR(32) NOT NULL,
+            title                 VARCHAR(255) NOT NULL,
+            caption               TEXT NULL,
+            description           TEXT NULL,
+            source_url            VARCHAR(1024) NULL,
+            source_title          VARCHAR(255) NULL,
+            publisher             VARCHAR(255) NULL,
+            author                VARCHAR(255) NULL,
+            publication_date      VARCHAR(64) NULL,
+            retrieval_timestamp   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            license_information   VARCHAR(255) NULL,
+            usage_restrictions    TEXT NULL,
+            alt_text              TEXT NULL,
+            dimensions            VARCHAR(64) NULL,
+            file_format           VARCHAR(32) NULL,
+            media_content         MEDIUMTEXT NULL,
+            thumbnail_url         TEXT NULL,
+            metadata_json         MEDIUMTEXT NULL,
+            created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_vis_user (user_id),
+            INDEX idx_vis_article (article_id),
+            INDEX idx_vis_run (run_id),
+            INDEX idx_vis_type (visual_type),
+            INDEX idx_vis_created (created_at DESC)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS research_visuals (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id               INTEGER NOT NULL,
+            article_id            INTEGER NULL,
+            run_id                TEXT NULL,
+            visual_type           TEXT NOT NULL,
+            origin_type           TEXT NOT NULL,
+            title                 TEXT NOT NULL,
+            caption               TEXT NULL,
+            description           TEXT NULL,
+            source_url            TEXT NULL,
+            source_title          TEXT NULL,
+            publisher             TEXT NULL,
+            author                TEXT NULL,
+            publication_date      TEXT NULL,
+            retrieval_timestamp   TEXT NOT NULL DEFAULT (datetime('now')),
+            license_information   TEXT NULL,
+            usage_restrictions    TEXT NULL,
+            alt_text              TEXT NULL,
+            dimensions            TEXT NULL,
+            file_format           TEXT NULL,
+            media_content         TEXT NULL,
+            thumbnail_url         TEXT NULL,
+            metadata_json         TEXT NULL,
+            created_at            TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """,
+    ),
+
+    # ------------------------------------------------------------------
+    # Visual Research System: interactive structured research charts
+    # ------------------------------------------------------------------
+    (
+        "research_charts",
+        """
+        CREATE TABLE IF NOT EXISTS research_charts (
+            id                INT AUTO_INCREMENT PRIMARY KEY,
+            user_id           INT NOT NULL,
+            article_id        INT NULL,
+            title             VARCHAR(255) NOT NULL,
+            description       TEXT NULL,
+            chart_type        VARCHAR(32) NOT NULL,
+            structured_data   MEDIUMTEXT NOT NULL,
+            data_source       VARCHAR(512) NULL,
+            units             VARCHAR(64) NULL,
+            methodology       TEXT NULL,
+            created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_chart_user (user_id),
+            INDEX idx_chart_art (article_id)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS research_charts (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id           INTEGER NOT NULL,
+            article_id        INTEGER NULL,
+            title             TEXT NOT NULL,
+            description       TEXT NULL,
+            chart_type        TEXT NOT NULL,
+            structured_data   TEXT NOT NULL,
+            data_source       TEXT NULL,
+            units             TEXT NULL,
+            methodology       TEXT NULL,
+            created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """,
+    ),
+
+    # ------------------------------------------------------------------
+    # Visual Research System: visual evidence links to claims and sections
+    # ------------------------------------------------------------------
+    (
+        "visual_evidence_links",
+        """
+        CREATE TABLE IF NOT EXISTS visual_evidence_links (
+            id                    INT AUTO_INCREMENT PRIMARY KEY,
+            user_id               INT NOT NULL,
+            visual_id             INT NOT NULL,
+            claim_id              VARCHAR(64) NULL,
+            article_id            INT NULL,
+            report_section        VARCHAR(128) NULL,
+            evidence_status       VARCHAR(32) NOT NULL DEFAULT 'verified',
+            citation_url          VARCHAR(1024) NULL,
+            created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_vel_user (user_id),
+            INDEX idx_vel_visual (visual_id),
+            INDEX idx_vel_claim (claim_id),
+            INDEX idx_vel_art (article_id)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS visual_evidence_links (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id               INTEGER NOT NULL,
+            visual_id             INTEGER NOT NULL,
+            claim_id              TEXT NULL,
+            article_id            INTEGER NULL,
+            report_section        TEXT NULL,
+            evidence_status       TEXT NOT NULL DEFAULT 'verified',
+            citation_url          TEXT NULL,
+            created_at            TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """,
+    ),
 ]
 
 # ---------------------------------------------------------------------------
@@ -619,6 +763,17 @@ SQLITE_EXTRA_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_telem_user          ON telemetry_runs(user_id)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL",
     "CREATE UNIQUE INDEX IF NOT EXISTS uk_event_run_event_id ON job_events(run_id, event_id) WHERE event_id IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_vis_user            ON research_visuals(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_vis_article         ON research_visuals(article_id)",
+    "CREATE INDEX IF NOT EXISTS idx_vis_run             ON research_visuals(run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_vis_type            ON research_visuals(visual_type)",
+    "CREATE INDEX IF NOT EXISTS idx_vis_created         ON research_visuals(created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_chart_user          ON research_charts(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_chart_art           ON research_charts(article_id)",
+    "CREATE INDEX IF NOT EXISTS idx_vel_user            ON visual_evidence_links(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_vel_visual          ON visual_evidence_links(visual_id)",
+    "CREATE INDEX IF NOT EXISTS idx_vel_claim           ON visual_evidence_links(claim_id)",
+    "CREATE INDEX IF NOT EXISTS idx_vel_art             ON visual_evidence_links(article_id)",
 ]
 
 # ---------------------------------------------------------------------------

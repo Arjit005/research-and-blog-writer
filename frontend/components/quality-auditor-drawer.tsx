@@ -6,10 +6,6 @@ import {
   CheckCircle2,
   AlertTriangle,
   XCircle,
-  FileText,
-  GitBranch,
-  ExternalLink,
-  ChevronRight,
   Loader2,
   X,
 } from "lucide-react";

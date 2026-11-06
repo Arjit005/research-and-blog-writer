@@ -12,6 +12,7 @@ import {
   ChevronRight,
   FolderOpen,
   Trash2,
+  Image as ImageIcon,
 } from "lucide-react";
 
 interface LeftSidebarProps {
@@ -30,6 +31,7 @@ interface LeftSidebarProps {
   selectedArticleId: number | null;
   onSelectArticle: (id: number) => void;
   onDeleteArticle?: (id: number) => void;
+  onOpenVisualLibrary?: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
 }
@@ -57,6 +59,7 @@ export function LeftSidebar({
   selectedArticleId,
   onSelectArticle,
   onDeleteArticle,
+  onOpenVisualLibrary,
   isCollapsed,
   onToggleCollapse,
 }: LeftSidebarProps) {
@@ -231,7 +234,26 @@ export function LeftSidebar({
         </form>
       </div>
 
-      {/* 2. Articles Library with Search & Filtering */}
+      {/* 2. Visual Library Shortcut Tab */}
+      {onOpenVisualLibrary && (
+        <button
+          type="button"
+          onClick={onOpenVisualLibrary}
+          className="w-full flex items-center justify-between p-3.5 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 rounded-2xl text-xs font-semibold text-indigo-400 hover:text-indigo-300 transition cursor-pointer shadow-sm"
+        >
+          <div className="flex items-center gap-2.5">
+            <div className="p-1.5 bg-indigo-500/20 rounded-lg">
+              <ImageIcon className="w-4 h-4" />
+            </div>
+            <span>Visual Evidence Library</span>
+          </div>
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/20 border border-indigo-500/40">
+            Explorer
+          </span>
+        </button>
+      )}
+
+      {/* 3. Articles Library with Search & Filtering */}
       <div className="bg-surface border border-border rounded-2xl p-4 md:p-5 shadow-sm backdrop-blur-md flex-1 flex flex-col min-h-[300px]">
         <div className="flex items-center justify-between mb-3 pb-2 border-b border-border">
           <h3 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-2">

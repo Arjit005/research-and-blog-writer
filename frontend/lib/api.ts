@@ -153,6 +153,72 @@ export interface UserKeysUpdate {
   beatapi_key?: string;
 }
 
+export interface ResearchVisual {
+  id: number;
+  user_id: number;
+  article_id?: number | null;
+  run_id?: string | null;
+  visual_type: string;
+  origin_type: string;
+  title: string;
+  caption?: string | null;
+  description?: string | null;
+  source_url?: string | null;
+  source_title?: string | null;
+  publisher?: string | null;
+  author?: string | null;
+  publication_date?: string | null;
+  retrieval_timestamp: string;
+  license_information?: string | null;
+  usage_restrictions?: string | null;
+  alt_text?: string | null;
+  dimensions?: string | null;
+  file_format?: string | null;
+  media_content?: string | null;
+  thumbnail_url?: string | null;
+  metadata_json?: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface VisualListResponse {
+  items: ResearchVisual[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface ResearchChart {
+  id: number;
+  user_id: number;
+  article_id?: number | null;
+  title: string;
+  description?: string | null;
+  chart_type: string;
+  structured_data: {
+    type?: string;
+    labels?: string[];
+    series?: Array<{ name?: string; data?: number[] }>;
+    data?: number[] | Array<{ label: string; value: number }>;
+    [key: string]: unknown;
+  };
+  data_source?: string | null;
+  units?: string | null;
+  methodology?: string | null;
+  created_at: string;
+}
+
+export interface EvidenceLink {
+  id: number;
+  user_id: number;
+  visual_id: number;
+  claim_id?: string | null;
+  article_id?: number | null;
+  report_section?: string | null;
+  evidence_status: string;
+  citation_url?: string | null;
+  created_at: string;
+}
+
 interface RawDiffResponse {
   old_revision_num: number;
   new_revision_num: number;
@@ -396,5 +462,53 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     });
+  },
+
+  // Visual Research System API
+  async listVisuals(params?: {
+    article_id?: number;
+    visual_type?: string;
+    origin_type?: string;
+    search?: string;
+    sort?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<VisualListResponse> {
+    const q = new URLSearchParams();
+    if (params?.article_id !== undefined) q.set("article_id", String(params.article_id));
+    if (params?.visual_type) q.set("visual_type", params.visual_type);
+    if (params?.origin_type) q.set("origin_type", params.origin_type);
+    if (params?.search) q.set("search", params.search);
+    if (params?.sort) q.set("sort", params.sort);
+    if (params?.limit !== undefined) q.set("limit", String(params.limit));
+    if (params?.offset !== undefined) q.set("offset", String(params.offset));
+    const qs = q.toString() ? `?${q.toString()}` : "";
+    return fetchJson(`/api/v1/visuals${qs}`);
+  },
+
+  async getVisual(visualId: number): Promise<ResearchVisual> {
+    return fetchJson(`/api/v1/visuals/${visualId}`);
+  },
+
+  async deleteVisual(visualId: number): Promise<{ success: boolean; message: string }> {
+    return fetchJson(`/api/v1/visuals/${visualId}`, { method: "DELETE" });
+  },
+
+  async listCharts(articleId?: number): Promise<ResearchChart[]> {
+    const qs = articleId !== undefined ? `?article_id=${articleId}` : "";
+    return fetchJson(`/api/v1/visuals/charts/list${qs}`);
+  },
+
+  async getEvidenceLinks(params?: {
+    visual_id?: number;
+    claim_id?: string;
+    article_id?: number;
+  }): Promise<EvidenceLink[]> {
+    const q = new URLSearchParams();
+    if (params?.visual_id !== undefined) q.set("visual_id", String(params.visual_id));
+    if (params?.claim_id) q.set("claim_id", params.claim_id);
+    if (params?.article_id !== undefined) q.set("article_id", String(params.article_id));
+    const qs = q.toString() ? `?${q.toString()}` : "";
+    return fetchJson(`/api/v1/visuals/evidence/links${qs}`);
   },
 };

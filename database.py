@@ -26,16 +26,16 @@ logger = logging.getLogger(__name__)
 _MAX_WRITE_RETRIES = 8
 
 # SQLite/TiDB "stuck write" errors that are safe to retry on a fresh attempt.
+_TIDB_RETRYABLE_ERROR_CODES = {1205, 1213, 8005, 8022, 9007, 9008}
+
 _RETRYABLE_WRITE_MARKERS = (
-    "UNIQUE",
-    "DUPLICATE",
-    "INTEGRITY",
-    "PRIMARY KEY",
     "DATABASE IS LOCKED",
     "DATABASE LOCKED",
     "SQLITE_BUSY",
     "LOCK WAIT TIMEOUT",
     "DEADLOCK",
+    "WRITE CONFLICT",
+    "TXNRETRYABLE",
 )
 
 _READ_ONLY_SQL_PREFIXES = ("SELECT", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "WITH")
@@ -455,7 +455,20 @@ def _get_value(row: Any, is_tidb: bool, key: str, index: int) -> Any:
 
 
 def _is_retryable_write_error(exc: BaseException) -> bool:
-    """Whether a write failed for a transient duplicate/lock reason and may retry."""
+    """Whether a write failed for a transient transaction conflict and may retry.
+
+    Recognizes:
+    - TiDB/MySQL error codes (1205 lock wait timeout, 1213 deadlock, 8005/8022/9007/9008 write conflicts)
+    - SQLite locking errors (SQLITE_BUSY, database is locked)
+    - Genuine application unique constraint errors are NOT classified as retryable.
+    """
+    # Check PyMySQL / MySQL error code if available
+    args = getattr(exc, "args", None)
+    if args and isinstance(args, (tuple, list)) and len(args) > 0:
+        err_code = args[0]
+        if isinstance(err_code, int) and err_code in _TIDB_RETRYABLE_ERROR_CODES:
+            return True
+
     message = f"{type(exc).__name__} {exc}".upper()
     return any(marker in message for marker in _RETRYABLE_WRITE_MARKERS)
 
@@ -2600,7 +2613,7 @@ def complete_research_job_atomic(
     lease_token: Optional[str] = None,
     fencing_token: Optional[int] = None,
 ) -> Tuple[bool, Optional[int]]:
-    """Atomically commit terminal job status, terminal SSE event, and claim release in a SINGLE transaction.
+    """Atomically commit terminal job status, terminal SSE event, and claim release in a SINGLE transaction with retry.
 
     Guarantee:
     1. Locks and validates `research_jobs` row (`SELECT ... FOR UPDATE` on TiDB).
@@ -2609,27 +2622,141 @@ def complete_research_job_atomic(
     4. Increments `job_event_counters` and inserts the terminal event into `job_events` (with event_id idempotency).
     5. Updates `research_jobs` status to terminal state.
     6. Releases `active_run_claims`.
-    7. All operations commit atomically together. If anything fails, everything rolls back.
+    7. Retries transient transaction conflicts with exponential backoff and jitter.
+    8. All operations commit atomically together. If anything fails, everything rolls back.
 
     Returns:
         (updated: bool, terminal_seq_id: Optional[int])
     """
-    # Delegate to append_job_event and update_research_job so monkeypatched test mocks continue observing calls
-    try:
-        seq_id = append_job_event(run_id, event_type, event_payload, event_id=event_id)
-    except TypeError:
-        # Fallback if mock signature only accepts (run_id, event_type, payload)
-        seq_id = append_job_event(run_id, event_type, event_payload)
-    updated = update_research_job(
-        run_id,
-        status=status,
-        result_article_id=result_article_id,
-        error_message=error_message,
-        trace_url=trace_url,
-        lease_token=lease_token,
-        fencing_token=fencing_token,
-    )
-    return bool(updated), seq_id
+    import random
+    payload_str = json.dumps(event_payload) if not isinstance(event_payload, str) else event_payload
+    last_error: Optional[BaseException] = None
+
+    for attempt in range(_MAX_WRITE_RETRIES):
+        try:
+            with get_connection() as (conn, is_tidb):
+                if is_tidb:
+                    cursor = conn.cursor()
+                    # 1. Lock job row and check status
+                    cursor.execute("SELECT status FROM research_jobs WHERE run_id = %s FOR UPDATE", (run_id,))
+                    job_row = cursor.fetchone()
+                    if not job_row:
+                        return False, None
+                    curr_status = job_row["status"] if isinstance(job_row, dict) else job_row[0]
+                    if curr_status in _TERMINAL_JOB_STATUSES:
+                        existing_seq = None
+                        if event_id:
+                            cursor.execute("SELECT seq_id FROM job_events WHERE run_id = %s AND event_id = %s", (run_id, event_id))
+                            erow = cursor.fetchone()
+                            if erow:
+                                existing_seq = int(erow["seq_id"] if isinstance(erow, dict) else erow[0])
+                        return False, existing_seq
+
+                    # 2. Worker fencing validation
+                    if lease_token or fencing_token is not None:
+                        cursor.execute("SELECT lease_token, fencing_token FROM active_run_claims WHERE run_id = %s FOR UPDATE", (run_id,))
+                        claim = cursor.fetchone()
+                        if not claim:
+                            return False, None
+                        cur_lease = claim["lease_token"] if isinstance(claim, dict) else claim[0]
+                        cur_fencing = claim["fencing_token"] if isinstance(claim, dict) else claim[1]
+                        if lease_token and cur_lease != lease_token:
+                            return False, None
+                        if fencing_token is not None and cur_fencing != fencing_token:
+                            return False, None
+
+                    # 3. Monotonic sequence allocation & event insert
+                    cursor.execute(
+                        "INSERT INTO job_event_counters (run_id, last_seq) VALUES (%s, 0) ON DUPLICATE KEY UPDATE last_seq = last_seq",
+                        (run_id,),
+                    )
+                    cursor.execute("SELECT last_seq FROM job_event_counters WHERE run_id = %s FOR UPDATE", (run_id,))
+                    crow = cursor.fetchone()
+                    curr_seq = int((crow["last_seq"] if isinstance(crow, dict) else crow[0]) or 0)
+                    next_seq = curr_seq + 1
+                    cursor.execute("UPDATE job_event_counters SET last_seq = %s WHERE run_id = %s", (next_seq, run_id))
+                    cursor.execute(
+                        "INSERT INTO job_events (run_id, seq_id, event_id, event_type, payload) VALUES (%s, %s, %s, %s, %s)",
+                        (run_id, next_seq, event_id, event_type, payload_str),
+                    )
+
+                    # 4. Status update
+                    cursor.execute(
+                        """
+                        UPDATE research_jobs
+                        SET status = %s,
+                            result_article_id = COALESCE(%s, result_article_id),
+                            error_message = COALESCE(%s, error_message),
+                            trace_url = COALESCE(%s, trace_url),
+                            updated_at = UTC_TIMESTAMP()
+                        WHERE run_id = %s AND status NOT IN ('cancelled', 'failed', 'completed')
+                        """,
+                        (status, result_article_id, error_message, trace_url, run_id),
+                    )
+
+                    # 5. Claim release
+                    _exec(conn, is_tidb, "DELETE FROM active_run_claims WHERE run_id = ?", (run_id,))
+                    return True, next_seq
+                else:
+                    # SQLite atomic single-transaction block
+                    cur = conn.execute("SELECT status FROM research_jobs WHERE run_id = ?", (run_id,))
+                    job_row = cur.fetchone()
+                    if not job_row:
+                        return False, None
+                    curr_status = job_row[0]
+                    if curr_status in _TERMINAL_JOB_STATUSES:
+                        existing_seq = None
+                        if event_id:
+                            ecur = conn.execute("SELECT seq_id FROM job_events WHERE run_id = ? AND event_id = ?", (run_id, event_id))
+                            erow = ecur.fetchone()
+                            if erow:
+                                existing_seq = int(erow[0])
+                        return False, existing_seq
+
+                    if lease_token or fencing_token is not None:
+                        ccur = conn.execute("SELECT lease_token, fencing_token FROM active_run_claims WHERE run_id = ?", (run_id,))
+                        claim = ccur.fetchone()
+                        if not claim:
+                            return False, None
+                        if lease_token and claim[0] != lease_token:
+                            return False, None
+                        if fencing_token is not None and claim[1] != fencing_token:
+                            return False, None
+
+                    conn.execute("INSERT OR IGNORE INTO job_event_counters (run_id, last_seq) VALUES (?, 0)", (run_id,))
+                    conn.execute("UPDATE job_event_counters SET last_seq = last_seq + 1 WHERE run_id = ?", (run_id,))
+                    scur = conn.execute("SELECT last_seq FROM job_event_counters WHERE run_id = ?", (run_id,))
+                    next_seq = int(scur.fetchone()[0])
+
+                    conn.execute(
+                        "INSERT INTO job_events (run_id, seq_id, event_id, event_type, payload) VALUES (?, ?, ?, ?, ?)",
+                        (run_id, next_seq, event_id, event_type, payload_str),
+                    )
+
+                    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                    conn.execute(
+                        """
+                        UPDATE research_jobs
+                        SET status = ?,
+                            result_article_id = COALESCE(?, result_article_id),
+                            error_message = COALESCE(?, error_message),
+                            trace_url = COALESCE(?, trace_url),
+                            updated_at = ?
+                        WHERE run_id = ? AND status NOT IN ('cancelled', 'failed', 'completed')
+                        """,
+                        (status, result_article_id, error_message, trace_url, now_str, run_id),
+                    )
+
+                    _exec(conn, is_tidb, "DELETE FROM active_run_claims WHERE run_id = ?", (run_id,))
+                    return True, next_seq
+        except Exception as exc:
+            last_error = exc
+            if attempt < _MAX_WRITE_RETRIES - 1 and _is_retryable_write_error(exc):
+                backoff = (0.02 * (2 ** attempt)) + random.uniform(0.005, 0.025)
+                time.sleep(backoff)
+                continue
+            raise
+    raise RuntimeError(f"Could not complete research job atomically for run {run_id}: {last_error}")
 
 
 _TERMINAL_JOB_STATUSES = ("cancelled", "failed", "completed")
@@ -2701,10 +2828,7 @@ def update_research_job(
         rowcount = getattr(cursor, "rowcount", None)
 
         if status in _TERMINAL_JOB_STATUSES:
-            try:
-                _exec(conn, is_tidb, "DELETE FROM active_run_claims WHERE run_id = ?", (run_id,))
-            except Exception:
-                pass
+            _exec(conn, is_tidb, "DELETE FROM active_run_claims WHERE run_id = ?", (run_id,))
 
         if rowcount is None:
             return True

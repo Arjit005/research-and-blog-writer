@@ -6,6 +6,8 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { MermaidCanvas } from "./mermaid-canvas";
+import { InteractiveChartExplorer } from "./interactive-chart-explorer";
+import { ResearchChart } from "@/lib/api";
 import {
   Clock,
   BookOpen,
@@ -20,8 +22,8 @@ import {
   Bookmark,
   Quote,
   Link as LinkIcon,
-  ListOrdered,
   ShieldCheck,
+  Image as ImageIcon,
 } from "lucide-react";
 
 interface ArticleViewerProps {
@@ -34,6 +36,7 @@ interface ArticleViewerProps {
   onOpenCopilot?: () => void;
   onOpenVersionHistory?: () => void;
   onOpenQualityAuditor?: () => void;
+  onOpenVisualLibrary?: () => void;
 }
 
 function stripMarkdown(text: string): string {
@@ -70,17 +73,18 @@ function getNodeText(node: React.ReactNode): string {
 export function ArticleViewer({
   topic,
   content,
+  articleId: _articleId,
   wordCount,
   generationTime,
   isStreaming = false,
   onOpenCopilot,
   onOpenVersionHistory,
   onOpenQualityAuditor,
+  onOpenVisualLibrary,
 }: ArticleViewerProps) {
   const [copiedArticle, setCopiedArticle] = useState(false);
   const [copiedCitations, setCopiedCitations] = useState(false);
   const [isFocusMode, setIsFocusMode] = useState(false);
-  const [showTocMobile, setShowTocMobile] = useState(false);
   const articleRef = useRef<HTMLDivElement>(null);
 
   // Extract primary citations/references
@@ -96,44 +100,20 @@ export function ArticleViewer({
     return urls;
   }, [content]);
 
-  // Extract structured headings for dynamic TOC
-  const headings = useMemo(() => {
-    const headingLines: { id: string; text: string; level: number }[] = [];
-    const lines = content.split("\n");
+  // Dynamic heading counts derived per render
+  const headingSeenCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-
-    for (const line of lines) {
-      const match = line.match(/^(#{2,3})\s+(.*)$/);
-      if (match) {
-        const level = match[1].length;
-        const rawText = match[2].trim();
-        const cleanText = stripMarkdown(rawText);
-        let id = slugifyHeading(cleanText);
-
-        if (counts[id] !== undefined) {
-          counts[id] += 1;
-          id = `${id}-${counts[id]}`;
-        } else {
-          counts[id] = 0;
-        }
-
-        headingLines.push({ id, text: cleanText, level });
-      }
-    }
-    return headingLines;
+    return counts;
   }, [content]);
 
-  const headingIdCountsRef = useRef<Record<string, number>>({});
-  headingIdCountsRef.current = {};
-
   const getNextHeadingId = (cleanText: string): string => {
-    let base = slugifyHeading(cleanText);
-    const seen = headingIdCountsRef.current[base];
+    const base = slugifyHeading(cleanText);
+    const seen = headingSeenCounts[base];
     if (seen !== undefined) {
-      headingIdCountsRef.current[base] = seen + 1;
+      headingSeenCounts[base] = seen + 1;
       return `${base}-${seen + 1}`;
     }
-    headingIdCountsRef.current[base] = 0;
+    headingSeenCounts[base] = 0;
     return base;
   };
 
@@ -257,6 +237,27 @@ export function ArticleViewer({
         return <MermaidCanvas code={codeText} />;
       }
 
+      if (isBlock && (language === "chart" || language === "json:chart")) {
+        try {
+          const parsed = JSON.parse(codeText);
+          const chartEntity: ResearchChart = {
+            id: 0,
+            user_id: 0,
+            title: parsed.title || "Empirical Benchmark Chart",
+            description: parsed.description || "",
+            chart_type: parsed.type || "bar",
+            structured_data: parsed,
+            units: parsed.units || "",
+            data_source: parsed.data_source || "Research Extraction",
+            methodology: parsed.methodology || "",
+            created_at: new Date().toISOString(),
+          };
+          return <InteractiveChartExplorer chart={chartEntity} />;
+        } catch {
+          // Fall through to regular code block if invalid JSON
+        }
+      }
+
       if (isBlock) {
         return (
           <div className="my-6 rounded-2xl overflow-hidden border border-border bg-slate-900 text-slate-100 shadow-sm">
@@ -287,6 +288,26 @@ export function ArticleViewer({
         >
           {children}
         </code>
+      );
+    },
+    img: ({ src, alt }) => {
+      return (
+        <figure className="my-8 rounded-2xl overflow-hidden border border-border bg-slate-950/60 shadow-lg">
+          <div className="relative overflow-hidden flex items-center justify-center p-2 bg-slate-950">
+            <img
+              src={src || ""}
+              alt={alt || "Research visual figure"}
+              className="max-h-[500px] w-auto max-w-full object-contain rounded-xl"
+              loading="lazy"
+            />
+          </div>
+          {alt && (
+            <figcaption className="px-4 py-2.5 bg-slate-900/80 border-t border-border text-xs text-muted-foreground italic flex items-center justify-between">
+              <span>{alt}</span>
+              <span className="text-[10px] font-mono not-italic text-slate-500 uppercase">Fig. Evidence</span>
+            </figcaption>
+          )}
+        </figure>
       );
     },
     a: ({ href, children }) => {
@@ -418,6 +439,19 @@ export function ArticleViewer({
           >
             {isFocusMode ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
+
+          {/* Visual Research Library Button */}
+          {onOpenVisualLibrary && (
+            <button
+              type="button"
+              onClick={onOpenVisualLibrary}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-400 rounded-xl text-xs font-semibold transition cursor-pointer"
+              title="Open Visual Research Library & Evidence Gallery"
+            >
+              <ImageIcon className="w-3.5 h-3.5" />
+              <span>Visual Library</span>
+            </button>
+          )}
 
           {/* Quality Auditor Button */}
           {onOpenQualityAuditor && (

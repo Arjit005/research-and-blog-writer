@@ -173,3 +173,110 @@ class RevisionSummary(BaseModel):
 class RevisionDetail(RevisionSummary):
     article_id: int
     content: str
+
+
+# ---------------------------------------------------------------------------
+# Visual Research System Schemas
+# ---------------------------------------------------------------------------
+
+class VisualCreateRequest(BaseModel):
+    article_id: Optional[int] = None
+    run_id: Optional[str] = None
+    visual_type: str = Field(..., max_length=32)
+    origin_type: str = Field(..., max_length=32)
+    title: str = Field(..., min_length=1, max_length=255)
+    caption: Optional[str] = None
+    description: Optional[str] = None
+    source_url: Optional[str] = Field(None, max_length=1024)
+    source_title: Optional[str] = Field(None, max_length=255)
+    publisher: Optional[str] = Field(None, max_length=255)
+    author: Optional[str] = Field(None, max_length=255)
+    publication_date: Optional[str] = Field(None, max_length=64)
+    license_information: Optional[str] = Field(None, max_length=255)
+    usage_restrictions: Optional[str] = None
+    alt_text: Optional[str] = None
+    dimensions: Optional[str] = Field(None, max_length=64)
+    file_format: Optional[str] = Field(None, max_length=32)
+    media_content: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    metadata_json: Optional[Dict[str, Any]] = None
+
+
+class VisualResponse(BaseModel):
+    id: int
+    user_id: int
+    article_id: Optional[int] = None
+    run_id: Optional[str] = None
+    visual_type: str
+    origin_type: str
+    title: str
+    caption: Optional[str] = None
+    description: Optional[str] = None
+    source_url: Optional[str] = None
+    source_title: Optional[str] = None
+    publisher: Optional[str] = None
+    author: Optional[str] = None
+    publication_date: Optional[str] = None
+    retrieval_timestamp: str
+    license_information: Optional[str] = None
+    usage_restrictions: Optional[str] = None
+    alt_text: Optional[str] = None
+    dimensions: Optional[str] = None
+    file_format: Optional[str] = None
+    media_content: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    metadata_json: Optional[Dict[str, Any]] = None
+    created_at: str
+
+
+class VisualListResponse(BaseModel):
+    items: List[VisualResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class ChartCreateRequest(BaseModel):
+    article_id: Optional[int] = None
+    title: str = Field(..., min_length=1, max_length=255)
+    chart_type: str = Field(..., max_length=32)
+    structured_data: Dict[str, Any]
+    description: Optional[str] = None
+    data_source: Optional[str] = Field(None, max_length=512)
+    units: Optional[str] = Field(None, max_length=64)
+    methodology: Optional[str] = None
+
+
+class ChartResponse(BaseModel):
+    id: int
+    user_id: int
+    article_id: Optional[int] = None
+    title: str
+    description: Optional[str] = None
+    chart_type: str
+    structured_data: Dict[str, Any]
+    data_source: Optional[str] = None
+    units: Optional[str] = None
+    methodology: Optional[str] = None
+    created_at: str
+
+
+class EvidenceLinkCreateRequest(BaseModel):
+    visual_id: int
+    claim_id: Optional[str] = Field(None, max_length=64)
+    article_id: Optional[int] = None
+    report_section: Optional[str] = Field(None, max_length=128)
+    evidence_status: str = Field("verified", max_length=32)
+    citation_url: Optional[str] = Field(None, max_length=1024)
+
+
+class EvidenceLinkResponse(BaseModel):
+    id: int
+    user_id: int
+    visual_id: int
+    claim_id: Optional[str] = None
+    article_id: Optional[int] = None
+    report_section: Optional[str] = None
+    evidence_status: str
+    citation_url: Optional[str] = None
+    created_at: str

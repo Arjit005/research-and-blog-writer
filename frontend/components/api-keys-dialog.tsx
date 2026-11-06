@@ -14,7 +14,7 @@ export function ApiKeysDialog({ isOpen, onClose, onKeysUpdated }: ApiKeysDialogP
   const [geminiKey, setGeminiKey] = useState("");
   const [openrouterKey, setOpenrouterKey] = useState("");
   const [beatapiKey, setBeatapiKey] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [_loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ text: string; type: "success" | "error" } | null>(null);
 

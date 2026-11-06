@@ -12,7 +12,6 @@ import {
   Palette,
   Check,
   Save,
-  RotateCcw,
 } from "lucide-react";
 
 interface SettingsModalProps {

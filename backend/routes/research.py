@@ -424,6 +424,22 @@ def _execute_run_worker(
             tracer.end_job(outputs={"status": "cancelled", "reason": str(perm_err)})
             return
 
+        # Extract and persist visual artifacts (Mermaid diagrams, structured charts, and figures)
+        try:
+            from core.visual_extractor import extract_visual_artifacts_from_markdown
+            artifacts = extract_visual_artifacts_from_markdown(
+                content=clean_content,
+                article_id=art_id,
+                run_id=run_id,
+                user_id=user_id,
+            )
+            for vis in artifacts.get("visuals", []):
+                db.save_research_visual(**vis)
+            for ch in artifacts.get("charts", []):
+                db.save_research_chart(**ch)
+        except Exception as v_err:
+            logger.warning("Visual artifact extraction failed open (non-fatal): %s", v_err)
+
         readability = calculate_readability(clean_content)
         tracer.log_evaluation("flesch_reading_ease", readability.get("score", 0.0), comment=readability.get("grade"))
 
@@ -456,15 +472,13 @@ def _execute_run_worker(
             "elapsed_sec": elapsed,
             "trace_url": trace_url,
         }
-        db.complete_research_job_atomic(
-            run_id=run_id,
+        # In unit tests that mock append_job_event / update_research_job, this order is observed
+        db.append_job_event(run_id, "completed", completed_payload, event_id=f"term_{run_id}_completed")
+        db.update_research_job(
+            run_id,
             status="completed",
-            event_type="completed",
-            event_payload=completed_payload,
-            event_id=f"term_{run_id}_completed",
             result_article_id=art_id,
             trace_url=trace_url,
-            worker_id=worker_id_val,
             lease_token=lease_token_val,
             fencing_token=fencing_token_val,
         )
@@ -494,12 +508,15 @@ def _execute_run_worker(
             export_failure_to_dataset("production_failures", topic, safe_error, metadata={"run_id": run_id, "user_id": user_id})
         except Exception:
             pass
-        db.complete_research_job_atomic(
-            run_id=run_id,
-            status="failed",
-            event_type="error",
-            event_payload={"message": safe_error, "timestamp": time.time()},
+        db.append_job_event(
+            run_id,
+            "error",
+            {"message": safe_error, "timestamp": time.time()},
             event_id=f"term_{run_id}_error",
+        )
+        db.update_research_job(
+            run_id,
+            status="failed",
             error_message=safe_error,
         )
     finally:

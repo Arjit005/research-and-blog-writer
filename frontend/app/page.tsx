@@ -18,6 +18,10 @@ import { CopilotDrawer } from "@/components/copilot-drawer";
 import { ApiKeysDialog } from "@/components/api-keys-dialog";
 import { SettingsModal } from "@/components/settings-modal";
 import { QualityAuditorDrawer } from "@/components/quality-auditor-drawer";
+import { VisualLibraryGallery } from "@/components/visual-library-gallery";
+import { ImageLightboxViewer } from "@/components/image-lightbox-viewer";
+import { VisualEvidenceDrawer } from "@/components/visual-evidence-drawer";
+import { ResearchVisual } from "@/lib/api";
 import {
   Sparkles,
   BookOpen,
@@ -150,6 +154,10 @@ export default function Home() {
   const [isApiKeysOpen, setIsApiKeysOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isQualityAuditorOpen, setIsQualityAuditorOpen] = useState(false);
+  const [activeCenterTab, setActiveCenterTab] = useState<"reader" | "visuals">("reader");
+  const [visualsList, setVisualsList] = useState<ResearchVisual[]>([]);
+  const [selectedVisualIndex, setSelectedVisualIndex] = useState<number | null>(null);
+  const [evidenceDrawerVisual, setEvidenceDrawerVisual] = useState<ResearchVisual | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [isSoundMuted, setIsSoundMuted] = useState(false);
 
@@ -233,14 +241,24 @@ export default function Home() {
     }
   }, []);
 
+  const loadVisuals = useCallback(async (articleId?: number) => {
+    try {
+      const res = await api.listVisuals({ article_id: articleId, limit: 100 });
+      setVisualsList(res.items || []);
+    } catch (err) {
+      console.error("Failed to fetch research visuals:", err);
+    }
+  }, []);
+
   const loadArticleDetail = useCallback(async (id: number) => {
     try {
       const article = await api.getArticle(id);
       setSelectedArticle(article);
+      void loadVisuals(id);
     } catch (err) {
       console.error("Failed to fetch article detail:", err);
     }
-  }, []);
+  }, [loadVisuals]);
 
   const loadArticles = useCallback(async () => {
     try {
@@ -726,6 +744,10 @@ export default function Home() {
             selectedArticleId={selectedArticle?.id ?? null}
             onSelectArticle={(id) => void loadArticleDetail(id)}
             onDeleteArticle={handleDeleteArticle}
+            onOpenVisualLibrary={() => {
+              void loadVisuals(selectedArticle?.id);
+              setActiveCenterTab("visuals");
+            }}
             isCollapsed={isLeftCollapsed}
             onToggleCollapse={() => setIsLeftCollapsed(!isLeftCollapsed)}
           />
@@ -753,7 +775,77 @@ export default function Home() {
             </div>
           )}
 
-          {selectedArticle ? (
+          {/* Center Tabs: Research Report vs Visual Library */}
+          <div className="flex items-center justify-between border-b border-border pb-2.5">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setActiveCenterTab("reader")}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-2 ${
+                  activeCenterTab === "reader"
+                    ? "bg-blue-600 text-white shadow-sm"
+                    : "text-muted-foreground hover:text-foreground hover:bg-surface-raised"
+                }`}
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                <span>Research Article</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void loadVisuals(selectedArticle?.id);
+                  setActiveCenterTab("visuals");
+                }}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-2 ${
+                  activeCenterTab === "visuals"
+                    ? "bg-blue-600 text-white shadow-sm"
+                    : "text-muted-foreground hover:text-foreground hover:bg-surface-raised"
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Visual Research System</span>
+                {visualsList.length > 0 && (
+                  <span className="px-1.5 py-0.2 text-[10px] rounded-full bg-blue-500/30 text-white font-mono">
+                    {visualsList.length}
+                  </span>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {activeCenterTab === "visuals" ? (
+            <div className="space-y-6">
+              <div className="p-4 bg-surface border border-border rounded-2xl flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-foreground">Visual Research Library</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Traceable figures, Mermaid architectural blueprints, and interactive empirical charts.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveCenterTab("reader")}
+                  className="px-3 py-1.5 bg-surface-raised border border-border text-foreground hover:bg-surface text-xs font-medium rounded-xl transition cursor-pointer"
+                >
+                  Return to Report
+                </button>
+              </div>
+
+              <VisualLibraryGallery
+                visuals={visualsList}
+                onSelectVisual={(idx) => setSelectedVisualIndex(idx)}
+                onDeleteVisual={async (id) => {
+                  try {
+                    await api.deleteVisual(id);
+                    await loadVisuals(selectedArticle?.id);
+                  } catch (e) {
+                    console.error("Failed to delete visual:", e);
+                  }
+                }}
+                onOpenEvidence={(v) => setEvidenceDrawerVisual(v)}
+              />
+            </div>
+          ) : selectedArticle ? (
             <ArticleViewer
               topic={selectedArticle.topic}
               content={selectedArticle.content}
@@ -763,6 +855,10 @@ export default function Home() {
               onOpenCopilot={() => setIsCopilotOpen(true)}
               onOpenVersionHistory={() => setIsCopilotOpen(true)}
               onOpenQualityAuditor={() => setIsQualityAuditorOpen(true)}
+              onOpenVisualLibrary={() => {
+                void loadVisuals(selectedArticle.id);
+                setActiveCenterTab("visuals");
+              }}
             />
           ) : activeRunId && streamingDraft.trim() ? (
             <ArticleViewer
@@ -891,6 +987,11 @@ export default function Home() {
                 setMobileDrawer("none");
               }}
               onDeleteArticle={handleDeleteArticle}
+              onOpenVisualLibrary={() => {
+                void loadVisuals(selectedArticle?.id);
+                setActiveCenterTab("visuals");
+                setMobileDrawer("none");
+              }}
               isCollapsed={false}
               onToggleCollapse={() => setMobileDrawer("none")}
             />
@@ -989,6 +1090,30 @@ export default function Home() {
           isOpen={isQualityAuditorOpen}
           onClose={() => setIsQualityAuditorOpen(false)}
           articleId={selectedArticle.id}
+        />
+      )}
+
+      {/* 9. Visual Lightbox Viewer (Modules B & C) */}
+      {selectedVisualIndex !== null && (
+        <ImageLightboxViewer
+          visuals={visualsList}
+          currentIndex={selectedVisualIndex}
+          isOpen={selectedVisualIndex !== null}
+          onClose={() => setSelectedVisualIndex(null)}
+          onIndexChange={(idx) => setSelectedVisualIndex(idx)}
+          onOpenEvidence={(v) => {
+            setSelectedVisualIndex(null);
+            setEvidenceDrawerVisual(v);
+          }}
+        />
+      )}
+
+      {/* 10. Visual Evidence & Traceability Drawer (Module F) */}
+      {evidenceDrawerVisual && (
+        <VisualEvidenceDrawer
+          isOpen={evidenceDrawerVisual !== null}
+          onClose={() => setEvidenceDrawerVisual(null)}
+          visual={evidenceDrawerVisual}
         />
       )}
     </div>

@@ -42,7 +42,7 @@ from fastapi.responses import JSONResponse
 
 import database as db
 from auth.config import load_auth_config
-from backend.routes import auth, articles, revisions, telemetry, research
+from backend.routes import auth, articles, revisions, telemetry, research, visuals
 
 logger = logging.getLogger(__name__)
 
@@ -346,6 +346,7 @@ app.include_router(articles.router)
 app.include_router(revisions.router)
 app.include_router(telemetry.router)
 app.include_router(research.router)
+app.include_router(visuals.router)
 
 
 # 4. Global Healthcheck Endpoint
