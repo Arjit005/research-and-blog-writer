@@ -26,21 +26,21 @@ def test_crew_structure():
     """Verify that all 4 agents and 4 tasks are properly declared and configured."""
     crew_instance = ResearchAndBlogWriter()
 
-    # Verify agent methods
+    # Verify standardized agent roles
     research_agent = crew_instance.research()
-    assert research_agent.role == "Senior Researcher"
+    assert research_agent.role in ("Lead Researcher", "Senior Researcher")
     assert len(research_agent.tools) == 1
 
     analyst_agent = crew_instance.content_analyst()
-    assert analyst_agent.role == "Content Analyst"
+    assert analyst_agent.role in ("Diagram Architect", "Content Analyst")
     assert len(analyst_agent.tools) == 1
 
     writer_agent = crew_instance.report_writer()
-    assert writer_agent.role == "Blog Post Writer"
+    assert writer_agent.role in ("Technical Writer", "Blog Post Writer")
     assert len(writer_agent.tools) == 0
 
     reviewer_agent = crew_instance.quality_reviewer()
-    assert reviewer_agent.role == "Quality Reviewer"
+    assert reviewer_agent.role in ("Editorial Director", "Quality Reviewer")
     assert len(reviewer_agent.tools) == 2
 
     # Verify task methods

@@ -119,16 +119,16 @@ class ResearchAndBlogWriter:
 
     @agent
     def research(self) -> Agent:
-        """Agent 1 — Deep-Tech Researcher."""
+        """Agent 1 — Lead Researcher."""
         return Agent(
-            role="Senior Researcher",
+            role="Lead Researcher",
             goal=(
                 "Perform exhaustive, deep-dive internet research on '{topic}'. Gather "
                 "minute technical details, architectural mechanisms, quantitative benchmarks, "
                 "underlying protocol specs, and verified authoritative source URLs."
             ),
             backstory=(
-                "You are an elite research scientist and investigative technologist. You never "
+                "You are an elite Lead Researcher and investigative technologist. You never "
                 "settle for surface-level summaries, generic overviews, or marketing fluff. You "
                 "drill down into primary whitepapers, technical documentation, GitHub repos, "
                 "low-level protocols, memory/latency benchmarks, and production failure post-mortems. "
@@ -146,15 +146,15 @@ class ResearchAndBlogWriter:
 
     @agent
     def content_analyst(self) -> Agent:
-        """Agent 2 — Systems Analyst & Architect."""
+        """Agent 2 — Diagram Architect."""
         return Agent(
-            role="Content Analyst",
+            role="Diagram Architect",
             goal=(
                 "Deconstruct the raw research on '{topic}', analyze low-level architectural layers, "
                 "construct comparative benchmark matrices, and specify native Mermaid diagrams."
             ),
             backstory=(
-                "You are a distinguished systems architect and technical strategist. You excel at "
+                "You are a distinguished Diagram Architect and systems strategist. You excel at "
                 "extracting the signal from massive technical corpora, identifying non-obvious engineering "
                 "trade-offs, and formulating comparative evaluation matrices. You design clean Mermaid "
                 "diagram topologies (flowcharts, state machines, sequence diagrams) that explain complex "
@@ -172,16 +172,16 @@ class ResearchAndBlogWriter:
 
     @agent
     def report_writer(self) -> Agent:
-        """Agent 3 — Lead Technical Author."""
+        """Agent 3 — Technical Writer."""
         return Agent(
-            role="Blog Post Writer",
+            role="Technical Writer",
             goal=(
                 "Draft an authoritative, deeply technical blog post (2,000 - 3,500 words) on "
                 "'{topic}' with native Mermaid architecture diagrams, explanatory diagram captions, "
                 "and structured comparison tables."
             ),
             backstory=(
-                "You are a world-class principal technical author whose work is celebrated on premier "
+                "You are a world-class principal Technical Writer whose work is celebrated on premier "
                 "engineering publications like Google DeepMind, OpenAI Research, Stripe, and Uber Engineering. "
                 "You explain complex mechanics with rigorous clarity, avoiding fluff. You natively embed "
                 "self-created Mermaid.js diagrams with descriptive explanations, and formal references, "
@@ -203,15 +203,15 @@ class ResearchAndBlogWriter:
 
     @agent
     def quality_reviewer(self) -> Agent:
-        """Agent 4 — Executive Quality Reviewer & Fact Auditor."""
+        """Agent 4 — Editorial Director."""
         return Agent(
-            role="Quality Reviewer",
+            role="Editorial Director",
             goal=(
                 "Audit the blog post on '{topic}' for factual accuracy, minute technical depth, "
                 "Mermaid diagram syntax validity, explanatory diagram captions, and a formal References bibliography."
             ),
             backstory=(
-                "You are an uncompromising technical editor and peer reviewer for top-tier computer science "
+                "You are an uncompromising Editorial Director and peer reviewer for top-tier computer science "
                 "journals. You verify every empirical claim and statistic, eliminate hand-waving generalities, "
                 "verify that Mermaid code blocks are syntactically perfect, ensure every diagram has a "
                 "descriptive explanation, and compile an exhaustive 'References & Verified Sources' bibliography. "
