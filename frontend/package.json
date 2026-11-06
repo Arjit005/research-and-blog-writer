@@ -22,6 +22,10 @@
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1"
   },
+  "overrides": {
+    "@grpc/grpc-js": "^1.13.6",
+    "minimatch": "^11.0.1"
+  },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
     "@types/node": "^20",
