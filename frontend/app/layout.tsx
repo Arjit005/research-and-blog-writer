@@ -23,9 +23,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html
       lang="en"
-      data-theme="light"
+      data-theme="dark"
       suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased dark`}
     >
       <head>
         <script
@@ -33,12 +33,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             __html: `(function(){
               try {
                 var theme = localStorage.getItem('theme');
-                if (theme === 'dark') {
-                  document.documentElement.setAttribute('data-theme', 'dark');
-                  document.documentElement.classList.add('dark');
-                } else {
+                if (theme === 'light') {
                   document.documentElement.setAttribute('data-theme', 'light');
                   document.documentElement.classList.remove('dark');
+                } else {
+                  document.documentElement.setAttribute('data-theme', 'dark');
+                  document.documentElement.classList.add('dark');
                 }
               } catch (e) {}
             })();`,

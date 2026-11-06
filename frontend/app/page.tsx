@@ -16,6 +16,7 @@ import { LeftSidebar } from "@/components/left-sidebar";
 import { AICommandCenter, SquadLog } from "@/components/ai-command-center";
 import { CopilotDrawer } from "@/components/copilot-drawer";
 import { ApiKeysDialog } from "@/components/api-keys-dialog";
+import { SettingsModal } from "@/components/settings-modal";
 import {
   Sparkles,
   BookOpen,
@@ -29,6 +30,7 @@ import {
   Moon,
   Volume2,
   VolumeX,
+  Settings,
 } from "lucide-react";
 
 const ACTIVE_RUN_STORAGE_KEY = "research-studio:active-run";
@@ -145,13 +147,18 @@ export default function Home() {
   const [runError, setRunError] = useState<string | null>(null);
   const [activeTraceUrl, setActiveTraceUrl] = useState<string | null>(null);
   const [isApiKeysOpen, setIsApiKeysOpen] = useState(false);
-  const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [isSoundMuted, setIsSoundMuted] = useState(false);
 
   useEffect(() => {
     try {
-      const savedSound = localStorage.getItem("research-studio:sound-muted");
-      if (savedSound === "true") setIsSoundMuted(true);
+      const saved = localStorage.getItem("theme");
+      if (saved === "light") {
+        setTheme("light");
+      } else {
+        setTheme("dark");
+      }
     } catch {}
   }, []);
 
@@ -642,6 +649,18 @@ export default function Home() {
             <span className="hidden sm:inline">API Keys</span>
           </button>
 
+          {/* Settings Button */}
+          <button
+            type="button"
+            onClick={() => setIsSettingsOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border rounded-xl text-xs text-foreground transition"
+            title="Workspace Settings"
+            aria-label="Settings"
+          >
+            <Settings className="w-3.5 h-3.5 text-slate-400" />
+            <span className="hidden sm:inline">Settings</span>
+          </button>
+
           {/* Mobile Right drawer toggle */}
           <button
             type="button"
@@ -936,6 +955,29 @@ export default function Home() {
       <ApiKeysDialog
         isOpen={isApiKeysOpen}
         onClose={() => setIsApiKeysOpen(false)}
+      />
+
+      {/* 7. Enterprise Workspace Settings Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        userEmail={user?.email}
+        theme={theme}
+        onThemeChange={(t) => {
+          setTheme(t);
+          try {
+            localStorage.setItem("theme", t);
+            if (t === "dark") {
+              document.documentElement.setAttribute("data-theme", "dark");
+              document.documentElement.classList.add("dark");
+            } else {
+              document.documentElement.setAttribute("data-theme", "light");
+              document.documentElement.classList.remove("dark");
+            }
+          } catch {}
+        }}
+        isSoundMuted={isSoundMuted}
+        onSoundMuteToggle={toggleSoundMute}
       />
     </div>
   );
