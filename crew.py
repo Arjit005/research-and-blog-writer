@@ -151,15 +151,19 @@ class ResearchAndBlogWriter:
             role="Diagram Architect",
             goal=(
                 "Deconstruct the raw research on '{topic}', analyze low-level architectural layers, "
-                "construct comparative benchmark matrices, and specify native Mermaid diagrams."
+                "construct comparative benchmark matrices, and specify topic-appropriate, factually grounded "
+                "Mermaid diagrams (such as sequence diagrams for protocols, state machines for lifecycles, "
+                "mindmaps for taxonomies, timelines for evolution, or flowcharts for distributed systems)."
             ),
             backstory=(
                 "You are a distinguished Diagram Architect and systems strategist. You excel at "
                 "extracting the signal from massive technical corpora, identifying non-obvious engineering "
-                "trade-offs, and formulating comparative evaluation matrices. You design clean Mermaid "
-                "diagram topologies (flowcharts, state machines, sequence diagrams) that explain complex "
-                "system interactions under the hood. You preserve the exact source URLs supplied in the "
-                "research dossier."
+                "trade-offs, and formulating comparative evaluation matrices. You choose the ideal visualization "
+                "modality for the topic: sequence diagrams for authentication and network handshakes, state machines "
+                "for distributed consensus and lifecycles, horizontal/vertical flowcharts for distributed dataflow, "
+                "timelines for historical causality, and mindmaps for conceptual taxonomies. You never force generic "
+                "flowcharts onto unrelated topics, and you strictly ensure every diagram node is factually grounded "
+                "in verified technical facts with directional arrows indicating true causal relationships."
             ),
             llm=get_fallback_llm(temperature=ANALYST_LLM_SETTINGS["temperature"], max_tokens=ANALYST_LLM_SETTINGS["max_tokens"]),
             tools=[ScrapeTool()],
@@ -261,10 +265,11 @@ class ResearchAndBlogWriter:
         return Task(
             description=(
                 "Synthesize and architect the technical findings on '{topic}'. Organize insights into "
-                "logical architectural layers. Design at least 1-2 native Mermaid diagrams (flowcharts "
-                "or sequence diagrams) demonstrating dataflow or system topology. Formulate comparative "
-                "matrix tables with quantitative criteria, and plan a short explanatory note for each diagram.\n"
-                "Preserve all citations and metrics from the Entity & Verified Source Registry."
+                "logical architectural layers. Design 1-2 native Mermaid diagrams selecting the appropriate "
+                "modality (flowchart, sequenceDiagram, stateDiagram-v2, mindmap, timeline, or erDiagram) "
+                "tailored to the domain instead of forcing standard flowcharts. Formulate comparative "
+                "matrix tables with quantitative criteria, and plan an explanatory figure note for each diagram.\n"
+                "Ground all diagram nodes in verified technical entities and preserve all citations and metrics."
             ),
             expected_output=(
                 "A comprehensive synthesis blueprint with thematic section breakdown, complete Mermaid "
