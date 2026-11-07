@@ -25,8 +25,21 @@ logger = logging.getLogger(__name__)
 # Maximum number of automatic retries for optimistic concurrency helpers.
 _MAX_WRITE_RETRIES = 8
 
-# SQLite/TiDB "stuck write" errors that are safe to retry on a fresh attempt.
-_TIDB_RETRYABLE_ERROR_CODES = {1205, 1213, 8005, 8022, 9007, 9008}
+# Exact TiDB / MySQL error codes that represent transient transaction write conflicts:
+# - 1205: Lock wait timeout exceeded
+# - 1213: Deadlock found when trying to get lock
+# - 8002: SELECT FOR UPDATE commit conflict
+# - 8005: Write conflict (txnRetryable)
+# - 8022: Transaction commit failed
+# - 8028: Information schema changed
+# - 9007: Write conflict in TiDB
+# Note: 9008 represents TiKV request overload (server overload), NOT a transaction write conflict.
+_TIDB_RETRYABLE_ERROR_CODES = {1205, 1213, 8002, 8005, 8022, 8028, 9007}
+
+# Standard SQLSTATEs for serialization failure and deadlock:
+# - '40001': Serialization failure / deadlock
+# - 'HY000': General error (only inspected when coupled with recognized error code or marker)
+_TIDB_RETRYABLE_SQLSTATES = {"40001"}
 
 _RETRYABLE_WRITE_MARKERS = (
     "DATABASE IS LOCKED",
@@ -458,18 +471,41 @@ def _is_retryable_write_error(exc: BaseException) -> bool:
     """Whether a write failed for a transient transaction conflict and may retry.
 
     Recognizes:
-    - TiDB/MySQL error codes (1205 lock wait timeout, 1213 deadlock, 8005/8022/9007/9008 write conflicts)
+    - Structured TiDB/MySQL error codes:
+        * 1205: Lock wait timeout
+        * 1213: Deadlock
+        * 8002: SELECT FOR UPDATE commit conflict
+        * 8005: Write conflict
+        * 8022: Transaction commit failed
+        * 8028: Information schema changed
+        * 9007: Write conflict
+    - Structured SQLSTATE values (e.g. '40001' serialization failure)
     - SQLite locking errors (SQLITE_BUSY, database is locked)
-    - Genuine application unique constraint errors are NOT classified as retryable.
+
+    Explicitly NOT retryable:
+    - 9008: TiKV request overload (server overload, not a transaction write conflict)
+    - Genuine application unique constraint / integrity errors (e.g. duplicate users, foreign keys)
     """
-    # Check PyMySQL / MySQL error code if available
     args = getattr(exc, "args", None)
     if args and isinstance(args, (tuple, list)) and len(args) > 0:
         err_code = args[0]
-        if isinstance(err_code, int) and err_code in _TIDB_RETRYABLE_ERROR_CODES:
-            return True
+        if isinstance(err_code, int):
+            if err_code == 9008:
+                # TiKV request overload: do not classify as a generic transaction write conflict
+                return False
+            if err_code in _TIDB_RETRYABLE_ERROR_CODES:
+                return True
+
+    # Check SQLSTATE or pymysql error structure if present
+    sqlstate = getattr(exc, "sqlstate", None) or getattr(exc, "errno", None)
+    if isinstance(sqlstate, str) and sqlstate in _TIDB_RETRYABLE_SQLSTATES:
+        return True
 
     message = f"{type(exc).__name__} {exc}".upper()
+    # Ensure 9008 is not accidentally matched by substring
+    if "9008" in message or "TIKV REQUEST OVERLOAD" in message:
+        return False
+
     return any(marker in message for marker in _RETRYABLE_WRITE_MARKERS)
 
 

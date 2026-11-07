@@ -739,6 +739,49 @@ TABLE_DEFINITIONS: List[Tuple[str, str, str]] = [
         )
         """,
     ),
+
+    # ------------------------------------------------------------------
+    # Document Studio Metadata
+    # ------------------------------------------------------------------
+    (
+        "document_metadata",
+        """
+        CREATE TABLE IF NOT EXISTS document_metadata (
+            id                    INT AUTO_INCREMENT PRIMARY KEY,
+            article_id            INT NOT NULL,
+            user_id               INT NOT NULL,
+            title                 VARCHAR(255) NULL,
+            abstract              MEDIUMTEXT NULL,
+            keywords              VARCHAR(512) NULL,
+            authors               VARCHAR(512) NULL,
+            institution           VARCHAR(255) NULL,
+            citation_style        VARCHAR(32) NOT NULL DEFAULT 'IEEE',
+            version_tag           VARCHAR(64) NOT NULL DEFAULT 'v1.0',
+            layout_settings       MEDIUMTEXT NULL,
+            created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_doc_article (article_id),
+            INDEX idx_doc_user (user_id)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS document_metadata (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            article_id            INTEGER NOT NULL UNIQUE,
+            user_id               INTEGER NOT NULL,
+            title                 TEXT NULL,
+            abstract              TEXT NULL,
+            keywords              TEXT NULL,
+            authors               TEXT NULL,
+            institution           TEXT NULL,
+            citation_style        TEXT NOT NULL DEFAULT 'IEEE',
+            version_tag           TEXT NOT NULL DEFAULT 'v1.0',
+            layout_settings       TEXT NULL,
+            created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at            TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """,
+    ),
 ]
 
 # ---------------------------------------------------------------------------
@@ -774,6 +817,7 @@ SQLITE_EXTRA_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_vel_visual          ON visual_evidence_links(visual_id)",
     "CREATE INDEX IF NOT EXISTS idx_vel_claim           ON visual_evidence_links(claim_id)",
     "CREATE INDEX IF NOT EXISTS idx_vel_art             ON visual_evidence_links(article_id)",
+    "CREATE INDEX IF NOT EXISTS idx_doc_meta_user       ON document_metadata(user_id)",
 ]
 
 # ---------------------------------------------------------------------------

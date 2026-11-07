@@ -207,6 +207,50 @@ export interface ResearchChart {
   created_at: string;
 }
 
+export interface DocumentMetadata {
+  authors?: string;
+  affiliation?: string;
+  abstract?: string;
+  keywords?: string;
+  running_header?: string;
+  theme?: string;
+  layout_mode?: string;
+}
+
+export interface DocumentResponse {
+  article_id: number;
+  topic: string;
+  content: string;
+  word_count: number;
+  metadata?: DocumentMetadata;
+}
+
+export interface DocumentSavePayload {
+  content: string;
+  create_revision?: boolean;
+  revision_summary?: string;
+  metadata?: DocumentMetadata;
+}
+
+export interface CitationAuditResponse {
+  citations: {
+    in_text_count: number;
+    reference_count: number;
+    missing_count: number;
+    in_text_citations: string[];
+    found_references: string[];
+    missing_citations: string[];
+    unused_references: string[];
+    url_health: Record<string, boolean>;
+  };
+  formatted_bibliography: {
+    ieee: string;
+    apa: string;
+    acm: string;
+    bibtex: string;
+  };
+}
+
 export interface EvidenceLink {
   id: number;
   user_id: number;
@@ -510,5 +554,24 @@ export const api = {
     if (params?.article_id !== undefined) q.set("article_id", String(params.article_id));
     const qs = q.toString() ? `?${q.toString()}` : "";
     return fetchJson(`/api/v1/visuals/evidence/links${qs}`);
+  },
+
+  // Report & Document Studio v1.0 API
+  async getDocument(articleId: number): Promise<DocumentResponse> {
+    return fetchJson(`/api/v1/articles/${articleId}/document`);
+  },
+
+  async saveDocument(
+    articleId: number,
+    payload: DocumentSavePayload
+  ): Promise<{ status: string; revision_num?: number }> {
+    return fetchJson(`/api/v1/articles/${articleId}/document`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async getCitationsAudit(articleId: number): Promise<CitationAuditResponse> {
+    return fetchJson(`/api/v1/articles/${articleId}/citations`);
   },
 };

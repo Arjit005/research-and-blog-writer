@@ -475,3 +475,43 @@ def test_copilot_edit_is_user_scoped_and_guarded(monkeypatch):
     )
     assert outage.status_code == 503
 
+
+
+def test_tidb_error_code_classification():
+    """Unit tests for every TiDB error code classification and regression verification."""
+    # 1. Recognized transaction write conflicts
+    # 1205: Lock wait timeout
+    assert db._is_retryable_write_error(Exception(1205, "Lock wait timeout exceeded; try restarting transaction")) is True
+    # 1213: Deadlock
+    assert db._is_retryable_write_error(Exception(1213, "Deadlock found when trying to get lock; try restarting transaction")) is True
+    # 8002: SELECT FOR UPDATE commit conflict
+    assert db._is_retryable_write_error(Exception(8002, "SELECT FOR UPDATE commit conflict")) is True
+    # 8005: Write conflict
+    assert db._is_retryable_write_error(Exception(8005, "Write conflict, txnRetryable")) is True
+    # 8022: Transaction commit failed
+    assert db._is_retryable_write_error(Exception(8022, "Transaction commit failed")) is True
+    # 8028: Information schema changed
+    assert db._is_retryable_write_error(Exception(8028, "Information schema is changed")) is True
+    # 9007: Write conflict in TiDB
+    assert db._is_retryable_write_error(Exception(9007, "Write conflict")) is True
+
+    # 2. SQLSTATE 40001 (serialization failure)
+    class _SqlStateError(Exception):
+        def __init__(self, msg, sqlstate):
+            super().__init__(msg)
+            self.sqlstate = sqlstate
+
+    assert db._is_retryable_write_error(_SqlStateError("serialization failure", "40001")) is True
+
+    # 3. CRITICAL REGRESSION: 9008 (TiKV request overload) must NOT be classified as retryable transaction write conflict
+    assert db._is_retryable_write_error(Exception(9008, "TiKV server timeout or overload")) is False
+    assert db._is_retryable_write_error(Exception("Error 9008: TiKV request overload")) is False
+
+    # 4. Genuine application integrity violations must NOT be retryable
+    assert db._is_retryable_write_error(Exception(1062, "Duplicate entry 'alice' for key 'users.email'")) is False
+    assert db._is_retryable_write_error(Exception("UNIQUE constraint failed: users.email")) is False
+    assert db._is_retryable_write_error(Exception("FOREIGN KEY constraint failed")) is False
+
+    # 5. SQLite lock errors are recognized
+    assert db._is_retryable_write_error(Exception("database is locked")) is True
+    assert db._is_retryable_write_error(Exception("SQLITE_BUSY: database is locked")) is True
