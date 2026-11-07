@@ -1516,7 +1516,10 @@ def _insert_article_revision_with_retry(
             return next_rev
         except Exception as exc:
             last_error = exc
-            if attempt < max_attempts - 1 and _is_retryable_write_error(exc):
+            # For revision numbers allocated via SELECT MAX+1, duplicate revision_num is a sequence race that should be retried with fresh MAX
+            err_str = str(exc).upper()
+            is_rev_conflict = "UNIQUE" in err_str or "DUPLICATE" in err_str or "1062" in err_str
+            if attempt < max_attempts - 1 and (_is_retryable_write_error(exc) or is_rev_conflict):
                 time.sleep(0.01 * (attempt + 1))
                 continue
             raise
