@@ -1,0 +1,132 @@
+Run started:2026-11-06 10:39:12.497028+00:00
+
+Test results:
+>> Issue: [B105:hardcoded_password_string] Possible hardcoded password: 'dev_mode_session_secret_only_for_local_testing_do_not_use_in_production'
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b105_hardcoded_password_string.html
+   Location: auth/config.py:24:21
+23	DEV_OTP_PEPPER = "dev_mode_otp_pepper_only_for_local_testing_do_not_use_in_production"
+24	DEV_SESSION_SECRET = "dev_mode_session_secret_only_for_local_testing_do_not_use_in_production"
+25	
+
+--------------------------------------------------
+>> Issue: [B105:hardcoded_password_string] Possible hardcoded password: 'Too many failed sign-in attempts. Please try again later.'
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b105_hardcoded_password_string.html
+   Location: auth/rate_limit.py:32:4
+31	PASSWORD_ATTEMPT_THROTTLE_MESSAGE = (
+32	    "Too many failed sign-in attempts. Please try again later."
+33	)
+34	
+35	_fallback_lock = threading.Lock()
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: auth/sessions.py:46:4
+45	        db.cleanup_expired_auth_data()
+46	    except Exception:
+47	        pass
+48	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: auth/sessions.py:91:8
+90	                should_update = False
+91	        except Exception:
+92	            pass
+93	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: auth/sessions.py:97:8
+96	            db.update_session_last_seen(session_row["id"])
+97	        except Exception:
+98	            pass
+99	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: backend/main.py:149:8
+148	                return True
+149	        except Exception:
+150	            pass
+151	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: backend/routes\research.py:59:8
+58	            q.put_nowait(chunk)
+59	        except Exception:
+60	            # Drop chunk if consumer queue is overflowing or closed
+61	            pass
+62	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: backend/routes\research.py:203:12
+202	                )
+203	            except Exception:
+204	                pass
+205	            raise ValueError(GENERIC_SECURITY_REJECTION)
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: backend/routes\research.py:381:12
+380	                crewai_event_bus.off(LLMStreamChunkEvent, _on_llm_chunk)
+381	            except Exception:
+382	                pass
+383	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: backend/routes\research.py:466:8
+465	            export_failure_to_dataset("production_failures", topic, safe_error, metadata={"run_id": run_id, "user_id": user_id})
+466	        except Exception:
+467	            pass
+468	        db.append_job_event(run_id, "error", {"message": safe_error, "timestamp": time.time()})
+
+--------------------------------------------------
+
+Code scanned:
+	Total lines of code: 3001
+	Total lines skipped (#nosec): 0
+	Total potential issues skipped due to specifically being disabled (e.g., #nosec BXXX): 0
+
+Run metrics:
+	Total issues (by severity):
+		Undefined: 0
+		Low: 10
+		Medium: 0
+		High: 0
+	Total issues (by confidence):
+		Undefined: 0
+		Low: 0
+		Medium: 2
+		High: 8
+Files skipped (0):
