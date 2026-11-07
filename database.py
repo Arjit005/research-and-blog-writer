@@ -3280,9 +3280,32 @@ def link_visual_evidence(
         return int(cur.lastrowid)
 
 
-def get_visual_evidence_links(visual_id: int, user_id: int) -> List[Dict[str, Any]]:
+def get_visual_evidence_links(
+    user_id: int,
+    visual_id: Optional[int] = None,
+    claim_id: Optional[str] = None,
+    article_id: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """Retrieve visual evidence links with flexible filtering by user, visual, claim, or article."""
+    clauses = ["user_id = ?"]
+    params: List[Any] = [user_id]
+    if visual_id is not None:
+        clauses.append("visual_id = ?")
+        params.append(visual_id)
+    if claim_id:
+        clauses.append("claim_id = ?")
+        params.append(claim_id)
+    if article_id is not None:
+        clauses.append("article_id = ?")
+        params.append(article_id)
+    where_sql = " AND ".join(clauses)
+
     with get_connection() as (conn, is_tidb):
-        cur = _exec(conn, is_tidb, "SELECT * FROM visual_evidence_links WHERE visual_id = ? AND user_id = ? ORDER BY id ASC", (visual_id, user_id))
+        cur = _exec(
+            conn, is_tidb,
+            f"SELECT * FROM visual_evidence_links WHERE {where_sql} ORDER BY id ASC",
+            tuple(params),
+        )
         rows = cur.fetchall()
         return [_row_to_dict(r) for r in rows]
 
@@ -3690,9 +3713,32 @@ def link_visual_evidence(
         return int(cur.lastrowid)
 
 
-def get_visual_evidence_links(visual_id: int, user_id: int) -> List[Dict[str, Any]]:
+def get_visual_evidence_links(
+    user_id: int,
+    visual_id: Optional[int] = None,
+    claim_id: Optional[str] = None,
+    article_id: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """Retrieve visual evidence links with flexible filtering by user, visual, claim, or article."""
+    clauses = ["user_id = ?"]
+    params: List[Any] = [user_id]
+    if visual_id is not None:
+        clauses.append("visual_id = ?")
+        params.append(visual_id)
+    if claim_id:
+        clauses.append("claim_id = ?")
+        params.append(claim_id)
+    if article_id is not None:
+        clauses.append("article_id = ?")
+        params.append(article_id)
+    where_sql = " AND ".join(clauses)
+
     with get_connection() as (conn, is_tidb):
-        cur = _exec(conn, is_tidb, "SELECT * FROM visual_evidence_links WHERE visual_id = ? AND user_id = ? ORDER BY id ASC", (visual_id, user_id))
+        cur = _exec(
+            conn, is_tidb,
+            f"SELECT * FROM visual_evidence_links WHERE {where_sql} ORDER BY id ASC",
+            tuple(params),
+        )
         rows = cur.fetchall()
         return [_row_to_dict(r) for r in rows]
 
