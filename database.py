@@ -2699,7 +2699,7 @@ def complete_research_job_atomic(
                     return True, next_seq
                 else:
                     # SQLite atomic single-transaction block
-                    cur = conn.execute("SELECT status FROM research_jobs WHERE run_id = ?", (run_id,))
+                    cur = _exec(conn, is_tidb, "SELECT status FROM research_jobs WHERE run_id = ?", (run_id,))
                     job_row = cur.fetchone()
                     if not job_row:
                         return False, None
@@ -2707,14 +2707,14 @@ def complete_research_job_atomic(
                     if curr_status in _TERMINAL_JOB_STATUSES:
                         existing_seq = None
                         if event_id:
-                            ecur = conn.execute("SELECT seq_id FROM job_events WHERE run_id = ? AND event_id = ?", (run_id, event_id))
+                            ecur = _exec(conn, is_tidb, "SELECT seq_id FROM job_events WHERE run_id = ? AND event_id = ?", (run_id, event_id))
                             erow = ecur.fetchone()
                             if erow:
                                 existing_seq = int(erow[0])
                         return False, existing_seq
 
                     if lease_token or fencing_token is not None:
-                        ccur = conn.execute("SELECT lease_token, fencing_token FROM active_run_claims WHERE run_id = ?", (run_id,))
+                        ccur = _exec(conn, is_tidb, "SELECT lease_token, fencing_token FROM active_run_claims WHERE run_id = ?", (run_id,))
                         claim = ccur.fetchone()
                         if not claim:
                             return False, None
@@ -2723,18 +2723,20 @@ def complete_research_job_atomic(
                         if fencing_token is not None and claim[1] != fencing_token:
                             return False, None
 
-                    conn.execute("INSERT OR IGNORE INTO job_event_counters (run_id, last_seq) VALUES (?, 0)", (run_id,))
-                    conn.execute("UPDATE job_event_counters SET last_seq = last_seq + 1 WHERE run_id = ?", (run_id,))
-                    scur = conn.execute("SELECT last_seq FROM job_event_counters WHERE run_id = ?", (run_id,))
+                    _exec(conn, is_tidb, "INSERT OR IGNORE INTO job_event_counters (run_id, last_seq) VALUES (?, 0)", (run_id,))
+                    _exec(conn, is_tidb, "UPDATE job_event_counters SET last_seq = last_seq + 1 WHERE run_id = ?", (run_id,))
+                    scur = _exec(conn, is_tidb, "SELECT last_seq FROM job_event_counters WHERE run_id = ?", (run_id,))
                     next_seq = int(scur.fetchone()[0])
 
-                    conn.execute(
+                    _exec(
+                        conn, is_tidb,
                         "INSERT INTO job_events (run_id, seq_id, event_id, event_type, payload) VALUES (?, ?, ?, ?, ?)",
                         (run_id, next_seq, event_id, event_type, payload_str),
                     )
 
                     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-                    conn.execute(
+                    _exec(
+                        conn, is_tidb,
                         """
                         UPDATE research_jobs
                         SET status = ?,
@@ -3075,6 +3077,413 @@ def get_job_events(run_id: str, after_seq_id: int = 0, limit: int = 2000) -> Lis
         return result
 
 
+
+
+# ---------------------------------------------------------------------------
+# Visual Research System: Visuals, Charts, and Evidence Links
+# ---------------------------------------------------------------------------
+
+def save_research_visual(
+    user_id: int,
+    visual_type: str,
+    origin_type: str,
+    title: str,
+    article_id: Optional[int] = None,
+    run_id: Optional[str] = None,
+    caption: Optional[str] = None,
+    description: Optional[str] = None,
+    source_url: Optional[str] = None,
+    source_title: Optional[str] = None,
+    publisher: Optional[str] = None,
+    author: Optional[str] = None,
+    publication_date: Optional[str] = None,
+    license_information: Optional[str] = None,
+    usage_restrictions: Optional[str] = None,
+    alt_text: Optional[str] = None,
+    dimensions: Optional[str] = None,
+    file_format: Optional[str] = None,
+    media_content: Optional[str] = None,
+    thumbnail_url: Optional[str] = None,
+    metadata_json: Optional[Dict[str, Any]] = None,
+) -> int:
+    """Insert a new visual asset into research_visuals and return its primary key."""
+    meta_str = json.dumps(metadata_json) if metadata_json else None
+    with get_connection() as (conn, is_tidb):
+        cur = _exec(
+            conn, is_tidb,
+            """
+            INSERT INTO research_visuals (
+                user_id, article_id, run_id, visual_type, origin_type,
+                title, caption, description, source_url, source_title,
+                publisher, author, publication_date, license_information,
+                usage_restrictions, alt_text, dimensions, file_format,
+                media_content, thumbnail_url, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id, article_id, run_id, visual_type, origin_type,
+                title, caption, description, source_url, source_title,
+                publisher, author, publication_date, license_information,
+                usage_restrictions, alt_text, dimensions, file_format,
+                media_content, thumbnail_url, meta_str,
+            ),
+        )
+        return int(cur.lastrowid)
+
+
+def get_research_visual(visual_id: int, user_id: int) -> Optional[Dict[str, Any]]:
+    """Retrieve single visual record owned by user."""
+    with get_connection() as (conn, is_tidb):
+        cur = _exec(
+            conn, is_tidb,
+            "SELECT * FROM research_visuals WHERE id = ? AND user_id = ?",
+            (visual_id, user_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        res = _row_to_dict(row)
+        if res.get("metadata_json") and isinstance(res["metadata_json"], str):
+            try:
+                res["metadata_json"] = json.loads(res["metadata_json"])
+            except Exception:
+                pass
+        return res
+
+
+def list_research_visuals(
+    user_id: int,
+    article_id: Optional[int] = None,
+    visual_type: Optional[str] = None,
+    origin_type: Optional[str] = None,
+    search: Optional[str] = None,
+    sort_by: str = "recent",
+    limit: int = 50,
+    offset: int = 0,
+) -> Tuple[List[Dict[str, Any]], int]:
+    """List visual assets owned by user with filters and pagination."""
+    safe_limit = _clamp_limit(limit, default=50, maximum=100)
+    safe_offset = _clamp_offset(offset)
+    where_clauses = ["user_id = ?"]
+    params: List[Any] = [user_id]
+
+    if article_id is not None:
+        where_clauses.append("article_id = ?")
+        params.append(article_id)
+    if visual_type:
+        where_clauses.append("visual_type = ?")
+        params.append(visual_type)
+    if origin_type:
+        where_clauses.append("origin_type = ?")
+        params.append(origin_type)
+    if search:
+        where_clauses.append("(title LIKE ? OR caption LIKE ? OR description LIKE ?)")
+        s = f"%{search}%"
+        params.extend([s, s, s])
+
+    where_sql = " AND ".join(where_clauses)
+    with get_connection() as (conn, is_tidb):
+        count_cur = _exec(conn, is_tidb, f"SELECT COUNT(*) FROM research_visuals WHERE {where_sql}", tuple(params))
+        crow = count_cur.fetchone()
+        total = int(crow[0] if not isinstance(crow, dict) else list(crow.values())[0])
+        order_sql = "title ASC" if sort_by == "title" else "created_at DESC, id DESC"
+        query_params = list(params) + [safe_limit, safe_offset]
+        cur = _exec(conn, is_tidb, f"SELECT * FROM research_visuals WHERE {where_sql} ORDER BY {order_sql} LIMIT ? OFFSET ?", tuple(query_params))
+        rows = cur.fetchall()
+        items = []
+        for r in rows:
+            d = _row_to_dict(r)
+            if d.get("metadata_json") and isinstance(d["metadata_json"], str):
+                try:
+                    d["metadata_json"] = json.loads(d["metadata_json"])
+                except Exception:
+                    pass
+            items.append(d)
+        return items, total
+
+
+def delete_research_visual(visual_id: int, user_id: int) -> bool:
+    with get_connection() as (conn, is_tidb):
+        cur = _exec(conn, is_tidb, "DELETE FROM research_visuals WHERE id = ? AND user_id = ?", (visual_id, user_id))
+        rowcount = getattr(cur, "rowcount", None)
+        return bool(rowcount and rowcount > 0)
+
+
+def save_research_chart(
+    user_id: int,
+    title: str,
+    chart_type: str,
+    structured_data: Dict[str, Any],
+    article_id: Optional[int] = None,
+    description: Optional[str] = None,
+    data_source: Optional[str] = None,
+    units: Optional[str] = None,
+    methodology: Optional[str] = None,
+) -> int:
+    struct_str = json.dumps(structured_data)
+    with get_connection() as (conn, is_tidb):
+        cur = _exec(
+            conn, is_tidb,
+            """
+            INSERT INTO research_charts (
+                user_id, article_id, title, description,
+                chart_type, structured_data, data_source, units, methodology
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, article_id, title, description, chart_type, struct_str, data_source, units, methodology),
+        )
+        return int(cur.lastrowid)
+
+
+def list_research_charts(user_id: int, article_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    with get_connection() as (conn, is_tidb):
+        if article_id is not None:
+            cur = _exec(conn, is_tidb, "SELECT * FROM research_charts WHERE user_id = ? AND article_id = ? ORDER BY id ASC", (user_id, article_id))
+        else:
+            cur = _exec(conn, is_tidb, "SELECT * FROM research_charts WHERE user_id = ? ORDER BY id DESC", (user_id,))
+        rows = cur.fetchall()
+        result = []
+        for r in rows:
+            d = _row_to_dict(r)
+            if d.get("structured_data") and isinstance(d["structured_data"], str):
+                try:
+                    d["structured_data"] = json.loads(d["structured_data"])
+                except Exception:
+                    pass
+            result.append(d)
+        return result
+
+
+def link_visual_evidence(
+    user_id: int,
+    visual_id: int,
+    claim_id: Optional[str] = None,
+    article_id: Optional[int] = None,
+    report_section: Optional[str] = None,
+    evidence_status: str = "verified",
+    citation_url: Optional[str] = None,
+) -> int:
+    with get_connection() as (conn, is_tidb):
+        cur = _exec(
+            conn, is_tidb,
+            """
+            INSERT INTO visual_evidence_links (
+                user_id, visual_id, claim_id, article_id,
+                report_section, evidence_status, citation_url
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, visual_id, claim_id, article_id, report_section, evidence_status, citation_url),
+        )
+        return int(cur.lastrowid)
+
+
+def get_visual_evidence_links(visual_id: int, user_id: int) -> List[Dict[str, Any]]:
+    with get_connection() as (conn, is_tidb):
+        cur = _exec(conn, is_tidb, "SELECT * FROM visual_evidence_links WHERE visual_id = ? AND user_id = ? ORDER BY id ASC", (visual_id, user_id))
+        rows = cur.fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Document Studio Metadata
+# ---------------------------------------------------------------------------
+
+
+def get_document_metadata(article_id: int, user_id: int) -> Optional[Dict[str, Any]]:
+    """Retrieve structured academic metadata for a given article."""
+    with get_connection() as (conn, is_tidb):
+        cur = _exec(
+            conn, is_tidb,
+            """
+            SELECT article_id, user_id, title, abstract, keywords, authors,
+                   institution, citation_style, version_tag, layout_settings, updated_at
+            FROM document_metadata
+            WHERE article_id = ? AND user_id = ?
+            """,
+            (article_id, user_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        d = _row_to_dict(row)
+        if d.get("layout_settings") and isinstance(d["layout_settings"], str):
+            try:
+                d["layout_settings"] = json.loads(d["layout_settings"])
+            except Exception:
+                pass
+        return d
+
+
+def save_document_metadata(
+    article_id: int,
+    user_id: int,
+    title: Optional[str] = None,
+    abstract: Optional[str] = None,
+    keywords: Optional[Union[str, List[str]]] = None,
+    authors: Optional[Union[str, List[str]]] = None,
+    institution: Optional[str] = None,
+    citation_style: str = "IEEE",
+    version_tag: str = "v1.0",
+    layout_settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Upsert structured academic metadata for an article (SQLite / TiDB compatible)."""
+    if isinstance(keywords, list):
+        keywords = ", ".join(str(k) for k in keywords)
+    if isinstance(authors, list):
+        authors = ", ".join(str(a) for a in authors)
+    layout_str = json.dumps(layout_settings) if layout_settings is not None else None
+    with get_connection() as (conn, is_tidb):
+        if is_tidb:
+            sql = """
+            INSERT INTO document_metadata (
+                article_id, user_id, title, abstract, keywords, authors,
+                institution, citation_style, version_tag, layout_settings
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                title = VALUES(title),
+                abstract = VALUES(abstract),
+                keywords = VALUES(keywords),
+                authors = VALUES(authors),
+                institution = VALUES(institution),
+                citation_style = VALUES(citation_style),
+                version_tag = VALUES(version_tag),
+                layout_settings = VALUES(layout_settings),
+                updated_at = NOW()
+            """
+        else:
+            sql = """
+            INSERT INTO document_metadata (
+                article_id, user_id, title, abstract, keywords, authors,
+                institution, citation_style, version_tag, layout_settings, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(article_id) DO UPDATE SET
+                title = excluded.title,
+                abstract = excluded.abstract,
+                keywords = excluded.keywords,
+                authors = excluded.authors,
+                institution = excluded.institution,
+                citation_style = excluded.citation_style,
+                version_tag = excluded.version_tag,
+                layout_settings = excluded.layout_settings,
+                updated_at = datetime('now')
+            """
+        _exec(
+            conn, is_tidb, sql,
+            (article_id, user_id, title, abstract, keywords, authors, institution, citation_style, version_tag, layout_str),
+        )
+        return True
+
+
+def update_article_content(article_id: int, new_content: str, user_id: Optional[int] = None) -> bool:
+    """In-place update of article content and word count without creating a new revision."""
+    word_count = len(new_content.split())
+    with get_connection() as (conn, is_tidb):
+        if is_tidb:
+            sql = "UPDATE articles SET content = ?, word_count = ?, updated_at = NOW() WHERE id = ?"
+        else:
+            sql = "UPDATE articles SET content = ?, word_count = ?, updated_at = datetime('now') WHERE id = ?"
+        params: List[Any] = [new_content, word_count, article_id]
+        if user_id is not None:
+            sql += " AND user_id = ?"
+            params.append(user_id)
+        cur = _exec(conn, is_tidb, sql, tuple(params))
+        rowcount = getattr(cur, "rowcount", -1)
+        return rowcount > 0 or rowcount == -1
+
+
+# ---------------------------------------------------------------------------
+# Report & Document Studio: Document Metadata & Settings
+# ---------------------------------------------------------------------------
+
+def save_document_metadata(
+    article_id: int,
+    user_id: int,
+    title: Optional[str] = None,
+    abstract: Optional[str] = None,
+    keywords: Optional[str] = None,
+    authors: Optional[str] = None,
+    institution: Optional[str] = None,
+    citation_style: str = "IEEE",
+    version_tag: str = "v1.0",
+    layout_settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Upsert structured academic document metadata for an article."""
+    layout_str = json.dumps(layout_settings) if layout_settings is not None else None
+    legacy = _legacy_sql()
+    with get_connection() as (conn, is_tidb):
+        art_cur = _exec(
+            conn, is_tidb,
+            f"SELECT id FROM articles WHERE id = ? AND (user_id = ?{legacy})",
+            (article_id, user_id),
+        )
+        if not art_cur.fetchone():
+            return False
+
+        if is_tidb:
+            sql = """
+                INSERT INTO document_metadata (
+                    article_id, user_id, title, abstract, keywords,
+                    authors, institution, citation_style, version_tag, layout_settings
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                    title = VALUES(title),
+                    abstract = VALUES(abstract),
+                    keywords = VALUES(keywords),
+                    authors = VALUES(authors),
+                    institution = VALUES(institution),
+                    citation_style = VALUES(citation_style),
+                    version_tag = VALUES(version_tag),
+                    layout_settings = VALUES(layout_settings),
+                    updated_at = NOW()
+            """
+        else:
+            sql = """
+                INSERT INTO document_metadata (
+                    article_id, user_id, title, abstract, keywords,
+                    authors, institution, citation_style, version_tag, layout_settings
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(article_id) DO UPDATE SET
+                    title = excluded.title,
+                    abstract = excluded.abstract,
+                    keywords = excluded.keywords,
+                    authors = excluded.authors,
+                    institution = excluded.institution,
+                    citation_style = excluded.citation_style,
+                    version_tag = excluded.version_tag,
+                    layout_settings = excluded.layout_settings,
+                    updated_at = datetime('now')
+            """
+        _exec(
+            conn, is_tidb, sql,
+            (
+                article_id, user_id, title, abstract, keywords,
+                authors, institution, citation_style, version_tag, layout_str
+            ),
+        )
+        return True
+
+
+def get_document_metadata(article_id: int, user_id: int) -> Optional[Dict[str, Any]]:
+    """Retrieve structured academic document metadata for an article."""
+    legacy = _legacy_sql()
+    with get_connection() as (conn, is_tidb):
+        cur = _exec(
+            conn, is_tidb,
+            f"SELECT * FROM document_metadata WHERE article_id = ? AND (user_id = ?{legacy})",
+            (article_id, user_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        res = _row_to_dict(row)
+        if res.get("layout_settings"):
+            try:
+                res["layout_settings"] = json.loads(res["layout_settings"])
+            except Exception:
+                pass
+        return res
+
+
 # init_db() is called explicitly by:
 #   - backend/main.py lifespan (production FastAPI startup)
 #   - tests/conftest.py isolated_database fixture (per-test reset)
@@ -3084,3 +3493,309 @@ def get_job_events(run_id: str, after_seq_id: int = 0, limit: int = 2000) -> Lis
 #      connection is opened, without racing module-level execution.
 #   2. Importing database.py in unit tests that don't need a DB doesn't
 #      create a stale file or fail when the path isn't writable yet.
+
+
+# ---------------------------------------------------------------------------
+# Visual Research System: Visuals, Charts, and Evidence Links
+# ---------------------------------------------------------------------------
+
+def save_research_visual(
+    user_id: int,
+    visual_type: str,
+    origin_type: str,
+    title: str,
+    article_id: Optional[int] = None,
+    run_id: Optional[str] = None,
+    caption: Optional[str] = None,
+    description: Optional[str] = None,
+    source_url: Optional[str] = None,
+    source_title: Optional[str] = None,
+    publisher: Optional[str] = None,
+    author: Optional[str] = None,
+    publication_date: Optional[str] = None,
+    license_information: Optional[str] = None,
+    usage_restrictions: Optional[str] = None,
+    alt_text: Optional[str] = None,
+    dimensions: Optional[str] = None,
+    file_format: Optional[str] = None,
+    media_content: Optional[str] = None,
+    thumbnail_url: Optional[str] = None,
+    metadata_json: Optional[Dict[str, Any]] = None,
+) -> int:
+    meta_str = json.dumps(metadata_json) if metadata_json else None
+    with get_connection() as (conn, is_tidb):
+        cur = _exec(
+            conn, is_tidb,
+            """
+            INSERT INTO research_visuals (
+                user_id, article_id, run_id, visual_type, origin_type,
+                title, caption, description, source_url, source_title,
+                publisher, author, publication_date, license_information,
+                usage_restrictions, alt_text, dimensions, file_format,
+                media_content, thumbnail_url, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id, article_id, run_id, visual_type, origin_type,
+                title, caption, description, source_url, source_title,
+                publisher, author, publication_date, license_information,
+                usage_restrictions, alt_text, dimensions, file_format,
+                media_content, thumbnail_url, meta_str,
+            ),
+        )
+        return int(cur.lastrowid)
+
+
+def get_research_visual(visual_id: int, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    with get_connection() as (conn, is_tidb):
+        if user_id is not None:
+            cur = _exec(conn, is_tidb, "SELECT * FROM research_visuals WHERE id = ? AND user_id = ?", (visual_id, user_id))
+        else:
+            cur = _exec(conn, is_tidb, "SELECT * FROM research_visuals WHERE id = ?", (visual_id,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        d = _row_to_dict(row)
+        if d.get("metadata_json") and isinstance(d["metadata_json"], str):
+            try:
+                d["metadata_json"] = json.loads(d["metadata_json"])
+            except Exception:
+                pass
+        return d
+
+
+def list_research_visuals(
+    user_id: int,
+    article_id: Optional[int] = None,
+    visual_type: Optional[str] = None,
+    origin_type: Optional[str] = None,
+    search: Optional[str] = None,
+    sort_by: str = "recent",
+    limit: int = 50,
+    offset: int = 0,
+) -> Tuple[List[Dict[str, Any]], int]:
+    safe_limit = _clamp_limit(limit, default=50, maximum=100)
+    safe_offset = max(0, offset)
+    clauses = ["user_id = ?"]
+    params: List[Any] = [user_id]
+    if article_id is not None:
+        clauses.append("article_id = ?")
+        params.append(article_id)
+    if visual_type:
+        clauses.append("visual_type = ?")
+        params.append(visual_type)
+    if origin_type:
+        clauses.append("origin_type = ?")
+        params.append(origin_type)
+    if search:
+        clauses.append("(title LIKE ? OR caption LIKE ? OR alt_text LIKE ?)")
+        wildcard = f"%{search}%"
+        params.extend([wildcard, wildcard, wildcard])
+    where_sql = " AND ".join(clauses)
+    with get_connection() as (conn, is_tidb):
+        count_cur = _exec(conn, is_tidb, f"SELECT COUNT(*) FROM research_visuals WHERE {where_sql}", tuple(params))
+        crow = count_cur.fetchone()
+        total = int(crow[0] if not isinstance(crow, dict) else list(crow.values())[0])
+        order_sql = "title ASC" if sort_by == "title" else "created_at DESC, id DESC"
+        query_params = list(params) + [safe_limit, safe_offset]
+        cur = _exec(conn, is_tidb, f"SELECT * FROM research_visuals WHERE {where_sql} ORDER BY {order_sql} LIMIT ? OFFSET ?", tuple(query_params))
+        rows = cur.fetchall()
+        items = []
+        for r in rows:
+            d = _row_to_dict(r)
+            if d.get("metadata_json") and isinstance(d["metadata_json"], str):
+                try:
+                    d["metadata_json"] = json.loads(d["metadata_json"])
+                except Exception:
+                    pass
+            items.append(d)
+        return items, total
+
+
+def delete_research_visual(visual_id: int, user_id: int) -> bool:
+    with get_connection() as (conn, is_tidb):
+        cur = _exec(conn, is_tidb, "DELETE FROM research_visuals WHERE id = ? AND user_id = ?", (visual_id, user_id))
+        rowcount = getattr(cur, "rowcount", None)
+        return bool(rowcount and rowcount > 0)
+
+
+def save_research_chart(
+    user_id: int,
+    title: str,
+    chart_type: str,
+    structured_data: Dict[str, Any],
+    article_id: Optional[int] = None,
+    description: Optional[str] = None,
+    data_source: Optional[str] = None,
+    units: Optional[str] = None,
+    methodology: Optional[str] = None,
+) -> int:
+    struct_str = json.dumps(structured_data)
+    with get_connection() as (conn, is_tidb):
+        cur = _exec(
+            conn, is_tidb,
+            """
+            INSERT INTO research_charts (
+                user_id, article_id, title, description,
+                chart_type, structured_data, data_source, units, methodology
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, article_id, title, description, chart_type, struct_str, data_source, units, methodology),
+        )
+        return int(cur.lastrowid)
+
+
+def list_research_charts(user_id: int, article_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    with get_connection() as (conn, is_tidb):
+        if article_id is not None:
+            cur = _exec(conn, is_tidb, "SELECT * FROM research_charts WHERE user_id = ? AND article_id = ? ORDER BY id ASC", (user_id, article_id))
+        else:
+            cur = _exec(conn, is_tidb, "SELECT * FROM research_charts WHERE user_id = ? ORDER BY id DESC", (user_id,))
+        rows = cur.fetchall()
+        result = []
+        for r in rows:
+            d = _row_to_dict(r)
+            if d.get("structured_data") and isinstance(d["structured_data"], str):
+                try:
+                    d["structured_data"] = json.loads(d["structured_data"])
+                except Exception:
+                    pass
+            result.append(d)
+        return result
+
+
+def link_visual_evidence(
+    user_id: int,
+    visual_id: int,
+    claim_id: Optional[str] = None,
+    article_id: Optional[int] = None,
+    report_section: Optional[str] = None,
+    evidence_status: str = "verified",
+    citation_url: Optional[str] = None,
+) -> int:
+    with get_connection() as (conn, is_tidb):
+        cur = _exec(
+            conn, is_tidb,
+            """
+            INSERT INTO visual_evidence_links (
+                user_id, visual_id, claim_id, article_id,
+                report_section, evidence_status, citation_url
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, visual_id, claim_id, article_id, report_section, evidence_status, citation_url),
+        )
+        return int(cur.lastrowid)
+
+
+def get_visual_evidence_links(visual_id: int, user_id: int) -> List[Dict[str, Any]]:
+    with get_connection() as (conn, is_tidb):
+        cur = _exec(conn, is_tidb, "SELECT * FROM visual_evidence_links WHERE visual_id = ? AND user_id = ? ORDER BY id ASC", (visual_id, user_id))
+        rows = cur.fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Document Studio Metadata
+# ---------------------------------------------------------------------------
+
+
+def get_document_metadata(article_id: int, user_id: int) -> Optional[Dict[str, Any]]:
+    """Retrieve structured academic metadata for a given article."""
+    with get_connection() as (conn, is_tidb):
+        cur = _exec(
+            conn, is_tidb,
+            """
+            SELECT article_id, user_id, title, abstract, keywords, authors,
+                   institution, citation_style, version_tag, layout_settings, updated_at
+            FROM document_metadata
+            WHERE article_id = ? AND user_id = ?
+            """,
+            (article_id, user_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        d = _row_to_dict(row)
+        if d.get("layout_settings") and isinstance(d["layout_settings"], str):
+            try:
+                d["layout_settings"] = json.loads(d["layout_settings"])
+            except Exception:
+                pass
+        return d
+
+
+def save_document_metadata(
+    article_id: int,
+    user_id: int,
+    title: Optional[str] = None,
+    abstract: Optional[str] = None,
+    keywords: Optional[Union[str, List[str]]] = None,
+    authors: Optional[Union[str, List[str]]] = None,
+    institution: Optional[str] = None,
+    citation_style: str = "IEEE",
+    version_tag: str = "v1.0",
+    layout_settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Upsert structured academic metadata for an article (SQLite / TiDB compatible)."""
+    if isinstance(keywords, list):
+        keywords = ", ".join(str(k) for k in keywords)
+    if isinstance(authors, list):
+        authors = ", ".join(str(a) for a in authors)
+    layout_str = json.dumps(layout_settings) if layout_settings is not None else None
+    with get_connection() as (conn, is_tidb):
+        if is_tidb:
+            sql = """
+            INSERT INTO document_metadata (
+                article_id, user_id, title, abstract, keywords, authors,
+                institution, citation_style, version_tag, layout_settings
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                title = VALUES(title),
+                abstract = VALUES(abstract),
+                keywords = VALUES(keywords),
+                authors = VALUES(authors),
+                institution = VALUES(institution),
+                citation_style = VALUES(citation_style),
+                version_tag = VALUES(version_tag),
+                layout_settings = VALUES(layout_settings),
+                updated_at = NOW()
+            """
+        else:
+            sql = """
+            INSERT INTO document_metadata (
+                article_id, user_id, title, abstract, keywords, authors,
+                institution, citation_style, version_tag, layout_settings, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(article_id) DO UPDATE SET
+                title = excluded.title,
+                abstract = excluded.abstract,
+                keywords = excluded.keywords,
+                authors = excluded.authors,
+                institution = excluded.institution,
+                citation_style = excluded.citation_style,
+                version_tag = excluded.version_tag,
+                layout_settings = excluded.layout_settings,
+                updated_at = datetime('now')
+            """
+        _exec(
+            conn, is_tidb, sql,
+            (article_id, user_id, title, abstract, keywords, authors, institution, citation_style, version_tag, layout_str),
+        )
+        return True
+
+
+def update_article_content(article_id: int, new_content: str, user_id: Optional[int] = None) -> bool:
+    """In-place update of article content and word count without creating a new revision."""
+    word_count = len(new_content.split())
+    with get_connection() as (conn, is_tidb):
+        if is_tidb:
+            sql = "UPDATE articles SET content = ?, word_count = ?, updated_at = NOW() WHERE id = ?"
+        else:
+            sql = "UPDATE articles SET content = ?, word_count = ?, updated_at = datetime('now') WHERE id = ?"
+        params: List[Any] = [new_content, word_count, article_id]
+        if user_id is not None:
+            sql += " AND user_id = ?"
+            params.append(user_id)
+        cur = _exec(conn, is_tidb, sql, tuple(params))
+        rowcount = getattr(cur, "rowcount", -1)
+        return rowcount > 0 or rowcount == -1

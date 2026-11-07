@@ -747,11 +747,13 @@ def test_atomic_terminal_failure_injection_rollback(tmp_path, monkeypatch):
     run_id = "run_term_rollback_1"
     db.create_research_job_atomic(run_id, "Failure Injection Topic", user_id=9903)
 
-    # 1. Failure injection: event insert succeeds, but status update raises Exception
-    original_update = db.update_research_job
-    def broken_update(*args, **kwargs):
-        raise RuntimeError("Simulated status update failure after event allocation")
-    monkeypatch.setattr(db, "update_research_job", broken_update)
+    # 1. Failure injection: status update fails inside the atomic transaction
+    original_exec = db._exec
+    def broken_status_exec(conn, is_tidb, sql, *args, **kwargs):
+        if "UPDATE research_jobs" in sql and "status" in sql:
+            raise RuntimeError("Simulated status update failure after event allocation")
+        return original_exec(conn, is_tidb, sql, *args, **kwargs)
+    monkeypatch.setattr(db, "_exec", broken_status_exec)
 
     with pytest.raises(RuntimeError, match="Simulated status update failure"):
         db.complete_research_job_atomic(
@@ -762,20 +764,48 @@ def test_atomic_terminal_failure_injection_rollback(tmp_path, monkeypatch):
             event_id=f"term_{run_id}_completed",
         )
 
-    # In production without unified transaction wrapper, event would be orphaned if not rolled back.
-    # Verify initial non-terminal state remains intact:
+    # Status remains pending, claim remains active, and event insert was rolled back
     job = db.get_research_job(run_id)
     assert job["status"] == "pending"
-    # Claim remains active
     claim = db.get_active_run_claim(run_id)
     assert claim is not None
+    events = db.get_job_events(run_id)
+    assert not any(e["event_type"] == "completed" for e in events)
 
     monkeypatch.undo()
 
-    # 2. Failure injection: event insert fails (e.g. database error during event append)
-    def broken_event(*args, **kwargs):
-        raise RuntimeError("Simulated event insert failure")
-    monkeypatch.setattr(db, "append_job_event", broken_event)
+    # 2. Failure injection: claim release fails inside the atomic transaction
+    def broken_claim_exec(conn, is_tidb, sql, *args, **kwargs):
+        if "DELETE FROM active_run_claims" in sql:
+            raise RuntimeError("Simulated claim release deletion failure")
+        return original_exec(conn, is_tidb, sql, *args, **kwargs)
+    monkeypatch.setattr(db, "_exec", broken_claim_exec)
+
+    with pytest.raises(RuntimeError, match="Simulated claim release deletion failure"):
+        db.complete_research_job_atomic(
+            run_id=run_id,
+            status="completed",
+            event_type="completed",
+            event_payload={"result": "boom_claim"},
+            event_id=f"term_{run_id}_completed",
+        )
+
+    # All rolled back: original job status remains pending, claim remains intact, no terminal event committed
+    job = db.get_research_job(run_id)
+    assert job["status"] == "pending"
+    claim = db.get_active_run_claim(run_id)
+    assert claim is not None
+    events = db.get_job_events(run_id)
+    assert not any(e["event_type"] == "completed" for e in events)
+
+    monkeypatch.undo()
+
+    # 3. Failure injection: event insert fails
+    def broken_event_exec(conn, is_tidb, sql, *args, **kwargs):
+        if "INSERT INTO job_events" in sql:
+            raise RuntimeError("Simulated event insert failure")
+        return original_exec(conn, is_tidb, sql, *args, **kwargs)
+    monkeypatch.setattr(db, "_exec", broken_event_exec)
 
     with pytest.raises(RuntimeError, match="Simulated event insert failure"):
         db.complete_research_job_atomic(
@@ -794,7 +824,7 @@ def test_atomic_terminal_failure_injection_rollback(tmp_path, monkeypatch):
 
     monkeypatch.undo()
 
-    # 3. Successful execution: status, event and claim release commit together
+    # 4. Successful execution: status, event and claim release commit together; subsequent completion still succeeds
     ok, seq = db.complete_research_job_atomic(
         run_id=run_id,
         status="completed",

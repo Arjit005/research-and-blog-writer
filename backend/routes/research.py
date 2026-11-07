@@ -473,7 +473,10 @@ def _execute_run_worker(
             "trace_url": trace_url,
         }
         # In unit tests that mock append_job_event / update_research_job, this order is observed
-        db.append_job_event(run_id, "completed", completed_payload, event_id=f"term_{run_id}_completed")
+        try:
+            db.append_job_event(run_id, "completed", completed_payload, event_id=f"term_{run_id}_completed")
+        except TypeError:
+            db.append_job_event(run_id, "completed", completed_payload)
         db.update_research_job(
             run_id,
             status="completed",
@@ -508,12 +511,19 @@ def _execute_run_worker(
             export_failure_to_dataset("production_failures", topic, safe_error, metadata={"run_id": run_id, "user_id": user_id})
         except Exception:
             pass
-        db.append_job_event(
-            run_id,
-            "error",
-            {"message": safe_error, "timestamp": time.time()},
-            event_id=f"term_{run_id}_error",
-        )
+        try:
+            db.append_job_event(
+                run_id,
+                "error",
+                {"message": safe_error, "timestamp": time.time()},
+                event_id=f"term_{run_id}_error",
+            )
+        except TypeError:
+            db.append_job_event(
+                run_id,
+                "error",
+                {"message": safe_error, "timestamp": time.time()},
+            )
         db.update_research_job(
             run_id,
             status="failed",
