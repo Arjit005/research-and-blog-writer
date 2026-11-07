@@ -294,14 +294,31 @@ class ResearchQualityAuditor21:
             issues: List[str] = []
             diag_type = "unknown"
 
-            if content.startswith("flowchart") or content.startswith("graph"):
+            trimmed_lower = content.lower()
+            if trimmed_lower.startswith(("flowchart", "graph")):
                 diag_type = "Flowchart"
-            elif content.startswith("sequenceDiagram"):
+            elif trimmed_lower.startswith("sequencediagram"):
                 diag_type = "Sequence"
-            elif content.startswith("stateDiagram"):
+            elif trimmed_lower.startswith(("statediagram", "statediagram-v2")):
                 diag_type = "State"
-            elif content.startswith("classDiagram"):
+            elif trimmed_lower.startswith("classdiagram"):
                 diag_type = "Class"
+            elif trimmed_lower.startswith("erdiagram"):
+                diag_type = "EntityRelationship"
+            elif trimmed_lower.startswith("gitgraph"):
+                diag_type = "GitGraph"
+            elif trimmed_lower.startswith("mindmap"):
+                diag_type = "Mindmap"
+            elif trimmed_lower.startswith("timeline"):
+                diag_type = "Timeline"
+            elif trimmed_lower.startswith("pie"):
+                diag_type = "PieChart"
+            elif trimmed_lower.startswith("quadrantchart"):
+                diag_type = "QuadrantChart"
+            elif trimmed_lower.startswith(("c4context", "c4container", "c4component")):
+                diag_type = "C4Architecture"
+            elif trimmed_lower.startswith("xychart-beta"):
+                diag_type = "XYChart"
             else:
                 issues.append("Unrecognized Mermaid diagram type declaration.")
 

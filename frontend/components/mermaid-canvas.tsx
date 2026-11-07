@@ -122,7 +122,7 @@ export function MermaidCanvas({
         return;
       }
 
-      const { svg } = await mermaid.render(id, sourceText);
+      let { svg } = await mermaid.render(id, sourceText);
 
       if (token !== renderTokenRef.current) return;
 
@@ -131,6 +131,37 @@ export function MermaidCanvas({
       }
       if (/<script[\s>]/i.test(svg)) {
         throw new Error("Refused Mermaid output containing a script tag.");
+      }
+
+      // Optimize SVG viewBox and layout: remove hardcoded max-width / height attributes
+      // allowing SVG to fluidly fill its viewport container without artificial shrinkage
+      svg = svg.replace(/max-width:\s*[\d.]+px;?/gi, "");
+      svg = svg.replace(/(<svg\b[^>]*)\bstyle="([^"]*)"/i, (match, prefix, style) => {
+        const cleanedStyle = style.replace(/max-width:\s*[^;]+;?/gi, "").trim();
+        return `${prefix} style="${cleanedStyle}; width: 100%; height: auto; display: block; margin: 0 auto;"`;
+      });
+      if (!svg.includes('style="')) {
+        svg = svg.replace(/<svg\b/i, '<svg style="width: 100%; height: auto; display: block; margin: 0 auto;"');
+      }
+
+      // Compute optimal initial zoom from SVG viewBox dimensions
+      const viewBoxMatch = svg.match(/viewBox=["']\s*([-\d.]+)\s+([-\d.]+)\s+([\d.]+)\s+([\d.]+)\s*["']/i);
+      if (viewBoxMatch && containerRef.current) {
+        const naturalWidth = parseFloat(viewBoxMatch[3]);
+        const naturalHeight = parseFloat(viewBoxMatch[4]);
+        const containerW = containerRef.current.clientWidth || 800;
+        const containerH = containerRef.current.clientHeight || 450;
+
+        if (naturalWidth > 0 && naturalHeight > 0) {
+          // Calculate scale factor so diagram fills ~88% of container bounds comfortably
+          const scaleW = (containerW * 0.90) / naturalWidth;
+          const scaleH = (containerH * 0.85) / naturalHeight;
+          const autoFitZoom = Math.min(scaleW, scaleH);
+          // Clamp zoom between 0.8 and 1.35
+          const clampedZoom = Math.max(0.8, Math.min(autoFitZoom, 1.35));
+          setZoom(Number(clampedZoom.toFixed(2)));
+          setPan({ x: 0, y: 0 });
+        }
       }
 
       setSvgContent(svg);
