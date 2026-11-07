@@ -27,6 +27,7 @@ def setup_auth_env(monkeypatch):
     monkeypatch.setenv("AUTH_DEV_MODE", "false")
     monkeypatch.setenv("OTP_RESEND_COOLDOWN_SECONDS", "0")  # Disable cooldown for service testing
     load_auth_config(reload=True)
+    db.init_db()
     reset_password_attempt_cache()
     yield
     reset_password_attempt_cache()
