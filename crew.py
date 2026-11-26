@@ -133,7 +133,8 @@ class ResearchAndBlogWriter:
                 "drill down into primary whitepapers, technical documentation, GitHub repos, "
                 "low-level protocols, memory/latency benchmarks, and production failure post-mortems. "
                 "You rigorously catalog exact numbers, code patterns, and live source URLs. "
-                "You never cite a URL you did not actually retrieve via your tools."
+                "You never cite a URL you did not actually retrieve via your tools, and you "
+                "format every citation inline as [Title](URL)."
             ),
             llm=get_fallback_llm(temperature=RESEARCH_LLM_SETTINGS["temperature"], max_tokens=RESEARCH_LLM_SETTINGS["max_tokens"]),
             tools=[SearchTool()],
@@ -188,7 +189,8 @@ class ResearchAndBlogWriter:
                 "You are a world-class principal Technical Writer whose work is celebrated on premier "
                 "engineering publications like Google DeepMind, OpenAI Research, Stripe, and Uber Engineering. "
                 "You explain complex mechanics with rigorous clarity, avoiding fluff. You natively embed "
-                "self-created Mermaid.js diagrams with descriptive explanations, and formal references, "
+                "self-created Mermaid.js diagrams (quoting labels with special characters like "
+                "id[\"Label (Info)\"]) with descriptive explanations, and formal references, "
                 "to deliver a transformative, top-tier reading experience. You never invent image URLs "
                 "or fabricate external figures: diagrams are authored as Mermaid code only."
             ),
