@@ -919,23 +919,36 @@ export default function Home() {
               <div className="p-4 bg-surface-raised rounded-2xl mb-4 text-accent">
                 <BookOpen className="w-8 h-8" aria-hidden="true" />
               </div>
-              <h3 className="text-base font-bold text-foreground mb-1">No Article Selected</h3>
-              <p className="text-xs text-muted-foreground max-w-sm mb-6">
-                Select an existing article from the library, or launch a new multi-agent research run to
-                generate a publication-ready blog post with Mermaid diagrams.
+              <h3 className="text-lg font-bold text-foreground mb-2">What would you like to research?</h3>
+              <p className="text-sm text-muted-foreground max-w-md mb-6">
+                Enter any technical topic below to launch a multi-agent research run and generate a
+                publication-ready blog post with Mermaid diagrams.
               </p>
-              <div className="flex flex-wrap items-center justify-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMobileDrawer("left");
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!topic.trim()) {
                     setTopic("Autonomous Multi-Agent AI Systems: 2026 Architecture");
-                  }}
-                  className="px-4 py-2 bg-accent hover:bg-accent-hover text-accent-foreground rounded-xl text-xs font-semibold transition shadow-sm"
+                  }
+                  setMobileDrawer("left");
+                }}
+                className="w-full max-w-md flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5"
+              >
+                <input
+                  type="text"
+                  value={topic}
+                  onChange={(e) => setTopic(e.target.value)}
+                  placeholder="e.g. Distributed Consensus in TiDB..."
+                  aria-label="Research topic"
+                  className="flex-1 px-4 py-2.5 bg-background border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground"
+                />
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 bg-accent hover:bg-accent-hover text-accent-foreground rounded-xl text-sm font-semibold transition shadow-sm shrink-0"
                 >
-                  Start Research
+                  Generate Blog
                 </button>
-              </div>
+              </form>
             </div>
           )}
         </div>
