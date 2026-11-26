@@ -7,7 +7,8 @@
     "build": "next build",
     "serve": "npx serve out",
     "typecheck": "next typegen && tsc --noEmit --incremental false",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "node --test __tests__/*.test.mjs"
   },
   "dependencies": {
     "@types/diff": "^7.0.2",

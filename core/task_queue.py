@@ -49,3 +49,20 @@ def enqueue_research_run(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> F
     """Submit a research run to the bounded background worker pool."""
     executor = get_worker_executor()
     return executor.submit(fn, *args, **kwargs)
+
+
+def enqueue_redis_job(payload: dict) -> bool:
+    """Push a JSON-serializable job payload to Redis when REDIS_URL is active."""
+    import json
+    from core.distributed import get_redis_client
+
+    client = get_redis_client()
+    if client is None:
+        return False
+    queue_key = os.getenv("RESEARCH_REDIS_QUEUE_KEY", "research:queue")
+    try:
+        client.lpush(queue_key, json.dumps(payload, default=str))
+        return True
+    except Exception as exc:
+        logger.warning("Redis job enqueue failed (%s); using local pool.", exc)
+        return False
