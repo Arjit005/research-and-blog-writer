@@ -152,6 +152,12 @@ def _job_is_cancelled(run_id: str, cancel_event: threading.Event) -> bool:
     if cancel_event.is_set():
         return True
     try:
+        from core.distributed import is_run_cancelled_distributed
+        if is_run_cancelled_distributed(run_id):
+            return True
+    except Exception:
+        pass
+    try:
         job = db.get_research_job(run_id)
     except Exception as exc:  # pragma: no cover - DB failure should not abort work
         logger.warning("Cancellation status check failed for run %s: %s", run_id, exc)
@@ -577,12 +583,17 @@ def create_research_run(
     db.append_job_event(run_id, "run_start", {"run_id": run_id, "topic": topic, "timestamp": time.time()})
 
     # 3. Spawn background thread
-    worker_thread = threading.Thread(
-        target=_execute_run_worker,
-        args=(run_id, topic, user["id"], body.tone, body.audience, body.target_length),
-        daemon=True,
+    from core.task_queue import enqueue_research_run
+
+    enqueue_research_run(
+        _execute_run_worker,
+        run_id,
+        topic,
+        user["id"],
+        body.tone,
+        body.audience,
+        body.target_length,
     )
-    worker_thread.start()
 
     return RunResponse(run_id=run_id, status="running", topic=topic)
 

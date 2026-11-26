@@ -203,47 +203,24 @@ def _env_int(name: str, default: int) -> int:
 # Defaults: 120 requests per IP per minute on /api/v1/* endpoints.
 _RATE_LIMIT_REQUESTS: int = _env_int("API_RATE_LIMIT_REQUESTS", 120)
 _RATE_LIMIT_WINDOW_SECONDS: int = _env_int("API_RATE_LIMIT_WINDOW_SECONDS", 60)
+_RATE_LIMIT_GC_INTERVAL = 300  # seconds
 
-# In-memory store: ip -> deque of request timestamps within the window.
-# A plain dict + deque is O(1) amortized and needs no external dependency.
-_rate_limit_store: Dict[str, Deque[float]] = {}
-_rate_limit_lock = threading.Lock()
+from core.distributed import DistributedRateLimiter
+
+_rate_limiter = DistributedRateLimiter(
+    max_requests=_RATE_LIMIT_REQUESTS,
+    window_seconds=_RATE_LIMIT_WINDOW_SECONDS,
+    gc_interval=_RATE_LIMIT_GC_INTERVAL,
+)
 
 
 def _check_rate_limit(ip: str) -> bool:
     """Return True when the IP is within its request budget, False when throttled."""
-    now = time.time()
-    cutoff = now - _RATE_LIMIT_WINDOW_SECONDS
-    with _rate_limit_lock:
-        bucket = _rate_limit_store.get(ip)
-        if bucket is None:
-            bucket = collections.deque()
-            _rate_limit_store[ip] = bucket
-        # Evict timestamps outside the current window.
-        while bucket and bucket[0] < cutoff:
-            bucket.popleft()
-        if len(bucket) >= _RATE_LIMIT_REQUESTS:
-            return False
-        bucket.append(now)
-    return True
-
-
-# Periodically purge IPs whose buckets have fully expired to prevent the
-# store growing unboundedly under a long-running server.
-_RATE_LIMIT_GC_INTERVAL = 300  # seconds
-_last_rate_limit_gc: float = 0.0
+    return _rate_limiter.allow(ip)
 
 
 def _maybe_gc_rate_limit_store(now: float) -> None:
-    global _last_rate_limit_gc
-    if now - _last_rate_limit_gc < _RATE_LIMIT_GC_INTERVAL:
-        return
-    cutoff = now - _RATE_LIMIT_WINDOW_SECONDS
-    with _rate_limit_lock:
-        stale = [ip for ip, bucket in _rate_limit_store.items() if not bucket or bucket[-1] < cutoff]
-        for ip in stale:
-            del _rate_limit_store[ip]
-    _last_rate_limit_gc = now
+    _rate_limiter.maybe_gc(now)
 
 
 def _client_ip(request: Request) -> str:

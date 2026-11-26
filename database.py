@@ -184,7 +184,7 @@ class TiDBConnectionPool:
                 pass
 
 
-_tidb_pool = TiDBConnectionPool(max_size=8)
+_tidb_pool = TiDBConnectionPool(max_size=max(1, int(os.getenv("TIDB_POOL_SIZE", "8"))))
 
 
 def _init_tidb_session(conn: Any) -> None:
