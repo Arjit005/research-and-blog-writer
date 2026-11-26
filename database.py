@@ -3884,3 +3884,19 @@ def update_article_content(article_id: int, new_content: str, user_id: Optional[
         cur = _exec(conn, is_tidb, sql, tuple(params))
         rowcount = getattr(cur, "rowcount", -1)
         return rowcount > 0 or rowcount == -1
+
+
+def cleanup_stale_operational_data(retention_days: int = 30) -> Dict[str, int]:
+    """Purge old append-only job_events and security_audit_logs beyond retention_days."""
+    cutoff_ts = time.time() - (max(1, retention_days) * 86400)
+    deleted: Dict[str, int] = {"job_events": 0, "security_audit_logs": 0}
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        for table in ("job_events", "security_audit_logs"):
+            try:
+                cur.execute(f"DELETE FROM {table} WHERE created_at < %s" if USE_TIDB else f"DELETE FROM {table} WHERE created_at < ?", (cutoff_ts,))
+                deleted[table] = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+            except Exception as exc:
+                logger.debug("Retention cleanup skipped for %s: %s", table, exc)
+        conn.commit()
+    return deleted

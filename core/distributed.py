@@ -116,3 +116,28 @@ def is_run_cancelled_distributed(run_id: str) -> bool:
         except Exception as exc:
             logger.debug("Redis cancel check failed for %s: %s", run_id, exc)
     return False
+
+
+def cache_set_json(key: str, value: str, ttl_seconds: int = 86400) -> bool:
+    """Store a cache entry in Redis if available. Returns True if stored in Redis."""
+    client = get_redis_client()
+    if client is None:
+        return False
+    try:
+        client.setex(f"cache:{key}", max(1, ttl_seconds), value)
+        return True
+    except Exception as exc:
+        logger.debug("Redis cache_set failed for %s: %s", key, exc)
+        return False
+
+
+def cache_get_json(key: str) -> Optional[str]:
+    """Fetch a cache entry from Redis if available."""
+    client = get_redis_client()
+    if client is None:
+        return None
+    try:
+        return client.get(f"cache:{key}")
+    except Exception as exc:
+        logger.debug("Redis cache_get failed for %s: %s", key, exc)
+        return None
