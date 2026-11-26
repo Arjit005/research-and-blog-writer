@@ -46,10 +46,13 @@ def main() -> int:
         return 0
 
     logger.info("Research Studio standalone worker started and listening on Redis.")
+    queue_key = os.getenv("RESEARCH_REDIS_QUEUE_KEY", "research:queue")
     while _RUNNING:
         try:
-            # Non-busy heartbeat/poll loop; ready for BRPOP job dispatch
-            time.sleep(1.0)
+            item = client.brpop(queue_key, timeout=2)
+            if item:
+                _, raw_payload = item
+                logger.info("Dequeued research job payload (%d bytes).", len(raw_payload))
         except Exception as exc:
             logger.error("Worker loop error: %s", exc)
             time.sleep(2.0)
