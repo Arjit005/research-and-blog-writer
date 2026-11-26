@@ -584,16 +584,18 @@ export default function Home() {
   const databaseBackend = systemStats?.database.backend;
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col font-sans selection:bg-blue-500/20">
+    <div className="min-h-screen overflow-x-hidden bg-background text-foreground flex flex-col font-sans selection:bg-blue-500/20">
       {/* 1. SaaS Enterprise Header */}
-      <header className="sticky top-0 z-40 w-full border-b border-border bg-surface/90 backdrop-blur-md px-4 sm:px-6 py-3.5 flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <header className="sticky top-0 z-40 w-full min-w-0 border-b border-border bg-surface/90 backdrop-blur-md px-3 sm:px-6 py-3.5 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           {/* Mobile drawer toggle buttons */}
           <button
             type="button"
             onClick={() => setMobileDrawer(mobileDrawer === "left" ? "none" : "left")}
-            className="lg:hidden p-2 bg-surface-raised border border-border text-foreground rounded-xl"
+            className="lg:hidden p-2 bg-surface-raised border border-border text-foreground rounded-xl shrink-0"
             title="Toggle Research Library"
+            aria-label="Toggle Research Library"
+            aria-expanded={mobileDrawer === "left"}
           >
             <Menu className="w-4 h-4" />
           </button>
@@ -913,24 +915,27 @@ export default function Home() {
               </div>
             </div>
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center p-12 border border-slate-800/80 rounded-3xl bg-slate-900/30 text-center min-h-[480px]">
-              <div className="p-4 bg-slate-800/50 rounded-2xl mb-4 text-indigo-400">
+            <div className="flex-1 flex flex-col items-center justify-center p-6 sm:p-12 border border-border rounded-3xl bg-surface text-center min-h-[420px]">
+              <div className="p-4 bg-surface-raised rounded-2xl mb-4 text-accent">
                 <BookOpen className="w-8 h-8" aria-hidden="true" />
               </div>
-              <h3 className="text-base font-bold text-slate-200 mb-1">No Article Selected</h3>
-              <p className="text-xs text-slate-400 max-w-sm mb-6">
+              <h3 className="text-base font-bold text-foreground mb-1">No Article Selected</h3>
+              <p className="text-xs text-muted-foreground max-w-sm mb-6">
                 Select an existing article from the library, or launch a new multi-agent research run to
                 generate a publication-ready blog post with Mermaid diagrams.
               </p>
-              <button
-                type="button"
-                onClick={() => {
-                  setTopic("Autonomous Multi-Agent AI Systems: 2026 Architecture");
-                }}
-                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded-xl text-xs text-indigo-300 font-medium transition"
-              >
-                Load Suggested Topic
-              </button>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileDrawer("left");
+                    setTopic("Autonomous Multi-Agent AI Systems: 2026 Architecture");
+                  }}
+                  className="px-4 py-2 bg-accent hover:bg-accent-hover text-accent-foreground rounded-xl text-xs font-semibold transition shadow-sm"
+                >
+                  Start Research
+                </button>
+              </div>
             </div>
           )}
         </div>
