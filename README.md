@@ -10,7 +10,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.162%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Next.js-16%20App%20Router-black?logo=next.js&logoColor=white)](https://nextjs.org)
 [![LangSmith](https://img.shields.io/badge/LangSmith-Stage--Level_Tracing-2563EB?logo=langchain&logoColor=white)](https://smith.langchain.com)
-[![Tests](https://img.shields.io/badge/Tests-239%20passing-success)](https://pytest.org)
+[![Tests](https://img.shields.io/badge/Tests-334%20passing-success)](https://pytest.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 ---
