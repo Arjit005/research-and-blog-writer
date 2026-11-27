@@ -722,7 +722,9 @@ TABLE_DEFINITIONS: List[Tuple[str, str, str]] = [
             INDEX idx_vel_user (user_id),
             INDEX idx_vel_visual (visual_id),
             INDEX idx_vel_claim (claim_id),
-            INDEX idx_vel_art (article_id)
+            INDEX idx_vel_art (article_id),
+            CONSTRAINT fk_vel_visual FOREIGN KEY (visual_id) REFERENCES research_visuals(id) ON DELETE CASCADE,
+            CONSTRAINT fk_vel_article FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
         )
         """,
         """
@@ -735,7 +737,9 @@ TABLE_DEFINITIONS: List[Tuple[str, str, str]] = [
             report_section        TEXT NULL,
             evidence_status       TEXT NOT NULL DEFAULT 'unverified',
             citation_url          TEXT NULL,
-            created_at            TEXT NOT NULL DEFAULT (datetime('now'))
+            created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (visual_id) REFERENCES research_visuals(id) ON DELETE CASCADE,
+            FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
         )
         """,
     ),

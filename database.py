@@ -733,6 +733,141 @@ def _ensure_system_cache_key_length(conn: Any, is_tidb: bool) -> None:
             logger.warning("Could not modify system_cache.cache_key column length in TiDB: %s", exc)
 
 
+def _ensure_visual_evidence_foreign_keys(conn: Any, is_tidb: bool) -> None:
+    """Clean invalid evidence references and enforce parent deletes/IDs on both backends."""
+    if not is_tidb:
+        # Only one worker may run the table-rebuild migration at a time.
+        conn.execute("BEGIN IMMEDIATE")
+    legacy_migration = not _exec(
+        conn, is_tidb, "SELECT version FROM schema_version WHERE version = 2"
+    ).fetchone()
+    if legacy_migration:
+        # Older extractor defaults stated provenance/license verification without
+        # evidence. Demote those exact generated placeholders in existing records.
+        _exec(
+            conn, is_tidb,
+            "UPDATE research_visuals SET source_title = NULL "
+            "WHERE source_title IN ('Primary Source Documentation', 'Research Studio Architecture Engine')",
+        )
+        _exec(
+            conn, is_tidb,
+            "UPDATE research_visuals SET license_information = NULL "
+            "WHERE license_information IN ('Referenced with attribution under Fair Use', 'Generated artifact')",
+        )
+        _exec(
+            conn, is_tidb,
+            "UPDATE research_visuals SET usage_restrictions = "
+            "'Image license has not been verified; check the original source before reuse.' "
+            "WHERE origin_type = 'retrieved_web' AND license_information IS NULL "
+            "AND usage_restrictions IS NULL",
+        )
+        _exec(
+            conn, is_tidb,
+            "UPDATE research_charts SET data_source = NULL WHERE data_source = 'Research Squad Extraction'",
+        )
+        _exec(
+            conn, is_tidb,
+            "UPDATE research_charts SET methodology = "
+            "'Methodology not provided; verify before relying on this chart.' "
+            "WHERE methodology = 'Multi-source verified empirical analysis'",
+        )
+        _exec(
+            conn, is_tidb,
+            "UPDATE research_charts SET description = "
+            "'Structured chart; verify its source and methodology before relying on the values.' "
+            "WHERE description = 'Empirical benchmark evaluation.'",
+        )
+        _exec(
+            conn, is_tidb,
+            "UPDATE visual_evidence_links SET evidence_status = 'unverified' "
+            "WHERE LOWER(evidence_status) = 'verified'",
+        )
+        # Clean legacy orphans before installing enforced constraints.
+        _exec(
+            conn, is_tidb,
+            "DELETE FROM visual_evidence_links WHERE NOT EXISTS "
+            "(SELECT 1 FROM research_visuals v WHERE v.id = visual_evidence_links.visual_id) "
+            "OR (article_id IS NOT NULL AND NOT EXISTS "
+            "(SELECT 1 FROM articles a WHERE a.id = visual_evidence_links.article_id))",
+        )
+        if is_tidb:
+            _exec(conn, is_tidb, "INSERT IGNORE INTO schema_version (version) VALUES (2)")
+        else:
+            _exec(conn, is_tidb, "INSERT OR IGNORE INTO schema_version (version) VALUES (2)")
+
+    if is_tidb:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'visual_evidence_links' "
+            "AND CONSTRAINT_NAME IN ('fk_vel_visual', 'fk_vel_article')"
+        )
+        present = {
+            row["CONSTRAINT_NAME"] if isinstance(row, dict) else row[0]
+            for row in cursor.fetchall()
+        }
+        cursor.execute("SELECT VERSION()")
+        version_row = cursor.fetchone()
+        version_text = str(next(iter(version_row.values())) if isinstance(version_row, dict) else version_row[0])
+        tidb_versions = re.findall(r"(?:TiDB[- ]*)?v?(\d+)\.(\d+)\.(\d+)", version_text, re.IGNORECASE)
+        version = tuple(map(int, tidb_versions[-1])) if tidb_versions else (0, 0, 0)
+        if version < (8, 5, 0):
+            logger.warning(
+                "TiDB %s does not guarantee enforced foreign keys; visual evidence ownership "
+                "checks and explicit cleanup remain enabled.", version_text
+            )
+            return
+        constraints = (
+            ("fk_vel_visual", "FOREIGN KEY (visual_id) REFERENCES research_visuals(id) ON DELETE CASCADE"),
+            ("fk_vel_article", "FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE"),
+        )
+        for name, definition in constraints:
+            if name not in present:
+                try:
+                    cursor.execute(f"ALTER TABLE visual_evidence_links ADD CONSTRAINT {name} {definition}")
+                except Exception as exc:
+                    # Another application worker may have installed this FK
+                    # after our information_schema snapshot.
+                    if "duplicate" not in str(exc).lower() and "1826" not in str(exc):
+                        raise
+        return
+
+    fk_rows = conn.execute("PRAGMA foreign_key_list(visual_evidence_links)").fetchall()
+    existing = {(row[2], row[3]) for row in fk_rows}
+    if {("research_visuals", "visual_id"), ("articles", "article_id")} <= existing:
+        return
+
+    # SQLite cannot add a foreign key with ALTER TABLE; rebuild this small link
+    # table in place after removing only orphaned references.
+    conn.execute("""
+        CREATE TABLE visual_evidence_links__new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            visual_id INTEGER NOT NULL,
+            claim_id TEXT NULL,
+            article_id INTEGER NULL,
+            report_section TEXT NULL,
+            evidence_status TEXT NOT NULL DEFAULT 'unverified',
+            citation_url TEXT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (visual_id) REFERENCES research_visuals(id) ON DELETE CASCADE,
+            FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
+        )
+    """)
+    conn.execute(
+        "INSERT INTO visual_evidence_links__new "
+        "(id, user_id, visual_id, claim_id, article_id, report_section, evidence_status, citation_url, created_at) "
+        "SELECT id, user_id, visual_id, claim_id, article_id, report_section, evidence_status, citation_url, created_at "
+        "FROM visual_evidence_links"
+    )
+    conn.execute("DROP TABLE visual_evidence_links")
+    conn.execute("ALTER TABLE visual_evidence_links__new RENAME TO visual_evidence_links")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_vel_user ON visual_evidence_links(user_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_vel_visual ON visual_evidence_links(visual_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_vel_claim ON visual_evidence_links(claim_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_vel_art ON visual_evidence_links(article_id)")
+
+
 def init_db():
     """Initialize database schemas and apply idempotent migrations on TiDB Cloud or SQLite.
 
@@ -753,6 +888,7 @@ def init_db():
 
             _ensure_users_google_id_unique_index(conn, is_tidb)
             _ensure_system_cache_key_length(conn, is_tidb)
+            _ensure_visual_evidence_foreign_keys(conn, is_tidb)
 
         else:
             # SQLite: execute all CREATE TABLE statements individually then indexes
@@ -771,6 +907,7 @@ def init_db():
 
             _ensure_users_google_id_unique_index(conn, is_tidb)
             _ensure_system_cache_key_length(conn, is_tidb)
+            _ensure_visual_evidence_foreign_keys(conn, is_tidb)
 
         _ensure_job_event_unique_index(conn, is_tidb)
 
@@ -2689,6 +2826,7 @@ def complete_research_job_atomic(
     worker_id: Optional[str] = None,
     lease_token: Optional[str] = None,
     fencing_token: Optional[int] = None,
+    recovery_cutoff: Optional[str] = None,
 ) -> Tuple[bool, Optional[int]]:
     """Atomically commit terminal job status, terminal SSE event, and claim release in a SINGLE transaction with retry.
 
@@ -2712,6 +2850,10 @@ def complete_research_job_atomic(
     for attempt in range(_MAX_WRITE_RETRIES):
         try:
             with get_connection() as (conn, is_tidb):
+                if recovery_cutoff is not None and not is_tidb:
+                    # Serialize against lease heartbeats before deciding that a
+                    # SQLite-backed job is stale.
+                    conn.execute("BEGIN IMMEDIATE")
                 if is_tidb:
                     cursor = conn.cursor()
                     # 1. Lock job row and check status
@@ -2728,6 +2870,29 @@ def complete_research_job_atomic(
                             if erow:
                                 existing_seq = int(erow["seq_id"] if isinstance(erow, dict) else erow[0])
                         return False, existing_seq
+
+                    if recovery_cutoff is not None:
+                        if curr_status != "running":
+                            return False, None
+                        claim_cur = _exec(
+                            conn, is_tidb,
+                            "SELECT run_id FROM active_run_claims WHERE run_id = ? FOR UPDATE",
+                            (run_id,),
+                        )
+                        if claim_cur.fetchone():
+                            stale_cur = _exec(
+                                conn, is_tidb,
+                                "SELECT run_id FROM active_run_claims WHERE run_id = ? AND lease_expires_at <= ? AND heartbeat_at <= ?",
+                                (run_id, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), recovery_cutoff),
+                            )
+                        else:
+                            stale_cur = _exec(
+                                conn, is_tidb,
+                                "SELECT run_id FROM research_jobs WHERE run_id = ? AND status = 'running' AND updated_at <= ?",
+                                (run_id, recovery_cutoff),
+                            )
+                        if not stale_cur.fetchone():
+                            return False, None
 
                     # 2. Worker fencing validation
                     if lease_token or fencing_token is not None:
@@ -2796,6 +2961,29 @@ def complete_research_job_atomic(
                             if erow:
                                 existing_seq = int(erow[0])
                         return False, existing_seq
+
+                    if recovery_cutoff is not None:
+                        if curr_status != "running":
+                            return False, None
+                        claim_cur = _exec(
+                            conn, is_tidb,
+                            "SELECT run_id FROM active_run_claims WHERE run_id = ?",
+                            (run_id,),
+                        )
+                        if claim_cur.fetchone():
+                            stale_cur = _exec(
+                                conn, is_tidb,
+                                "SELECT run_id FROM active_run_claims WHERE run_id = ? AND lease_expires_at <= ? AND heartbeat_at <= ?",
+                                (run_id, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), recovery_cutoff),
+                            )
+                        else:
+                            stale_cur = _exec(
+                                conn, is_tidb,
+                                "SELECT run_id FROM research_jobs WHERE run_id = ? AND status = 'running' AND updated_at <= ?",
+                                (run_id, recovery_cutoff),
+                            )
+                        if not stale_cur.fetchone():
+                            return False, None
 
                     if lease_token or fencing_token is not None:
                         ccur = _exec(conn, is_tidb, "SELECT worker_id, lease_token, fencing_token, lease_expires_at FROM active_run_claims WHERE run_id = ?", (run_id,))
@@ -3014,49 +3202,35 @@ def recover_interrupted_jobs(stale_after_seconds: int = 120) -> int:
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
     message = "interrupted by server restart"
 
-    recovered_run_ids: List[str] = []
+    candidate_run_ids: List[str] = []
     with get_connection() as (conn, is_tidb):
-        # Lock candidate rows so a concurrent heartbeat cannot race the recovery
-        # sweep and have a live run marked failed based on a stale read.
-        if not is_tidb:
-            conn.execute("BEGIN IMMEDIATE")
         cursor = _exec(
             conn, is_tidb,
             "SELECT j.run_id FROM research_jobs j LEFT JOIN active_run_claims c ON j.run_id = c.run_id "
             "WHERE j.status = 'running' AND ((c.run_id IS NULL AND j.updated_at <= ?) "
-            "OR (c.lease_expires_at <= ? AND c.heartbeat_at <= ?))"
-            + (" FOR UPDATE" if is_tidb else ""),
+            "OR (c.lease_expires_at <= ? AND c.heartbeat_at <= ?))",
             (cutoff_str, now_str, cutoff_str),
         )
         rows = cursor.fetchall()
-        candidates = [str(_get_value(r, is_tidb, "run_id", 0)) for r in rows]
-        for run_id in candidates:
-            update = _exec(
-                conn, is_tidb,
-                "UPDATE research_jobs SET status = 'failed', error_message = ?, updated_at = ? "
-                "WHERE run_id = ? AND status = 'running' AND ("
-                "NOT EXISTS (SELECT 1 FROM active_run_claims c WHERE c.run_id = research_jobs.run_id) "
-                "AND updated_at <= ? OR EXISTS (SELECT 1 FROM active_run_claims c "
-                "WHERE c.run_id = research_jobs.run_id AND c.lease_expires_at <= ? AND c.heartbeat_at <= ?))",
-                (message, now_str, run_id, cutoff_str, now_str, cutoff_str),
-            )
-            rowcount = getattr(update, "rowcount", 0)
-            if rowcount:
-                _exec(
-                    conn, is_tidb,
-                    "DELETE FROM active_run_claims WHERE run_id = ? AND lease_expires_at <= ? AND heartbeat_at <= ?",
-                    (run_id, now_str, cutoff_str),
-                )
-                recovered_run_ids.append(run_id)
+        candidate_run_ids = [str(_get_value(r, is_tidb, "run_id", 0)) for r in rows]
 
-    recovered_count = len(recovered_run_ids)
-
-    # Append terminal events *after* the status sweep committed (durable ordering).
-    for run_id in recovered_run_ids:
+    recovered_count = 0
+    # Recheck staleness under the job/lease locks, then atomically write the
+    # terminal status, event, and claim release for each candidate.
+    for run_id in candidate_run_ids:
         try:
-            append_job_event(run_id, "error", {"message": message, "timestamp": time.time()})
+            updated, _ = complete_research_job_atomic(
+                run_id=run_id,
+                status="failed",
+                event_type="error",
+                event_payload={"message": message, "timestamp": time.time()},
+                event_id=f"term_{run_id}_recovered",
+                error_message=message,
+                recovery_cutoff=cutoff_str,
+            )
+            recovered_count += int(updated)
         except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("Could not append recovery event for run %s: %s", run_id, exc)
+            logger.warning("Could not atomically recover run %s: %s", run_id, exc)
     return recovered_count
 
 

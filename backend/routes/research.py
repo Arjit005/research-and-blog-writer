@@ -495,8 +495,24 @@ def _execute_run_worker(
                 run_id=run_id,
                 user_id=user_id,
             )
+            saved_visual_ids = []
             for vis in artifacts.get("visuals", []):
-                db.save_research_visual(**vis)
+                saved_visual_ids.append(db.save_research_visual(**vis))
+            for evidence in artifacts.get("evidence_links", []):
+                visual_index = evidence.get("visual_index")
+                if not isinstance(visual_index, int) or not 0 <= visual_index < len(saved_visual_ids):
+                    continue
+                try:
+                    db.link_visual_evidence(
+                        user_id=user_id,
+                        visual_id=saved_visual_ids[visual_index],
+                        article_id=art_id,
+                        report_section=evidence.get("report_section"),
+                        evidence_status="unverified",
+                        citation_url=evidence.get("citation_url"),
+                    )
+                except Exception as evidence_err:
+                    logger.warning("Could not persist unverified image source link: %s", evidence_err)
             for ch in artifacts.get("charts", []):
                 db.save_research_chart(**ch)
         except Exception as v_err:

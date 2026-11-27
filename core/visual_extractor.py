@@ -14,7 +14,12 @@ MERMAID_PATTERN = re.compile(r"```mermaid\s*([\s\S]*?)```", re.IGNORECASE)
 D2_PATTERN = re.compile(r"```d2\s*([\s\S]*?)```", re.IGNORECASE)
 CHART_BLOCK_PATTERN = re.compile(r"```(?:chart|json:chart)\s*([\s\S]*?)```", re.IGNORECASE)
 IMAGE_MARKDOWN_PATTERN = re.compile(r"!\[(.*?)\]\((https?:\/\/[^\s\)]+)(?:\s+\"(.*?)\")?\)", re.IGNORECASE)
-HTML_IMAGE_PATTERN = re.compile(r'<img[^>]+src=["\'](https?:\/\/[^"\']+)["\'][^>]*alt=["\'](.*?)["\']', re.IGNORECASE)
+REFERENCE_IMAGE_PATTERN = re.compile(r"!\[([^\]]*)\]\[([^\]]*)\]", re.IGNORECASE)
+HTML_IMAGE_PATTERN = re.compile(
+    r'<img\b(?=[^>]*\bsrc=["\'](https?:\/\/[^"\']+)["\'])'
+    r'(?=[^>]*\balt=["\']([^"\']*)["\'])[^>]*>',
+    re.IGNORECASE,
+)
 REFERENCE_LINK_PATTERN = re.compile(r"\[(\d+|[^\]]+)\]:\s*(https?:\/\/[^\s]+)(?:\s+\"(.*?)\")?", re.IGNORECASE)
 
 
@@ -114,13 +119,34 @@ def extract_visual_artifacts_from_markdown(
         except Exception as e:
             logger.debug(f"Non-fatal chart parsing error: {e}")
 
-    # 3. Extract Markdown images without asserting source or license verification.
-    img_matches = list(IMAGE_MARKDOWN_PATTERN.finditer(content))
-    for idx, match in enumerate(img_matches, start=1):
-        alt = match.group(1).strip() or f"Research Figure #{idx}"
-        url = match.group(2).strip()
-        title_attr = match.group(3) if match.group(3) else alt
+    # 3. Extract Markdown, reference-style, and HTML images without asserting
+    # that the URL is authoritative or that its license permits reuse.
+    image_candidates: List[Tuple[int, str, str, Optional[str]]] = []
+    for match in IMAGE_MARKDOWN_PATTERN.finditer(content):
+        image_candidates.append((match.start(), match.group(1), match.group(2), match.group(3)))
 
+    reference_urls = {
+        match.group(1).strip().casefold(): (match.group(2).strip(), match.group(3))
+        for match in REFERENCE_LINK_PATTERN.finditer(content)
+    }
+    for match in REFERENCE_IMAGE_PATTERN.finditer(content):
+        label = (match.group(2).strip() or match.group(1).strip()).casefold()
+        reference = reference_urls.get(label)
+        if reference:
+            image_candidates.append((match.start(), match.group(1), reference[0], reference[1]))
+
+    for match in HTML_IMAGE_PATTERN.finditer(content):
+        image_candidates.append((match.start(), match.group(2), match.group(1), None))
+
+    seen_image_urls: set[str] = set()
+    image_candidates.sort(key=lambda candidate: candidate[0])
+    for idx, (_, raw_alt, raw_url, raw_title) in enumerate(image_candidates, start=1):
+        url = raw_url.strip()
+        if url in seen_image_urls:
+            continue
+        seen_image_urls.add(url)
+        alt = raw_alt.strip() or f"Research Figure #{idx}"
+        title_attr = raw_title.strip() if raw_title else alt
         visuals.append({
             "user_id": user_id,
             "article_id": article_id,
@@ -137,6 +163,12 @@ def extract_visual_artifacts_from_markdown(
             "thumbnail_url": url,
             "file_format": url.split(".")[-1].split("?")[0].lower() if "." in url else "png",
             "metadata_json": {"original_url": url, "caption_alt": alt},
+        })
+        evidence_links.append({
+            "visual_index": len(visuals) - 1,
+            "citation_url": url,
+            "report_section": "Image source URL (unverified)",
+            "evidence_status": "unverified",
         })
 
     return {
