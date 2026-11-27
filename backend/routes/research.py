@@ -185,6 +185,19 @@ def _execute_run_worker(
     heartbeat_stop = threading.Event()
     heartbeat_thread = None
     if active_claim and worker_id_val and lease_token_val and fencing_token_val:
+        try:
+            lease_renewed = db.heartbeat_active_run_claim(
+                run_id, worker_id=worker_id_val, lease_token=lease_token_val,
+                fencing_token=fencing_token_val, extend_seconds=120,
+            )
+        except Exception:
+            logger.exception("Initial lease heartbeat failed for run %s", run_id)
+            lease_renewed = False
+        if not lease_renewed:
+            _CANCELLATION_EVENTS.pop(run_id, None)
+            logger.error("Could not claim execution lease for run %s", run_id)
+            return
+
         def _heartbeat() -> None:
             while not heartbeat_stop.wait(30):
                 try:
@@ -238,8 +251,11 @@ def _execute_run_worker(
                 pass
             raise ValueError(GENERIC_SECURITY_REJECTION)
 
-        # Write status last on completion; here it is a start transition only.
-        db.update_research_job(run_id, status="running")
+        # Multiple API instances may dispatch the same durable pending row at
+        # startup. Only one delivery can make the pending -> running transition.
+        if not db.start_research_job(run_id):
+            logger.info("Skipping duplicate or already-started delivery for run %s", run_id)
+            return
         db.append_job_event(run_id, "status", {"status": "running", "stage": "Initializing multi-agent squad..."})
 
         # Dynamic imports to avoid loading crew in pure tests if not invoked

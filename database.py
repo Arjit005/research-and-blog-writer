@@ -2573,7 +2573,9 @@ def heartbeat_active_run_claim(
     with get_connection() as (conn, is_tidb):
         conditions = [
             "run_id = ?",
-            "lease_expires_at >= ?",  # Enforce lease has NOT expired
+            # Pending jobs are safe to reclaim after downtime. start_research_job
+            # atomically permits only one queue delivery to transition them.
+            "(lease_expires_at >= ? OR EXISTS (SELECT 1 FROM research_jobs j WHERE j.run_id = active_run_claims.run_id AND j.status = 'pending'))",
         ]
         params: List[Any] = [now_str, new_expires_str, run_id, now_str]
         if worker_id:
@@ -2890,6 +2892,31 @@ def get_research_job(run_id: str, user_id: Optional[int] = None) -> Optional[Dic
             cursor = _exec(conn, is_tidb, "SELECT * FROM research_jobs WHERE run_id = ?", (run_id,))
         row = cursor.fetchone()
         return _row_to_dict(row) if row else None
+
+
+def get_pending_research_jobs() -> List[Dict[str, Any]]:
+    """Return durable jobs that were created but never began execution."""
+    with get_connection() as (conn, is_tidb):
+        cursor = _exec(
+            conn, is_tidb,
+            "SELECT run_id, user_id, topic, tone, audience, target_length "
+            "FROM research_jobs WHERE status = 'pending' ORDER BY created_at ASC",
+        )
+        return [_row_to_dict(row) for row in cursor.fetchall()]
+
+
+def start_research_job(run_id: str) -> bool:
+    """Atomically transition one queued delivery from pending to running."""
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with get_connection() as (conn, is_tidb):
+        cursor = _exec(
+            conn, is_tidb,
+            "UPDATE research_jobs SET status = 'running', updated_at = ? "
+            "WHERE run_id = ? AND status = 'pending'",
+            (now_str, run_id),
+        )
+        rowcount = getattr(cursor, "rowcount", None)
+        return bool(rowcount and rowcount > 0)
 
 
 def get_active_user_job(user_id: int) -> Optional[Dict[str, Any]]:

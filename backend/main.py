@@ -171,9 +171,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Database initialization error on startup: {e}")
 
-    # 3. Recover only running jobs whose lease expired. Pending jobs remain
-    #    durable and are picked up by the in-process queue when submitted; they
-    #    must not be failed merely because another API process started.
+    # 3. Fail expired running jobs, then dispatch durable pending jobs into the
+    #    bounded local pool. A pending -> running DB transition deduplicates
+    #    startup dispatch across API instances.
     recover_interrupted_jobs = getattr(db, "recover_interrupted_jobs", None)
     if recover_interrupted_jobs is None:
         logger.warning(
@@ -185,6 +185,21 @@ async def lifespan(app: FastAPI):
             logger.info("Recovered interrupted research jobs: %s", recovered)
         except Exception as e:
             logger.error(f"Failed to recover interrupted research jobs: {e}")
+
+    try:
+        from core.task_queue import enqueue_research_run
+
+        pending_jobs = db.get_pending_research_jobs()
+        for job in pending_jobs:
+            enqueue_research_run(
+                research._execute_run_worker,
+                job["run_id"], job["topic"], job.get("user_id") or 0,
+                job.get("tone"), job.get("audience"), job.get("target_length"),
+            )
+        if pending_jobs:
+            logger.info("Requeued durable pending research jobs: %d", len(pending_jobs))
+    except Exception as e:
+        logger.error("Failed to requeue durable pending research jobs: %s", e)
 
     yield
 
