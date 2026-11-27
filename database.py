@@ -2986,10 +2986,11 @@ def recover_interrupted_jobs(stale_after_seconds: int = 120) -> int:
             conn.execute("BEGIN IMMEDIATE")
         cursor = _exec(
             conn, is_tidb,
-            "SELECT j.run_id FROM research_jobs j JOIN active_run_claims c ON j.run_id = c.run_id "
-            "WHERE j.status = 'running' AND c.lease_expires_at <= ? AND c.heartbeat_at <= ?"
+            "SELECT j.run_id FROM research_jobs j LEFT JOIN active_run_claims c ON j.run_id = c.run_id "
+            "WHERE j.status = 'running' AND ((c.run_id IS NULL AND j.updated_at <= ?) "
+            "OR (c.lease_expires_at <= ? AND c.heartbeat_at <= ?))"
             + (" FOR UPDATE" if is_tidb else ""),
-            (now_str, cutoff_str),
+            (cutoff_str, now_str, cutoff_str),
         )
         rows = cursor.fetchall()
         candidates = [str(_get_value(r, is_tidb, "run_id", 0)) for r in rows]
@@ -2997,10 +2998,11 @@ def recover_interrupted_jobs(stale_after_seconds: int = 120) -> int:
             update = _exec(
                 conn, is_tidb,
                 "UPDATE research_jobs SET status = 'failed', error_message = ?, updated_at = ? "
-                "WHERE run_id = ? AND status = 'running' AND EXISTS ("
-                "SELECT 1 FROM active_run_claims c WHERE c.run_id = research_jobs.run_id "
-                "AND c.lease_expires_at <= ? AND c.heartbeat_at <= ?)",
-                (message, now_str, run_id, now_str, cutoff_str),
+                "WHERE run_id = ? AND status = 'running' AND ("
+                "NOT EXISTS (SELECT 1 FROM active_run_claims c WHERE c.run_id = research_jobs.run_id) "
+                "AND updated_at <= ? OR EXISTS (SELECT 1 FROM active_run_claims c "
+                "WHERE c.run_id = research_jobs.run_id AND c.lease_expires_at <= ? AND c.heartbeat_at <= ?))",
+                (message, now_str, run_id, cutoff_str, now_str, cutoff_str),
             )
             rowcount = getattr(update, "rowcount", 0)
             if rowcount:

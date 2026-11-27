@@ -154,7 +154,7 @@ flowchart TD
     User(["👤 User Topic & Style Prompt"]) --> Guard["🛡️ Input Validation & Injection Guard"]
     Guard --> Crew["👥 CrewAI Autonomous Multi-Agent Squad"]
 
-    subgraph Crew_Pipeline["4-Stage Sequential Pipeline (stage-level traced)"]
+    subgraph Crew_Pipeline["Research → Parallel Analysis & Writing → Editorial Review"]
         direction TB
         Agent1["🔍 1. Senior Research Analyst\n(DuckDuckGo Search + SSRF-guarded Scraper)"]
         Registry["🔗 Visited-Source Registry\n(tools/source_registry.py)"]
@@ -162,7 +162,11 @@ flowchart TD
         Agent3["✍️ 3. Technical Writer & Storyteller\n(Narrative, Diagrams & Figures)"]
         Agent4["✨ 4. Senior Editor & Visual Architect\n(Fact Audit, Mermaid Check, Bibliography)"]
 
-        Agent1 --> Registry --> Agent2 --> Agent3 --> Agent4
+        Agent1 --> Registry
+        Registry --> Agent2
+        Registry --> Agent3
+        Agent2 --> Agent4
+        Agent3 --> Agent4
     end
 
     Crew --> Crew_Pipeline

@@ -2,7 +2,7 @@
 
 Code-first version of the JSON-first configuration in crew.jsonc:
 four agents (research, content_analyst, report_writer, quality_reviewer)
-running four sequential tasks that perform deep, minute research on a topic
+running four tasks: research first, analysis and writing in parallel, then review
 and produce an authoritative, deeply technical blog post with
 native Mermaid diagrams and comprehensive references.
 
@@ -110,7 +110,8 @@ class ResearchAndBlogWriter:
     """Research_and_Blog_writer crew.
 
     Researches a user-supplied topic and produces a quality-checked,
-    deeply technical, visual blog post through four sequential steps.
+    deeply technical, visual blog post through four tasks, with the analyst and
+    writer running concurrently after research and the editorial review last.
     """
 
     # ------------------------------------------------------------------
