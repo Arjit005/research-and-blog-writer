@@ -1,6 +1,6 @@
 # 🤖 Enterprise Multi-Agent AI Research & Visual Blog Studio
 
-> **Autonomous multi-agent research squad that conducts deep research and writes publication-ready technical blog posts with native Mermaid architecture diagrams and verified citations — powered by CrewAI, a unit-tested multi-model failover chain (OpenRouter + Google Gemini), FastAPI, Next.js 16, and TiDB Cloud Serverless.**
+> **Autonomous multi-agent research squad that conducts deep research and writes technical blog posts with native Mermaid architecture diagrams and source-tracked citations — powered by CrewAI, a multi-model failover chain (OpenRouter + Google Gemini), FastAPI, Next.js 16, and TiDB Cloud Serverless. Citation provenance checks confirm that links were visited; they do not establish that a source supports each claim.**
 
 [![Python](https://img.shields.io/badge/Python-3.10%E2%80%933.13-3776AB?logo=python&logoColor=white)](https://python.org)
 [![CrewAI](https://img.shields.io/badge/CrewAI-Multi--Agent-FF6B35?logo=data:image/svg+xml;base64,&logoColor=white)](https://crewai.com)
@@ -33,7 +33,7 @@ Research & Blog Writer is an end-to-end autonomous editorial squad application. 
 - **Backend API**: [FastAPI](https://fastapi.tiangolo.com) with database-grounded sliding window rate limiting, resumable SSE event streaming (`after_seq`), and session cookies with HttpOnly, SameSite, and dynamic `__Host-` / `Secure` flags.
 - **Frontend Workspace**: [Next.js 16](https://nextjs.org) (React 19) static export with Tailwind CSS, KaTeX math formula rendering (`remark-math`, `rehype-katex`), interactive Mermaid.js diagram viewer, audio chime, and Web Notification API.
 - **Database & Storage**: [TiDB Cloud Serverless](https://tidbcloud.com) (MySQL-compatible, TLS connection pooling) with automatic zero-config local SQLite fallback.
-- **Security & Guardrails**: Prompt-injection validators, SSRF link-local / loopback blocking, PII / secret redactors, and CitationGuard visited-URL verification.
+- **Security & Guardrails**: Prompt-injection validators, SSRF link-local / loopback blocking, PII / secret redactors, and CitationGuard visited-URL provenance checks.
 
 ---
 
@@ -139,7 +139,7 @@ Unlike typical shallow AI generators, this system:
 
 1. **Drills into technical detail**: low-level trade-offs, protocol behaviour, benchmarks, and production failure modes, using live search + scraping.
 2. **Generates native visuals**: embeds **Mermaid.js** diagrams directly in the Markdown. Model-invented image links are stripped by the citation guard ("diagrams only" policy).
-3. **Verifies citations**: search/scrape tools record every URL they actually visited; the final report is audited so unvisited links are flagged and fabricated figures are removed.
+3. **Tracks citation provenance**: search/scrape tools record URLs they visited; unvisited links are flagged. This check does not prove that a linked source supports the nearby claim, so factual claims still need source-level review.
 4. **Survives rate limits**: transparently fails over across **7 free OpenRouter models + 3 Gemini models** when a provider returns `429`, times out, or is unavailable.
 5. **Persists state**: articles, revisions, chat sessions, user style memory, research cache, and run/job events are stored in **TiDB Cloud Serverless** (MySQL-compatible) with automatic local **SQLite** fallback.
 6. **Exposes a real editorial copilot**: the Next.js copilot drawer sends instructions to `POST /api/v1/articles/{article_id}/edit`, which creates a genuine revision — there is no client-side simulated reply.
@@ -281,6 +281,10 @@ research-and-blog-writer/
 ├── memory/                     # Chat sliding window, rolling summary, user memory
 ├── security/                   # Injection defense, PII masking, CitationGuard
 ├── tools/                      # Search, scrape, source registry, file output
+├── scripts/                    # Maintenance, QA seed, and report-generation scripts
+│   └── report_generation/       # PDF report builders (run from repository root)
+├── reports/                    # Generated audit and verification artifacts
+├── docs/                        # Current docs and archived reports
 ├── tests/                      # Pytest suite (API, auth, cache, red-team, revisions, ...)
 ├── app.py                      # ⚠️ LEGACY Streamlit app (deprecated, not deployed)
 ├── ui/                         # ⚠️ LEGACY Streamlit components (deprecated)
@@ -296,6 +300,8 @@ research-and-blog-writer/
 ├── frontend/out                # Generated static export (gitignored)
 └── LICENSE                     # MIT
 ```
+
+PDF report generators live in `scripts/report_generation/`. Run them from the repository root so their output is written to `reports/`; see that folder's README for the available commands.
 
 ---
 

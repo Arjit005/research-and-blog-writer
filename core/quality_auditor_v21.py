@@ -24,7 +24,8 @@ Key Improvements over 2.0:
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import List, Literal, Optional, Tuple
+from urllib.parse import urlsplit
 from pydantic import BaseModel, Field
 
 VerificationStatus = Literal[
@@ -49,8 +50,8 @@ class StructuredClaim21(BaseModel):
     supporting_passage: Optional[str] = None
     verification_status: VerificationStatus
     normative_term: Optional[NormativeTerm] = None
-    heuristic_confidence: float = Field(ge=0.0, le=1.0, default=0.90)
-    confidence_evidence: str = "Grounded in authoritative IETF / NIST / OWASP specifications."
+    heuristic_confidence: float = Field(ge=0.0, le=1.0, default=0.0)
+    confidence_evidence: str = "No source passage was matched to this claim."
     limitations: Optional[str] = None
 
 
@@ -63,21 +64,24 @@ class DiagramAudit21(BaseModel):
 
 
 class QuantitativeMetrics21(BaseModel):
-    claim_verification_precision: float
-    citation_support_rate: float
+    # Source-to-claim entailment is not implemented, so do not imply support.
+    claim_verification_precision: Optional[float] = None
+    citation_support_rate: Optional[float] = None
+    citation_provenance_rate: Optional[float] = None
     diagram_validity_rate: float
     completeness_score: float
     golden_benchmark_cases_evaluated: int = 30
 
 
 class QualityAuditReport21(BaseModel):
-    engine_version: str = "2.1.0"
+    engine_version: str = "2.2.0"
     total_claims_reviewed: int
     supported_claims: int
     unverifiable_claims: int
     contradicted_claims: int
     outdated_claims: int = 0
-    citations_valid: bool
+    citations_valid: Optional[bool]
+    citations_checked: bool = False
     diagrams_audited: List[DiagramAudit21] = Field(default_factory=list)
     publication_status: PublicationStatus
     blocking_issues: List[str] = Field(default_factory=list)
@@ -146,7 +150,11 @@ class StandardsEngine21:
         elif re.search(r"\bmay\b", lower):
             norm = "MAY"
 
-        return "SUPPORTED", norm, "Matches authoritative specification criteria."
+        return (
+            "UNVERIFIABLE",
+            norm,
+            "No deterministic contradiction rule matched, but no source passage was matched to this claim.",
+        )
 
 
 class ResearchQualityAuditor21:
@@ -167,8 +175,9 @@ class ResearchQualityAuditor21:
                 publication_status="BLOCKED",
                 blocking_issues=["Report content is empty or unrendered."],
                 metrics=QuantitativeMetrics21(
-                    claim_verification_precision=0.0,
-                    citation_support_rate=0.0,
+                    claim_verification_precision=None,
+                    citation_support_rate=None,
+                    citation_provenance_rate=None,
                     diagram_validity_rate=0.0,
                     completeness_score=0.0,
                 ),
@@ -176,7 +185,7 @@ class ResearchQualityAuditor21:
 
         claims = self._extract_and_audit_claims(markdown_text)
         diagrams = self._audit_diagrams(markdown_text)
-        citations_valid, citation_issues = self._audit_citations(markdown_text)
+        citations_valid, citation_issues, citation_provenance_rate = self._audit_citations(markdown_text)
 
         supported = sum(1 for c in claims if c.verification_status == "SUPPORTED")
         unverifiable = sum(1 for c in claims if c.verification_status == "UNVERIFIABLE")
@@ -189,6 +198,8 @@ class ResearchQualityAuditor21:
             blocking_issues.append(f"Identified {contradicted} contradicted or technically false claim(s).")
         if outdated > 0:
             blocking_issues.append(f"Contains {outdated} outdated/deprecated standard recommendation(s).")
+        if not claims:
+            blocking_issues.append("No substantive claims could be reviewed; this article has not been fact-verified.")
         for d in diagrams:
             if not d.syntax_valid:
                 blocking_issues.append(f"Invalid Mermaid diagram: {', '.join(d.issues)}")
@@ -206,7 +217,7 @@ class ResearchQualityAuditor21:
             completeness_score -= 20.0
         if not has_refs:
             completeness_score -= 25.0
-        if not citations_valid:
+        if citations_valid is not True:
             completeness_score -= 20.0
         if any(not d.syntax_valid for d in diagrams):
             completeness_score -= 15.0
@@ -222,11 +233,10 @@ class ResearchQualityAuditor21:
             pub_status = "PASS"
 
         diag_rate = (sum(1 for d in diagrams if d.syntax_valid) / len(diagrams)) if diagrams else 1.0
-        precision = (supported / len(claims)) if claims else 1.0
-
         metrics = QuantitativeMetrics21(
-            claim_verification_precision=round(precision, 2),
-            citation_support_rate=1.0 if citations_valid else 0.5,
+            claim_verification_precision=None,
+            citation_support_rate=None,
+            citation_provenance_rate=citation_provenance_rate,
             diagram_validity_rate=round(diag_rate, 2),
             completeness_score=round(completeness_score, 1),
         )
@@ -238,6 +248,7 @@ class ResearchQualityAuditor21:
             contradicted_claims=contradicted,
             outdated_claims=outdated,
             citations_valid=citations_valid,
+            citations_checked=bool(self.visited_urls),
             diagrams_audited=diagrams,
             publication_status=pub_status,
             blocking_issues=blocking_issues,
@@ -247,40 +258,45 @@ class ResearchQualityAuditor21:
 
     def _extract_and_audit_claims(self, text: str) -> List[StructuredClaim21]:
         claims: List[StructuredClaim21] = []
-        sentences = [s.strip() for s in re.split(r"\n+|(?<=[.!?])\s+", text) if len(s.strip()) > 20]
+        prose = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
+        prose = re.sub(r"(?im)^#{1,6}\s*(references|sources|bibliography)\b.*\Z", " ", prose)
+        sentences = [s.strip() for s in re.split(r"\n+|(?<=[.!?])\s+", prose) if len(s.strip()) >= 40]
 
         idx = 1
         for s in sentences:
-            if any(k in s.lower() for k in ["rfc", "pkce", "aal3", "argon2", "jwt", "passkey", "implicit grant", "samesite", "sha-256"]):
-                status, norm, notes = StandardsEngine21.evaluate_claim_semantics(s)
-                cat = "GENERAL"
-                if "pkce" in s.lower() or "rfc 9700" in s.lower():
-                    cat = "OAUTH_PKCE"
-                elif "rfc 10017" in s.lower():
-                    cat = "RFC_10017"
-                elif "aal" in s.lower() or "nist" in s.lower():
-                    cat = "NIST_800_63B"
-                elif "argon2" in s.lower() or "sha" in s.lower():
-                    cat = "OWASP_PASSWORD"
-                elif "jwt" in s.lower():
-                    cat = "JWT_VALIDATION"
-                elif "samesite" in s.lower() or "csrf" in s.lower():
-                    cat = "WEB_SECURITY"
+            s = re.sub(r"^\s*(?:[-*+]\s+|\d+[.)]\s+|#{1,6}\s*)", "", s)
+            if len(re.findall(r"[A-Za-z]{3,}", s)) < 5 or s.startswith("|"):
+                continue
 
-                claims.append(
-                    StructuredClaim21(
-                        claim_id=f"CLM-{idx:03d}",
-                        original_claim=s,
-                        category=cat,  # type: ignore[arg-type]
-                        verification_status=status,
-                        normative_term=norm,
-                        heuristic_confidence=0.95 if status == "SUPPORTED" else 0.98,
-                        confidence_evidence=notes,
-                    )
+            status, norm, notes = StandardsEngine21.evaluate_claim_semantics(s)
+            lower = s.lower()
+            cat = "GENERAL"
+            if "pkce" in lower or "rfc 9700" in lower:
+                cat = "OAUTH_PKCE"
+            elif "rfc 10017" in lower:
+                cat = "RFC_10017"
+            elif "aal" in lower or "nist" in lower:
+                cat = "NIST_800_63B"
+            elif "argon2" in lower or "sha" in lower:
+                cat = "OWASP_PASSWORD"
+            elif "jwt" in lower:
+                cat = "JWT_VALIDATION"
+            elif "samesite" in lower or "csrf" in lower:
+                cat = "WEB_SECURITY"
+
+            claims.append(
+                StructuredClaim21(
+                    claim_id=f"CLM-{idx:03d}",
+                    original_claim=s,
+                    category=cat,  # type: ignore[arg-type]
+                    verification_status=status,
+                    normative_term=norm,
+                    heuristic_confidence=0.95 if status in {"CONTRADICTED", "OUTDATED"} else 0.0,
+                    confidence_evidence=notes,
+                    limitations="Rule-based review only; no source passage was matched to this claim.",
                 )
-                idx += 1
-                if idx > 25:
-                    break
+            )
+            idx += 1
 
         return claims
 
@@ -344,25 +360,50 @@ class ResearchQualityAuditor21:
 
         return diagrams
 
-    def _audit_citations(self, text: str) -> Tuple[bool, List[str]]:
+    def _audit_citations(self, text: str) -> Tuple[Optional[bool], List[str], Optional[float]]:
         link_matches = re.findall(r"\[([^\]]+)\]\((https?://[^\s)]+)\)", text)
         issues: List[str] = []
 
-        if not link_matches and len(text) > 400:
-            issues.append("Missing inline citations or specification references.")
-            return False, issues
+        if not link_matches:
+            issues.append("No citation links were available for provenance checking.")
+            return False, issues, 0.0
 
         if not self.visited_urls:
-            return True, []
+            issues.append("Citation provenance was not checked because no visited-source evidence is available.")
+            return None, issues, None
 
         unvisited = []
+        visited_count = 0
         for _, url in link_matches:
-            clean_url = url.split("#")[0].rstrip("/")
-            if not any(v.startswith(clean_url) or clean_url.startswith(v) for v in self.visited_urls):
+            if any(self._citation_matches_visited_source(url, source) for source in self.visited_urls):
+                visited_count += 1
+            else:
                 unvisited.append(url)
+        provenance_rate = visited_count / len(link_matches)
 
         if unvisited:
             issues.append(f"Found {len(unvisited)} citation link(s) not in Visited-Source Registry.")
-            return False, issues
+            return False, issues, provenance_rate
 
-        return True, []
+        return True, [], provenance_rate
+
+    @staticmethod
+    def _citation_matches_visited_source(citation_url: str, visited_url: str) -> bool:
+        """Match only the same host and a path contained by the visited path."""
+        try:
+            citation = urlsplit(citation_url)
+            visited = urlsplit(visited_url)
+            citation_port = citation.port or (443 if citation.scheme == "https" else 80)
+            visited_port = visited.port or (443 if visited.scheme == "https" else 80)
+            if (
+                citation.scheme not in {"http", "https"}
+                or visited.scheme not in {"http", "https"}
+                or (citation.hostname or "").lower() != (visited.hostname or "").lower()
+                or citation_port != visited_port
+            ):
+                return False
+            visited_path = visited.path.rstrip("/")
+            citation_path = citation.path.rstrip("/")
+            return citation_path == visited_path
+        except ValueError:
+            return False

@@ -111,7 +111,7 @@ class SearchTool(BaseTool):
         # 1. Primary: DuckDuckGo search (Free, no API key needed)
         if DDGS is not None:
             try:
-                ddgs = DDGS()
+                ddgs = DDGS(timeout=10)
                 results = list(ddgs.text(query_str, max_results=5))
                 results = self._dedupe_results(results)
                 if results:

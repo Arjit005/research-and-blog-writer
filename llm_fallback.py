@@ -53,9 +53,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Configuration (all overridable through environment variables)
 # ---------------------------------------------------------------------------
-DEFAULT_CALL_TIMEOUT_SECONDS = 120.0
-DEFAULT_BACKOFF_BASE_SECONDS = 1.0
-DEFAULT_BACKOFF_CAP_SECONDS = 8.0
+DEFAULT_CALL_TIMEOUT_SECONDS = 45.0
+DEFAULT_BACKOFF_BASE_SECONDS = 0.5
+DEFAULT_BACKOFF_CAP_SECONDS = 4.0
 
 
 def _env_float(name: str, default: float) -> float:
@@ -159,7 +159,6 @@ GEMINI_MODELS = [
     "gemini/gemini-3.5-flash-lite",  # Gemini 3.5 Flash-Lite — ultra-fast, high quota
     "gemini/gemini-3.8-flash",       # Gemini 3.8 Flash fallback
     "gemini/gemini-2.5-flash",       # Gemini 2.5 Flash fallback
-    "gemini/gemini-2.5-flash-lite",  # Gemini 2.5 Flash-Lite fallback
 ]
 
 # BeatAPI free models (OpenAI-compatible endpoints at https://api.beatapi.io/v1)
@@ -194,24 +193,24 @@ def _sanitize_log_message(msg: str) -> str:
 
 
 def get_available_model_sequence() -> List[str]:
-    """Build the fallback sequence, prioritizing Gemini first, then BeatAPI, then OpenRouter."""
+    """Build the fallback sequence, prioritizing Gemini first, then OpenRouter, then BeatAPI."""
     seq: List[str] = []
 
     gemini_key = get_gemini_key()
-    beatapi_key = get_beatapi_key()
     or_key = get_openrouter_key()
+    beatapi_key = get_beatapi_key()
 
     # 1. Prioritize Google Gemini first (1,500 req/day free vs OpenRouter 50 req/day)
     if gemini_key:
         seq.extend(GEMINI_MODELS)
 
-    # 2. Next, BeatAPI free models
-    if beatapi_key:
-        seq.extend(BEATAPI_FREE_MODELS)
-
-    # 3. Next, OpenRouter free models
+    # 2. Next, OpenRouter free models (faster & more reliable than BeatAPI)
     if or_key:
         seq.extend(OPENROUTER_FREE_MODELS)
+
+    # 3. Next, BeatAPI free models
+    if beatapi_key:
+        seq.extend(BEATAPI_FREE_MODELS)
 
     if not seq:
         # No key configured: keep the candidate list intact so the tool schema /
@@ -694,7 +693,7 @@ class FallbackLLM(BaseLLM):
                     )
 
                 if next_model:
-                    delay = 0.0 if daily_quota else _backoff_delay(attempt_index, error)
+                    delay = 0.0 if (daily_quota or error_type in ("config", "auth")) else _backoff_delay(attempt_index, error)
                     if delay > 0:
                         logger.warning(
                             "[FallbackLLM] Backing off for %.2fs before retrying with %s (model: '%s').",

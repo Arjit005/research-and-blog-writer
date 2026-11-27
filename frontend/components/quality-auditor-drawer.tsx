@@ -12,10 +12,12 @@ import {
 
 interface Claim {
   claim_id: string;
-  claim_text: string;
+  original_claim: string;
   category: string;
-  verification_status: "SUPPORTED" | "PARTIALLY_SUPPORTED" | "CONTRADICTED" | "UNVERIFIABLE";
-  confidence: number;
+  verification_status: "SUPPORTED" | "PARTIALLY_SUPPORTED" | "CONTRADICTED" | "UNVERIFIABLE" | "OUTDATED" | "CONTEXT_DEPENDENT" | "OPINION_RECOMMENDATION";
+  heuristic_confidence: number;
+  confidence_evidence: string;
+  limitations?: string | null;
 }
 
 interface DiagramAudit {
@@ -31,12 +33,16 @@ interface AuditReport {
   supported_claims: number;
   unverifiable_claims: number;
   contradicted_claims: number;
-  citations_valid: boolean;
+  citations_valid: boolean | null;
+  citations_checked: boolean;
   diagrams_audited: DiagramAudit[];
   publication_status: "PASS" | "REVIEW_REQUIRED" | "BLOCKED";
   blocking_issues: string[];
   claims: Claim[];
-  completeness_score: number;
+  metrics: {
+    completeness_score: number;
+    citation_provenance_rate: number | null;
+  };
 }
 
 interface QualityAuditorDrawerProps {
@@ -96,13 +102,13 @@ export function QualityAuditorDrawer({
           </div>
           <div>
             <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
-              Research Quality Auditor
+              Claim review
               <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-md bg-accent/10 text-accent border border-accent/20">
                 Section 8
               </span>
             </h3>
             <p className="text-[11px] text-muted-foreground">
-              Independent evidence verification & publication gate
+              Rule-based review; source support is not verified
             </p>
           </div>
         </div>
@@ -120,7 +126,7 @@ export function QualityAuditorDrawer({
         {loading && (
           <div className="py-20 flex flex-col items-center justify-center text-muted-foreground gap-3">
             <Loader2 className="w-8 h-8 animate-spin text-accent" />
-            <span className="text-xs font-medium">Verifying claims against Visited-Source Registry…</span>
+            <span className="text-xs font-medium">Reviewing article claims and citation links…</span>
           </div>
         )}
 
@@ -155,7 +161,7 @@ export function QualityAuditorDrawer({
                     Publication Gate: {report.publication_status}
                   </span>
                   <span className="text-[11px] opacity-80 block">
-                    Completeness Index: {Math.round(report.completeness_score)}/100
+                    Structure score: {Math.round(report.metrics.completeness_score)}/100
                   </span>
                 </div>
               </div>
@@ -164,17 +170,26 @@ export function QualityAuditorDrawer({
             {/* Quick Metrics */}
             <div className="grid grid-cols-3 gap-2.5">
               <div className="p-3 bg-surface-raised border border-border rounded-xl text-center">
-                <span className="text-[10px] text-muted-foreground uppercase font-mono block">Claims Checked</span>
+                <span className="text-[10px] text-muted-foreground uppercase font-mono block">Claims Reviewed</span>
                 <span className="text-base font-bold text-foreground font-mono">{report.total_claims_reviewed}</span>
               </div>
               <div className="p-3 bg-surface-raised border border-border rounded-xl text-center">
-                <span className="text-[10px] text-muted-foreground uppercase font-mono block">Supported</span>
+                <span className="text-[10px] text-muted-foreground uppercase font-mono block">Source verified</span>
                 <span className="text-base font-bold text-emerald-400 font-mono">{report.supported_claims}</span>
               </div>
               <div className="p-3 bg-surface-raised border border-border rounded-xl text-center">
-                <span className="text-[10px] text-muted-foreground uppercase font-mono block">Unverified</span>
+                <span className="text-[10px] text-muted-foreground uppercase font-mono block">Needs evidence</span>
                 <span className="text-base font-bold text-amber-400 font-mono">{report.unverifiable_claims}</span>
               </div>
+            </div>
+
+            <div className="px-3 py-2.5 bg-surface-raised border border-border rounded-xl text-xs text-muted-foreground">
+              Citation provenance: {!report.citations_checked && report.citations_valid !== false
+                ? "not checked; no visited-source record is available"
+                : report.citations_valid === true
+                ? "all citation URLs match recorded visited sources"
+                : "missing or unvisited citation URLs were found"}
+              <span className="block mt-1">A visited URL does not prove that its content supports a claim.</span>
             </div>
 
             {/* Blocking Issues */}
@@ -216,13 +231,16 @@ export function QualityAuditorDrawer({
                         className={`text-[10px] font-bold px-2 py-0.5 rounded ${
                           claim.verification_status === "SUPPORTED"
                             ? "bg-emerald-500/10 text-emerald-400"
+                            : claim.verification_status === "CONTRADICTED" || claim.verification_status === "OUTDATED"
+                            ? "bg-red-500/10 text-red-400"
                             : "bg-amber-500/10 text-amber-400"
                         }`}
                       >
                         {claim.verification_status}
                       </span>
                     </div>
-                    <p className="text-xs text-foreground leading-relaxed">&ldquo;{claim.claim_text}&rdquo;</p>
+                    <p className="text-xs text-foreground leading-relaxed">&ldquo;{claim.original_claim}&rdquo;</p>
+                    <p className="text-[11px] text-muted-foreground">{claim.confidence_evidence}</p>
                   </div>
                 ))}
               </div>

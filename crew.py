@@ -46,10 +46,10 @@ from security.guardrails import CitationGuard
 
 # Per-agent LLM generation settings (temperature / max_tokens) and iteration caps.
 # Optimized iteration caps to avoid agent looping and drastically reduce run time.
-RESEARCH_LLM_SETTINGS = {"temperature": 0.2, "max_tokens": 3000, "max_iter": 3}
-ANALYST_LLM_SETTINGS = {"temperature": 0.3, "max_tokens": 3000, "max_iter": 3}
-WRITER_LLM_SETTINGS = {"temperature": 0.6, "max_tokens": 4000, "max_iter": 3}
-REVIEWER_LLM_SETTINGS = {"temperature": 0.2, "max_tokens": 3000, "max_iter": 2}
+RESEARCH_LLM_SETTINGS = {"temperature": 0.2, "max_tokens": 2000, "max_iter": 2}
+ANALYST_LLM_SETTINGS = {"temperature": 0.3, "max_tokens": 2000, "max_iter": 2}
+WRITER_LLM_SETTINGS = {"temperature": 0.6, "max_tokens": 3500, "max_iter": 2}
+REVIEWER_LLM_SETTINGS = {"temperature": 0.2, "max_tokens": 2500, "max_iter": 2}
 
 
 def audit_report_citations(report_text: str) -> tuple[str, list[str], int]:
@@ -141,7 +141,7 @@ class ResearchAndBlogWriter:
             verbose=False,
             allow_delegation=False,
             planning=False,
-            max_rpm=10,
+            max_rpm=30,
             max_iter=RESEARCH_LLM_SETTINGS["max_iter"],
         )
 
@@ -171,7 +171,7 @@ class ResearchAndBlogWriter:
             verbose=False,
             allow_delegation=False,
             planning=False,
-            max_rpm=10,
+            max_rpm=30,
             max_iter=ANALYST_LLM_SETTINGS["max_iter"],
         )
 
@@ -203,7 +203,7 @@ class ResearchAndBlogWriter:
             verbose=False,
             allow_delegation=False,
             planning=False,
-            max_rpm=10,
+            max_rpm=30,
             max_iter=WRITER_LLM_SETTINGS["max_iter"],
         )
 
@@ -228,7 +228,7 @@ class ResearchAndBlogWriter:
             verbose=False,
             allow_delegation=False,
             planning=False,
-            max_rpm=10,
+            max_rpm=30,
             max_iter=REVIEWER_LLM_SETTINGS["max_iter"],
         )
 
