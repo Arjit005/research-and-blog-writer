@@ -161,17 +161,6 @@ export default function Home() {
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [isSoundMuted, setIsSoundMuted] = useState(false);
 
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("theme");
-      if (saved === "light") {
-        setTheme("light");
-      } else {
-        setTheme("dark");
-      }
-    } catch {}
-  }, []);
-
   const toggleSoundMute = () => {
     const next = !isSoundMuted;
     setIsSoundMuted(next);
@@ -183,11 +172,10 @@ export default function Home() {
   useEffect(() => {
     try {
       const saved = localStorage.getItem("theme");
-      if (saved === "dark") {
-        setTheme("dark");
-      } else {
-        setTheme("light");
-      }
+      const initialTheme = saved === "light" ? "light" : "dark";
+      setTheme(initialTheme);
+      document.documentElement.setAttribute("data-theme", initialTheme);
+      document.documentElement.classList.toggle("dark", initialTheme === "dark");
     } catch {}
   }, []);
 
@@ -586,7 +574,7 @@ export default function Home() {
   return (
     <div className="min-h-screen overflow-x-hidden bg-background text-foreground flex flex-col font-sans selection:bg-blue-500/20">
       {/* 1. SaaS Enterprise Header */}
-      <header className="sticky top-0 z-40 w-full min-w-0 border-b border-border bg-surface/90 backdrop-blur-md px-3 sm:px-6 py-3.5 flex items-center justify-between gap-2">
+      <header className="sticky top-0 z-40 w-full min-w-0 border-b border-border bg-surface/90 backdrop-blur-md px-2.5 sm:px-6 py-3.5 flex items-center justify-between gap-1.5 sm:gap-2">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           {/* Mobile drawer toggle buttons */}
           <button
@@ -604,9 +592,9 @@ export default function Home() {
             <Sparkles className="w-5 h-5 text-white" aria-hidden="true" />
           </div>
           <div>
-            <h1 className="text-sm md:text-base font-bold tracking-tight text-foreground flex items-center gap-2">
+            <h1 className="text-sm md:text-base font-bold tracking-tight text-foreground flex items-center gap-2 whitespace-nowrap">
               Research Studio
-              <span className="px-2 py-0.5 text-[10px] uppercase font-mono font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 rounded-md">
+              <span className="hidden md:inline px-2 py-0.5 text-[10px] uppercase font-mono font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 rounded-md">
                 Workspace
               </span>
             </h1>
@@ -617,7 +605,7 @@ export default function Home() {
         </div>
 
         {/* System telemetry & Auth badges */}
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex shrink-0 items-center gap-1 sm:gap-3">
           {systemStats && (
             <div className="hidden xl:flex items-center gap-2 px-3 py-1.5 bg-surface-raised border border-border rounded-xl text-xs text-foreground">
               <Database className="w-3.5 h-3.5 text-blue-500" aria-hidden="true" />
@@ -633,7 +621,7 @@ export default function Home() {
           <button
             type="button"
             onClick={toggleSoundMute}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border rounded-xl text-xs text-foreground transition"
+            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border rounded-xl text-xs text-foreground transition"
             title={isSoundMuted ? "Unmute completion sound" : "Mute completion sound"}
             aria-label="Toggle Sound"
           >
@@ -649,9 +637,9 @@ export default function Home() {
           <button
             type="button"
             onClick={toggleTheme}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border rounded-xl text-xs text-foreground transition"
+            className="flex items-center gap-1 sm:gap-1.5 p-2 sm:px-3 sm:py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border rounded-xl text-xs text-foreground transition"
             title={theme === "light" ? "Switch to Dark Mode" : "Switch to Light Mode"}
-            aria-label="Toggle Theme"
+            aria-label={theme === "light" ? "Switch to dark theme" : "Switch to light theme"}
           >
             {theme === "light" ? (
               <Moon className="w-3.5 h-3.5 text-slate-700" />
@@ -664,8 +652,9 @@ export default function Home() {
           <button
             type="button"
             onClick={() => setIsApiKeysOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border rounded-xl text-xs text-foreground transition"
+            className="flex items-center gap-1 sm:gap-1.5 p-2 sm:px-3 sm:py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border rounded-xl text-xs text-foreground transition"
             title="Configure API Keys (Gemini / OpenRouter)"
+            aria-label="Configure API keys"
           >
             <Key className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" aria-hidden="true" />
             <span className="hidden sm:inline">API Keys</span>
@@ -675,7 +664,7 @@ export default function Home() {
           <button
             type="button"
             onClick={() => setIsSettingsOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border rounded-xl text-xs text-foreground transition"
+            className="flex items-center gap-1 sm:gap-1.5 p-2 sm:px-3 sm:py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border rounded-xl text-xs text-foreground transition"
             title="Workspace Settings"
             aria-label="Settings"
           >
@@ -687,8 +676,10 @@ export default function Home() {
           <button
             type="button"
             onClick={() => setMobileDrawer(mobileDrawer === "right" ? "none" : "right")}
-            className="lg:hidden p-2 bg-surface-raised border border-border text-foreground rounded-xl relative"
+            className="hidden sm:block lg:hidden p-2 bg-surface-raised border border-border text-foreground rounded-xl relative"
             title="Toggle AI Command Center"
+            aria-label="Toggle AI Command Center"
+            aria-expanded={mobileDrawer === "right"}
           >
             <Cpu className="w-4 h-4 text-blue-500" />
             {activeRunId && (
@@ -925,13 +916,7 @@ export default function Home() {
                 publication-ready blog post with Mermaid diagrams.
               </p>
               <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (!topic.trim()) {
-                    setTopic("Autonomous Multi-Agent AI Systems: 2026 Architecture");
-                  }
-                  setMobileDrawer("left");
-                }}
+                onSubmit={handleStartRun}
                 className="w-full max-w-md flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5"
               >
                 <input
@@ -946,7 +931,7 @@ export default function Home() {
                   type="submit"
                   className="px-5 py-2.5 bg-accent hover:bg-accent-hover text-accent-foreground rounded-xl text-sm font-semibold transition shadow-sm shrink-0"
                 >
-                  Generate Blog
+                  {isSubmitting ? "Starting…" : "Start research"}
                 </button>
               </form>
             </div>
@@ -974,8 +959,8 @@ export default function Home() {
 
       {/* 3. Mobile Drawers */}
       {mobileDrawer === "left" && (
-        <div className="lg:hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex">
-          <div className="w-full max-w-xs bg-slate-900 p-4 border-r border-slate-800 overflow-y-auto">
+        <div className="lg:hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex">
+          <div className="w-full max-w-xs bg-surface text-foreground p-4 border-r border-border overflow-y-auto">
             <div className="flex justify-between items-center mb-4">
               <span className="text-xs font-bold uppercase text-slate-300">Workspace Library</span>
               <button
@@ -1019,9 +1004,9 @@ export default function Home() {
       )}
 
       {mobileDrawer === "right" && (
-        <div className="lg:hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex justify-end">
+        <div className="lg:hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex justify-end">
           <div className="flex-1" onClick={() => setMobileDrawer("none")} />
-          <div className="w-full max-w-sm bg-slate-900 p-4 border-l border-slate-800 overflow-y-auto">
+          <div className="w-full max-w-sm bg-surface text-foreground p-4 border-l border-border overflow-y-auto">
             <div className="flex justify-between items-center mb-4">
               <span className="text-xs font-bold uppercase text-slate-300">Command Center</span>
               <button
@@ -1090,13 +1075,8 @@ export default function Home() {
           setTheme(t);
           try {
             localStorage.setItem("theme", t);
-            if (t === "dark") {
-              document.documentElement.setAttribute("data-theme", "dark");
-              document.documentElement.classList.add("dark");
-            } else {
-              document.documentElement.setAttribute("data-theme", "light");
-              document.documentElement.classList.remove("dark");
-            }
+            document.documentElement.setAttribute("data-theme", t);
+            document.documentElement.classList.toggle("dark", t === "dark");
           } catch {}
         }}
         isSoundMuted={isSoundMuted}

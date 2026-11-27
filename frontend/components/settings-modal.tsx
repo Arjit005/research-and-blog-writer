@@ -65,13 +65,13 @@ export function SettingsModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-full max-w-4xl bg-surface border border-border rounded-2xl shadow-2xl overflow-hidden flex flex-col md:flex-row max-h-[85vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+      <div role="dialog" aria-modal="true" aria-labelledby="settings-title" className="w-full h-dvh sm:h-auto sm:max-h-[85vh] max-w-4xl bg-surface border-0 sm:border border-border rounded-none sm:rounded-2xl shadow-2xl overflow-hidden flex flex-col md:flex-row">
         {/* Left Navigation */}
-        <div className="w-full md:w-64 bg-surface-raised/50 border-r border-border p-4 flex flex-col justify-between shrink-0">
+        <div className="w-full md:w-64 bg-surface-raised/50 border-b md:border-b-0 md:border-r border-border p-3 sm:p-4 flex flex-col justify-between shrink-0 max-h-[42dvh] md:max-h-none overflow-y-auto">
           <div className="space-y-1">
             <div className="px-3 py-2 mb-2">
-              <h2 className="text-sm font-bold tracking-tight text-foreground flex items-center gap-2">
+              <h2 id="settings-title" className="text-sm font-bold tracking-tight text-foreground flex items-center gap-2">
                 Settings
               </h2>
               <p className="text-[11px] text-muted-foreground">Studio preferences & config</p>
@@ -175,9 +175,9 @@ export function SettingsModal({
         </div>
 
         {/* Right Configuration Area */}
-        <div className="flex-1 flex flex-col justify-between overflow-y-auto p-6">
+        <div className="flex-1 min-h-0 flex flex-col justify-between overflow-y-auto p-4 sm:p-6">
           <div>
-            <div className="flex items-center justify-between pb-4 mb-5 border-b border-border">
+            <div className="sticky top-0 z-10 flex items-center justify-between pb-4 mb-5 border-b border-border bg-surface">
               <div>
                 <h3 className="text-base font-semibold text-foreground capitalize">
                   {activeTab === "agents" ? "Agent Configuration" : activeTab} Settings
@@ -189,6 +189,7 @@ export function SettingsModal({
                 onClick={onClose}
                 className="p-1.5 hover:bg-surface-raised text-muted-foreground hover:text-foreground rounded-lg transition"
                 title="Close settings"
+                aria-label="Close settings"
               >
                 <X className="w-5 h-5" />
               </button>
