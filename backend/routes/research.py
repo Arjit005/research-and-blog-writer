@@ -425,7 +425,18 @@ def _execute_run_worker(
                 _reset_llm_usage_stats()
                 crew_instance = ResearchAndBlogWriter()
                 crew_obj = crew_instance.crew(step_callback=on_step, task_callback=on_task)
-                result = crew_obj.kickoff(inputs={"topic": safe_topic})
+                from core.diagram_advisor import DiagramAdvisor
+
+                diagram_plan = DiagramAdvisor.recommend_visual_modality(safe_topic)
+                visual_guidance = (
+                    f"Use a {diagram_plan['recommended_renderer'].upper()} "
+                    f"{diagram_plan['recommended_diagram_type']} diagram. "
+                    f"Reason: {diagram_plan['rationale']}"
+                )
+                result = crew_obj.kickoff(inputs={
+                    "topic": safe_topic,
+                    "visual_guidance": visual_guidance,
+                })
                 usage_stats = _get_llm_usage_stats()
         finally:
             try:

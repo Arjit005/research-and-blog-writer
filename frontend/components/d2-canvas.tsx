@@ -22,38 +22,53 @@ export function D2Canvas({
 
   useEffect(() => {
     let disposed = false;
+    let timedOut = false;
     let objectUrl: string | null = null;
     let d2Instance: import("@d2lang/d2").D2 | null = null;
+    let timeoutId: number | undefined;
 
     setSvgUrl(null);
     setError(null);
 
     const render = async () => {
       try {
+        if (code.length > 20_000) {
+          throw new Error("This diagram is too large to render. Keep diagrams under 20,000 characters.");
+        }
         const { D2 } = await import("@d2lang/d2");
         if (disposed) return;
         d2Instance = new D2();
-        const result = await d2Instance.compile(code);
+        timeoutId = window.setTimeout(() => {
+          timedOut = true;
+          void d2Instance?.dispose();
+          if (!disposed) setError("Rendering took too long. Try simplifying or splitting this diagram.");
+        }, 15_000);
+        const result = await d2Instance.compile(code, { layout: "tala", darkThemeID: 200 });
+        if (disposed || timedOut) return;
         const svg = await d2Instance.render(result.diagram, {
           ...result.renderOptions,
           center: true,
           pad: 32,
+          darkThemeID: 200,
           noXMLTag: true,
         });
-        if (disposed) return;
+        if (disposed || timedOut) return;
 
         objectUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
         setSvgUrl(objectUrl);
       } catch (renderError) {
-        if (!disposed) {
+        if (!disposed && !timedOut) {
           setError(renderError instanceof Error ? renderError.message : "Could not render this D2 diagram.");
         }
+      } finally {
+        if (timeoutId !== undefined) window.clearTimeout(timeoutId);
       }
     };
 
     void render();
     return () => {
       disposed = true;
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       if (d2Instance) void d2Instance.dispose();
     };

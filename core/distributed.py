@@ -18,21 +18,23 @@ from typing import Deque, Dict, Optional
 logger = logging.getLogger(__name__)
 
 _redis_client = None
-_redis_init_attempted = False
+_redis_retry_after = 0.0
 _redis_lock = threading.Lock()
 
 
 def get_redis_client():
     """Return a shared Redis client if REDIS_URL is configured and redis is installed."""
-    global _redis_client, _redis_init_attempted
-    if _redis_init_attempted:
+    global _redis_client, _redis_retry_after
+    if _redis_client is not None:
         return _redis_client
     with _redis_lock:
-        if _redis_init_attempted:
+        if _redis_client is not None:
             return _redis_client
-        _redis_init_attempted = True
+        if time.monotonic() < _redis_retry_after:
+            return None
         redis_url = (os.getenv("REDIS_URL") or "").strip()
         if not redis_url:
+            _redis_retry_after = time.monotonic() + 15
             return None
         try:
             import redis  # type: ignore
@@ -40,10 +42,12 @@ def get_redis_client():
             client = redis.Redis.from_url(redis_url, decode_responses=True, socket_timeout=2.0)
             client.ping()
             _redis_client = client
+            _redis_retry_after = 0.0
             logger.info("Connected to Redis for distributed state and rate limiting.")
         except Exception as exc:
             logger.warning("Redis unavailable (%s); using in-memory fallback.", exc)
             _redis_client = None
+            _redis_retry_after = time.monotonic() + 15
         return _redis_client
 
 

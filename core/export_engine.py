@@ -290,7 +290,7 @@ def generate_academic_pdf(
     table_counter = 0
 
     for kind, text in segments:
-        if kind == "diagram":
+        if kind in {"diagram", "d2diagram"}:
             figure_counter += 1
             # Render Diagram Representation in ReportLab
             clean_diag = text.strip()
@@ -301,7 +301,7 @@ def generate_academic_pdf(
 
             diag_box = Table(
                 [[
-                    Paragraph(f"<b>[Mermaid System Architecture Visual]</b><br/><br/><code>{diag_display}</code>", styles["CodeText"])
+                    Paragraph(f"<b>[{ 'D2' if kind == 'd2diagram' else 'Mermaid' } System Architecture Source]</b><br/><br/><code>{diag_display}</code>", styles["CodeText"])
                 ]],
                 colWidths=[504],
             )
@@ -520,7 +520,7 @@ def generate_academic_docx(
     table_counter = 0
 
     for kind, text in segments:
-        if kind == "diagram":
+        if kind in {"diagram", "d2diagram"}:
             figure_counter += 1
             diag_p = doc.add_paragraph()
             diag_p.paragraph_format.space_before = Pt(8)
@@ -530,7 +530,7 @@ def generate_academic_docx(
             shd = parse_xml(r'<w:shd %s w:fill="0F172A"/>' % nsdecls("w"))
             dcell._tc.get_or_add_tcPr().append(shd)
             dp = dcell.paragraphs[0]
-            drun_title = dp.add_run("[Mermaid Architecture Blueprint]\n\n")
+            drun_title = dp.add_run(f"[{ 'D2' if kind == 'd2diagram' else 'Mermaid' } Architecture Source]\n\n")
             drun_title.font.bold = True
             drun_title.font.color.rgb = RGBColor(99, 102, 241)
             drun_title.font.size = Pt(8.5)
@@ -651,14 +651,16 @@ def generate_academic_html(
     figure_counter = 0
 
     for kind, text in segments:
-        if kind == "diagram":
+        if kind in {"diagram", "d2diagram"}:
             figure_counter += 1
             escaped_code = html.escape(text.strip())
+            if kind == "diagram":
+                figure_markup = f'<pre class="mermaid text-center">{escaped_code}</pre>'
+            else:
+                figure_markup = f'<pre><code class="language-d2">{escaped_code}</code></pre>'
             body_parts.append(f"""
             <div class="figure-wrapper my-6 p-4 rounded-2xl border border-indigo-900/60 bg-slate-950">
-              <pre class="mermaid text-center">
-{escaped_code}
-              </pre>
+              {figure_markup}
               <div class="caption mt-3 text-center text-xs font-semibold text-indigo-400">
                 Figure {figure_counter}: System architecture blueprint and dataflow topology.
               </div>

@@ -2,7 +2,7 @@
 
 > **Autonomous multi-agent research squad that conducts deep research and writes technical blog posts with native D2/Mermaid architecture diagrams and source-tracked citations — powered by CrewAI, a multi-model failover chain (OpenRouter + Google Gemini), FastAPI, Next.js 16, and TiDB Cloud Serverless. Citation provenance checks confirm that links were visited; they do not establish that a source supports each claim.**
 
-[![Python](https://img.shields.io/badge/Python-3.10%E2%80%933.13-3776AB?logo=python&logoColor=white)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.11%E2%80%933.13-3776AB?logo=python&logoColor=white)](https://python.org)
 [![CrewAI](https://img.shields.io/badge/CrewAI-Multi--Agent-FF6B35?logo=data:image/svg+xml;base64,&logoColor=white)](https://crewai.com)
 [![OpenRouter](https://img.shields.io/badge/OpenRouter-Multi--Model_Failover-6366F1)](https://openrouter.ai)
 [![Google Gemini](https://img.shields.io/badge/Google_Gemini-3.5_Flash-4285F4?logo=google&logoColor=white)](https://ai.google.dev)
@@ -313,7 +313,7 @@ PDF report generators live in `scripts/report_generation/`. Run them from the re
 
 ### 1. Prerequisites
 
-- **Python 3.10 – 3.13** (local dev uses 3.13)
+- **Python 3.11 – 3.13** (local dev uses 3.13)
 - **[uv](https://docs.astral.sh/uv/)** (recommended) or `pip`
 - **Node.js ≥ 20.9** (22 LTS recommended) for the Next.js frontend
 - An API key from **[OpenRouter](https://openrouter.ai/keys)** (free) and/or **[Google Gemini](https://aistudio.google.com/apikey)**
@@ -549,7 +549,7 @@ uv run pytest -q
 uv run pytest tests/test_red_team.py -v
 ```
 
-CI runs the pytest suite on **Python 3.10, 3.11, 3.12, and 3.13**, plus a frontend job that runs `npm ci`, `npm run lint` (with `no-explicit-any`/`no-unused-vars` enforced), `npm run typecheck`, and `npm run build`.
+CI runs the pytest suite on **Python 3.11, 3.12, and 3.13**, plus a frontend job that runs `npm ci`, `npm run lint` (with `no-explicit-any`/`no-unused-vars` enforced), `npm run typecheck`, and `npm run build`.
 
 ### 10-fixture Red-Team Attack Pack (`tests/test_red_team.py`)
 1. **Hidden CSS prompt injection**: strips instructions hidden with `display:none`, `visibility:hidden`, `opacity:0`, and zero-point fonts.

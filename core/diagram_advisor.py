@@ -94,7 +94,7 @@ class DiagramAdvisor:
         else:
             modality = "diagram"
 
-        # Determine best Mermaid diagram type
+        # Choose the diagram type and renderer that best fit the subject.
         matched_category = "system_architecture"
         for category, config in DOMAIN_TAXONOMY.items():
             if any(k in t_lower for k in config["keywords"]):
@@ -103,12 +103,14 @@ class DiagramAdvisor:
 
         rec_type = DOMAIN_TAXONOMY[matched_category]["recommended_type"]
         rationale = DOMAIN_TAXONOMY[matched_category]["rationale"]
+        renderer = "d2" if rec_type in {"flowchart", "c4"} else "mermaid"
 
         return {
             "topic": topic,
             "modality": modality,
             "category": matched_category,
             "recommended_diagram_type": rec_type,
+            "recommended_renderer": renderer,
             "mermaid_directive": SUPPORTED_MERMAID_TYPES[rec_type],
             "rationale": rationale,
         }

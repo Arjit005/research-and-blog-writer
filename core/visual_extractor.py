@@ -72,17 +72,17 @@ def extract_visual_artifacts_from_markdown(
             "visual_type": "diagram",
             "origin_type": "system_diagram",
             "title": title,
-            "caption": f"Figure {idx}: {title} (Synthesized by Diagram Architect)",
+            "caption": f"Figure {idx}: {title}",
             "description": f"Generated {diagram_format.upper()} {sub_type} illustrating the researched system topology.",
-            "source_title": "Research Studio Architecture Engine",
-            "license_information": "Generated artifact",
+            "source_title": None,
+            "license_information": None,
             "alt_text": f"{diagram_format.upper()} {sub_type} specification for {title}",
             "media_content": code,
             "file_format": diagram_format,
             "metadata_json": {
                 "diagram_type": sub_type,
                 "lines_count": len(code.splitlines()),
-                "syntax_version": "12.3.0",
+                "renderer": "D2 with TALA layout" if diagram_format == "d2" else "Mermaid 12.3.0",
             },
         })
 
@@ -95,10 +95,10 @@ def extract_visual_artifacts_from_markdown(
             if isinstance(parsed, dict) and "data" in parsed:
                 chart_type = str(parsed.get("type", "bar")).lower()
                 c_title = str(parsed.get("title", f"Comparative Research Metric #{idx}"))
-                c_desc = str(parsed.get("description", "Empirical benchmark evaluation."))
-                c_units = str(parsed.get("units", "Score"))
-                c_source = str(parsed.get("data_source", "Research Squad Extraction"))
-                c_method = str(parsed.get("methodology", "Multi-source verified empirical analysis"))
+                c_desc = str(parsed.get("description", "Structured chart; verify its source and methodology before relying on the values."))
+                c_units = str(parsed["units"]) if parsed.get("units") else None
+                c_source = str(parsed["data_source"]) if parsed.get("data_source") else None
+                c_method = str(parsed["methodology"]) if parsed.get("methodology") else "Methodology not provided; verify before relying on this chart."
 
                 charts.append({
                     "user_id": user_id,
@@ -114,7 +114,7 @@ def extract_visual_artifacts_from_markdown(
         except Exception as e:
             logger.debug(f"Non-fatal chart parsing error: {e}")
 
-    # 3. Extract Verified Web & Research Images
+    # 3. Extract Markdown images without asserting source or license verification.
     img_matches = list(IMAGE_MARKDOWN_PATTERN.finditer(content))
     for idx, match in enumerate(img_matches, start=1):
         alt = match.group(1).strip() or f"Research Figure #{idx}"
@@ -130,8 +130,9 @@ def extract_visual_artifacts_from_markdown(
             "title": title_attr,
             "caption": f"Figure {idx}: {title_attr}",
             "source_url": url,
-            "source_title": "Primary Source Documentation",
-            "license_information": "Referenced with attribution under Fair Use",
+            "source_title": None,
+            "license_information": None,
+            "usage_restrictions": "Image license has not been verified; check the original source before reuse.",
             "alt_text": alt,
             "thumbnail_url": url,
             "file_format": url.split(".")[-1].split("?")[0].lower() if "." in url else "png",

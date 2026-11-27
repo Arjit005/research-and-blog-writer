@@ -302,45 +302,55 @@ class ResearchQualityAuditor21:
 
     def _audit_diagrams(self, text: str) -> List[DiagramAudit21]:
         diagrams: List[DiagramAudit21] = []
-        matches = re.finditer(r"```mermaid\s*\n(.*?)```", text, re.DOTALL)
+        matches = re.finditer(r"```(mermaid|d2)\s*\n(.*?)```", text, re.DOTALL | re.IGNORECASE)
 
         diag_count = 1
         for m in matches:
-            content = m.group(1).strip()
+            diagram_format = m.group(1).lower()
+            content = m.group(2).strip()
             issues: List[str] = []
             diag_type = "unknown"
 
-            trimmed_lower = content.lower()
-            if trimmed_lower.startswith(("flowchart", "graph")):
-                diag_type = "Flowchart"
-            elif trimmed_lower.startswith("sequencediagram"):
-                diag_type = "Sequence"
-            elif trimmed_lower.startswith(("statediagram", "statediagram-v2")):
-                diag_type = "State"
-            elif trimmed_lower.startswith("classdiagram"):
-                diag_type = "Class"
-            elif trimmed_lower.startswith("erdiagram"):
-                diag_type = "EntityRelationship"
-            elif trimmed_lower.startswith("gitgraph"):
-                diag_type = "GitGraph"
-            elif trimmed_lower.startswith("mindmap"):
-                diag_type = "Mindmap"
-            elif trimmed_lower.startswith("timeline"):
-                diag_type = "Timeline"
-            elif trimmed_lower.startswith("pie"):
-                diag_type = "PieChart"
-            elif trimmed_lower.startswith("quadrantchart"):
-                diag_type = "QuadrantChart"
-            elif trimmed_lower.startswith(("c4context", "c4container", "c4component")):
-                diag_type = "C4Architecture"
-            elif trimmed_lower.startswith("xychart-beta"):
-                diag_type = "XYChart"
+            if diagram_format == "d2":
+                diag_type = "D2"
+                if not content:
+                    issues.append("D2 diagram is empty.")
+                if len(content) > 20000:
+                    issues.append("D2 diagram exceeds the renderer's 20,000 character limit.")
+                if not re.search(r"(?m)^\s*[A-Za-z0-9_][\w.-]*\s*(?::\s*\S+|(?:->|--)|\{|\[|\()", content):
+                    issues.append("No obvious D2 shape, container, or connection declaration was found.")
             else:
+                trimmed_lower = content.lower()
+            if diagram_format == "mermaid" and trimmed_lower.startswith(("flowchart", "graph")):
+                diag_type = "Flowchart"
+            elif diagram_format == "mermaid" and trimmed_lower.startswith("sequencediagram"):
+                diag_type = "Sequence"
+            elif diagram_format == "mermaid" and trimmed_lower.startswith(("statediagram", "statediagram-v2")):
+                diag_type = "State"
+            elif diagram_format == "mermaid" and trimmed_lower.startswith("classdiagram"):
+                diag_type = "Class"
+            elif diagram_format == "mermaid" and trimmed_lower.startswith("erdiagram"):
+                diag_type = "EntityRelationship"
+            elif diagram_format == "mermaid" and trimmed_lower.startswith("gitgraph"):
+                diag_type = "GitGraph"
+            elif diagram_format == "mermaid" and trimmed_lower.startswith("mindmap"):
+                diag_type = "Mindmap"
+            elif diagram_format == "mermaid" and trimmed_lower.startswith("timeline"):
+                diag_type = "Timeline"
+            elif diagram_format == "mermaid" and trimmed_lower.startswith("pie"):
+                diag_type = "PieChart"
+            elif diagram_format == "mermaid" and trimmed_lower.startswith("quadrantchart"):
+                diag_type = "QuadrantChart"
+            elif diagram_format == "mermaid" and trimmed_lower.startswith(("c4context", "c4container", "c4component")):
+                diag_type = "C4Architecture"
+            elif diagram_format == "mermaid" and trimmed_lower.startswith("xychart-beta"):
+                diag_type = "XYChart"
+            elif diagram_format == "mermaid":
                 issues.append("Unrecognized Mermaid diagram type declaration.")
 
-            if content.count("[") != content.count("]"):
+            if diagram_format == "mermaid" and content.count("[") != content.count("]"):
                 issues.append("Mismatched node bracket syntax '[' and ']'.")
-            if content.count("(") != content.count(")"):
+            if diagram_format == "mermaid" and content.count("(") != content.count(")"):
                 issues.append("Mismatched parenthesis syntax '(' and ')'.")
 
             start_pos = m.end()

@@ -716,7 +716,7 @@ TABLE_DEFINITIONS: List[Tuple[str, str, str]] = [
             claim_id              VARCHAR(64) NULL,
             article_id            INT NULL,
             report_section        VARCHAR(128) NULL,
-            evidence_status       VARCHAR(32) NOT NULL DEFAULT 'verified',
+            evidence_status       VARCHAR(32) NOT NULL DEFAULT 'unverified',
             citation_url          VARCHAR(1024) NULL,
             created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             INDEX idx_vel_user (user_id),
@@ -733,7 +733,7 @@ TABLE_DEFINITIONS: List[Tuple[str, str, str]] = [
             claim_id              TEXT NULL,
             article_id            INTEGER NULL,
             report_section        TEXT NULL,
-            evidence_status       TEXT NOT NULL DEFAULT 'verified',
+            evidence_status       TEXT NOT NULL DEFAULT 'unverified',
             citation_url          TEXT NULL,
             created_at            TEXT NOT NULL DEFAULT (datetime('now'))
         )

@@ -334,15 +334,17 @@ app.include_router(documents.router)
 
 # 4. Global Healthcheck Endpoint
 @app.get("/health", tags=["Health"])
-def healthcheck() -> Dict[str, Any]:
-    """Health check endpoint verifying application and TiDB database connectivity."""
-    is_live, msg = db.check_tidb_live_status()
-    return {
-        "status": "healthy",
-        "active_backend": db.get_active_backend(),
-        "database_live": is_live,
-        "database_message": msg,
-    }
+def healthcheck() -> JSONResponse:
+    """Report whether the configured application database is reachable."""
+    is_live, active_backend = db.check_active_database_status()
+    return JSONResponse(
+        status_code=status.HTTP_200_OK if is_live else status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={
+            "status": "healthy" if is_live else "unhealthy",
+            "active_backend": active_backend,
+            "database_live": is_live,
+        },
+    )
 
 
 # 5. Standard Error Format Handler

@@ -45,7 +45,6 @@ export function VisualEvidenceDrawer({
   if (!isOpen || !visual) return null;
 
   const isAI = visual.origin_type === "ai_generated";
-  const isDiagram = visual.visual_type === "diagram" || visual.origin_type === "system_diagram";
 
   return (
     <div
@@ -158,7 +157,11 @@ export function VisualEvidenceDrawer({
                 >
                   <div className="flex items-center justify-between font-mono text-[10px]">
                     <span className="text-emerald-400 flex items-center gap-1 font-bold">
-                      <CheckCircle2 className="w-3 h-3" />
+                      {link.evidence_status === "reviewed" ? (
+                        <CheckCircle2 className="w-3 h-3" />
+                      ) : (
+                        <ShieldCheck className="w-3 h-3" />
+                      )}
                       {link.evidence_status.toUpperCase()}
                     </span>
                     {link.claim_id && (
@@ -187,11 +190,8 @@ export function VisualEvidenceDrawer({
           ) : (
             <div className="p-4 bg-slate-950/40 border border-slate-800/80 rounded-xl text-xs text-slate-400">
               <p className="leading-relaxed">
-                This visual asset is bound directly to{" "}
-                <strong className="text-slate-200">
-                  {isDiagram ? "System Architecture Analysis" : "Primary Research Evidence"}
-                </strong>
-                . Claims cited in the article reference its empirical benchmarks.
+                No claim-to-source links are attached to this visual yet. Check the original source before
+                treating it as evidence or reusing it.
               </p>
             </div>
           )}

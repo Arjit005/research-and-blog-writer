@@ -406,7 +406,7 @@ export function ImageLightboxViewer({
                   className="w-full py-2 px-3 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition cursor-pointer"
                 >
                   <ShieldCheck className="w-3.5 h-3.5" />
-                  <span>Verify Research Claim Evidence</span>
+                  <span>Review Evidence Links</span>
                 </button>
               )}
             </div>

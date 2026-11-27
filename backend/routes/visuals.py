@@ -281,7 +281,7 @@ def get_evidence_links(
             claim_id=l.get("claim_id"),
             article_id=l.get("article_id"),
             report_section=l.get("report_section"),
-            evidence_status=l.get("evidence_status", "verified"),
+            evidence_status=l.get("evidence_status", "unverified"),
             citation_url=l.get("citation_url"),
             created_at=str(l.get("created_at", "")),
         )
@@ -295,15 +295,18 @@ def create_evidence_link(
     user: Dict[str, Any] = Depends(get_current_user),
 ) -> EvidenceLinkResponse:
     """Connect a visual asset to a factual claim or section."""
-    link_id = db.link_visual_evidence(
-        user_id=user["id"],
-        visual_id=req.visual_id,
-        claim_id=req.claim_id,
-        article_id=req.article_id,
-        report_section=req.report_section,
-        evidence_status=req.evidence_status,
-        citation_url=req.citation_url,
-    )
+    try:
+        link_id = db.link_visual_evidence(
+            user_id=user["id"],
+            visual_id=req.visual_id,
+            claim_id=req.claim_id,
+            article_id=req.article_id,
+            report_section=req.report_section,
+            evidence_status=req.evidence_status,
+            citation_url=req.citation_url,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return EvidenceLinkResponse(
         id=link_id,
         user_id=user["id"],

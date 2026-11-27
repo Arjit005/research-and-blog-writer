@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, EmailStr, Field
 
 
@@ -266,7 +266,7 @@ class EvidenceLinkCreateRequest(BaseModel):
     claim_id: Optional[str] = Field(None, max_length=64)
     article_id: Optional[int] = None
     report_section: Optional[str] = Field(None, max_length=128)
-    evidence_status: str = Field("verified", max_length=32)
+    evidence_status: Literal["unverified", "reviewed"] = "unverified"
     citation_url: Optional[str] = Field(None, max_length=1024)
 
 

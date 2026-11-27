@@ -229,7 +229,7 @@ export function ArticleViewer({
     pre: ({ children }) => <>{children}</>,
     code: ({ className, children, ...props }) => {
       const languageMatch = /language-(\w+)/.exec(className ?? "");
-      const language = languageMatch?.[1];
+      const language = languageMatch?.[1]?.toLowerCase();
       const rawText = String(children);
       const isBlock = Boolean(language) || rawText.includes("\n");
       const codeText = rawText.replace(/\n$/, "");

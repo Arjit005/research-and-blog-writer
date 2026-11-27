@@ -167,7 +167,13 @@ class ResearchAndBlogWriter:
                 "for distributed consensus and lifecycles, horizontal/vertical flowcharts for distributed dataflow, "
                 "timelines for historical causality, and mindmaps for conceptual taxonomies. You never force generic "
                 "flowcharts onto unrelated topics, and you strictly ensure every diagram node is factually grounded "
-                "in verified technical facts with directional arrows indicating true causal relationships."
+                "in verified technical facts with directional arrows indicating true causal relationships. "
+                "Follow the supplied {visual_guidance} for the main diagram. For architecture diagrams, use D2 "
+                "with the TALA layout, a clear title, and nested containers for real system boundaries. Keep each "
+                "diagram focused: about 6–12 meaningful nodes, no more than 16 edges, short labels, and only useful "
+                "edge labels. Use consistent, restrained colors to separate layers. Avoid decorative nodes, invented "
+                "components, duplicate diagrams, and crossing connections where possible. Add a second diagram only "
+                "for a distinct process or lifecycle."
             ),
             llm=get_fallback_llm(temperature=ANALYST_LLM_SETTINGS["temperature"], max_tokens=ANALYST_LLM_SETTINGS["max_tokens"]),
             tools=[ScrapeTool()],
@@ -273,7 +279,9 @@ class ResearchAndBlogWriter:
                 "Synthesize and architect the technical findings on '{topic}'. Organize insights into "
                 "logical architectural layers. Design 1-2 native diagrams: use D2 for system architecture and "
                 "component flowcharts, and Mermaid for sequenceDiagram, stateDiagram-v2, mindmap, timeline, or erDiagram. "
-                "Put each in a fenced code block tagged d2 or mermaid. Select the appropriate "
+                "Use the supplied {visual_guidance} as the default and put each in a fenced code block tagged d2 or mermaid. "
+                "For D2, prefer the TALA layout, meaningful groups, short labels, 6–12 nodes, and at most 16 edges; "
+                "do not add unsupported entities or decorative connections. Select the appropriate "
                 "tailored to the domain instead of forcing standard flowcharts. Formulate comparative "
                 "matrix tables with quantitative criteria, and plan an explanatory figure note for each diagram.\n"
                 "Ground all diagram nodes in verified technical entities and preserve all citations and metrics."
