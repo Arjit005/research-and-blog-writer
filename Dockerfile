@@ -67,7 +67,7 @@ COPY --chown=appuser:appuser llmops ./llmops
 COPY --chown=appuser:appuser memory ./memory
 COPY --chown=appuser:appuser security ./security
 COPY --chown=appuser:appuser tools ./tools
-COPY --chown=appuser:appuser crew.py database.py llm_fallback.py ./
+COPY --chown=appuser:appuser crew.py database.py llm_fallback.py worker.py ./
 COPY --from=frontend-builder --chown=appuser:appuser /app/frontend/out ./frontend/out
 
 USER appuser

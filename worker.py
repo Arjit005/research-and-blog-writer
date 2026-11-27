@@ -1,7 +1,7 @@
-"""Standalone background worker entrypoint for Research Studio.
+"""Standalone database-backed worker entrypoint for Research Studio.
 
-Runs as a separate process/container in production when ``REDIS_URL`` is
-configured, keeping heavy multi-agent execution isolated from the web API.
+The database is the durable queue of record. This process polls pending jobs
+and uses the same atomic pending-to-running transition as the API worker pool.
 """
 
 from __future__ import annotations
@@ -35,27 +35,29 @@ def main() -> int:
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
-    from core.distributed import get_redis_client
+    import database as db
+    from backend.routes.research import _execute_run_worker
 
-    client = get_redis_client()
-    if client is None:
-        logger.warning(
-            "REDIS_URL is not configured or Redis is unreachable. "
-            "Standalone worker requires Redis; web API will use its in-process bounded pool."
-        )
-        return 0
-
-    logger.info("Research Studio standalone worker started and listening on Redis.")
-    queue_key = os.getenv("RESEARCH_REDIS_QUEUE_KEY", "research:queue")
+    db.init_db()
+    poll_seconds = max(1.0, float(os.getenv("RESEARCH_WORKER_POLL_SECONDS", "2")))
+    logger.info("Research Studio standalone worker started; polling the durable database queue.")
     while _RUNNING:
         try:
-            item = client.brpop(queue_key, timeout=2)
-            if item:
-                _, raw_payload = item
-                logger.info("Dequeued research job payload (%d bytes).", len(raw_payload))
+            pending_jobs = db.get_pending_research_jobs()
+            if not pending_jobs:
+                time.sleep(poll_seconds)
+                continue
+            for job in pending_jobs:
+                if not _RUNNING:
+                    break
+                logger.info("Claiming pending research job %s", job["run_id"])
+                _execute_run_worker(
+                    job["run_id"], job["topic"], job.get("user_id") or 0,
+                    job.get("tone"), job.get("audience"), job.get("target_length"),
+                )
         except Exception as exc:
             logger.error("Worker loop error: %s", exc)
-            time.sleep(2.0)
+            time.sleep(poll_seconds)
 
     logger.info("Research Studio standalone worker stopped.")
     return 0

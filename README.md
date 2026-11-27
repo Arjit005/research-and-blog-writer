@@ -143,7 +143,7 @@ Unlike typical shallow AI generators, this system:
 4. **Survives rate limits**: transparently fails over across **7 free OpenRouter models + 3 Gemini models** when a provider returns `429`, times out, or is unavailable.
 5. **Persists state**: articles, revisions, chat sessions, user style memory, research cache, and run/job events are stored in **TiDB Cloud Serverless** (MySQL-compatible) with automatic local **SQLite** fallback.
 6. **Exposes a real editorial copilot**: the Next.js copilot drawer sends instructions to `POST /api/v1/articles/{article_id}/edit`, which creates a genuine revision — there is no client-side simulated reply.
-7. **Keeps runs durable**: research jobs are background jobs with a sequenced event log; the SSE stream is resumable via `Last-Event-ID`/`after_seq`, and the UI persists the active run id so a page refresh reattaches instead of dead-ending.
+7. **Keeps queued runs durable**: job inputs and sequenced events live in the database. API startup requeues jobs that had not started, and `worker.py` can poll the same database queue in a separate process. The SSE stream resumes from `Last-Event-ID`/`after_seq`, and the UI persists the active run id across refreshes.
 
 ---
 
@@ -592,13 +592,18 @@ docker run --rm -p 8000:8000 \
 
 ## ⚠️ Known Limitations
 
-- **In-process background worker**: research runs execute in a thread inside the API process. It is single-process only (not safe across multiple replicas/workers), and a process restart mid-run loses that run's live execution (jobs/events are persisted, but the worker is not resumable). One active run per user is enforced.
-- **SQLite fallback**: when TiDB is not configured, SQLite is used locally; it is not suitable for multi-instance production deployments.
+- **Running jobs are not resumable**: a job still pending at restart is requeued. A process crash after it starts causes the expired lease to fail the job; the multi-agent pipeline has no durable stage checkpoints or automatic retry yet.
+- **Worker deployment is optional/manual**: the API can execute jobs in its bounded thread pool. `python worker.py` runs a separate database-polling worker, but the Render blueprint currently deploys only the web service.
+- **Live token previews are process-local**: durable job events can be replayed across instances, while in-memory token-by-token updates are visible only to SSE clients connected to the process executing that run.
+- **SQLite fallback**: when TiDB is not configured, SQLite is used locally; it is not suitable for multi-instance production deployments and Render's local filesystem should not be treated as durable storage.
+- **Rate limiting without Redis**: the fallback limiter is in-memory per process. Use Redis when one shared limit across multiple API instances is required.
 - **LangSmith tracing is stage-level**: the root job span plus per-stage spans, feedback, and failure dataset export — not a capture of every tool call.
 - **Static export caveat**: `NEXT_PUBLIC_API_BASE` is build-time; changing it requires rebuilding the frontend. Rewrites/redirects/headers are unsupported with `output: "export"`.
 - **Legacy Streamlit UI**: `app.py`/`ui/` are deprecated, untested for the new API features, and excluded from the Docker image.
 - **Copilot edits require the backend `/edit` endpoint**: the UI surfaces a clear error if the endpoint is unavailable.
 - **Email OTP needs SMTP** when `AUTH_DEV_MODE=false`; without SMTP credentials real delivery cannot work.
+
+To run a separate worker locally, configure the same database and model-provider variables as the API, then start `python worker.py` from the project root. The API and standalone worker safely compete for pending jobs through the database status transition.
 
 ---
 

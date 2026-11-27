@@ -2695,15 +2695,22 @@ def complete_research_job_atomic(
 
                     # 2. Worker fencing validation
                     if lease_token or fencing_token is not None:
-                        cursor.execute("SELECT lease_token, fencing_token FROM active_run_claims WHERE run_id = %s FOR UPDATE", (run_id,))
+                        cursor.execute("SELECT worker_id, lease_token, fencing_token, lease_expires_at FROM active_run_claims WHERE run_id = %s FOR UPDATE", (run_id,))
                         claim = cursor.fetchone()
                         if not claim:
                             return False, None
-                        cur_lease = claim["lease_token"] if isinstance(claim, dict) else claim[0]
-                        cur_fencing = claim["fencing_token"] if isinstance(claim, dict) else claim[1]
+                        cur_worker = claim["worker_id"] if isinstance(claim, dict) else claim[0]
+                        cur_lease = claim["lease_token"] if isinstance(claim, dict) else claim[1]
+                        cur_fencing = claim["fencing_token"] if isinstance(claim, dict) else claim[2]
+                        cur_expires = claim["lease_expires_at"] if isinstance(claim, dict) else claim[3]
+                        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                        if worker_id and cur_worker != worker_id:
+                            return False, None
                         if lease_token and cur_lease != lease_token:
                             return False, None
                         if fencing_token is not None and cur_fencing != fencing_token:
+                            return False, None
+                        if str(cur_expires) < now_str:
                             return False, None
 
                     # 3. Monotonic sequence allocation & event insert
@@ -2755,13 +2762,18 @@ def complete_research_job_atomic(
                         return False, existing_seq
 
                     if lease_token or fencing_token is not None:
-                        ccur = _exec(conn, is_tidb, "SELECT lease_token, fencing_token FROM active_run_claims WHERE run_id = ?", (run_id,))
+                        ccur = _exec(conn, is_tidb, "SELECT worker_id, lease_token, fencing_token, lease_expires_at FROM active_run_claims WHERE run_id = ?", (run_id,))
                         claim = ccur.fetchone()
                         if not claim:
                             return False, None
-                        if lease_token and claim[0] != lease_token:
+                        if worker_id and claim[0] != worker_id:
                             return False, None
-                        if fencing_token is not None and claim[1] != fencing_token:
+                        if lease_token and claim[1] != lease_token:
+                            return False, None
+                        if fencing_token is not None and claim[2] != fencing_token:
+                            return False, None
+                        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                        if str(claim[3]) < now_str:
                             return False, None
 
                     _exec(conn, is_tidb, "INSERT OR IGNORE INTO job_event_counters (run_id, last_seq) VALUES (?, 0)", (run_id,))
@@ -2968,42 +2980,38 @@ def recover_interrupted_jobs(stale_after_seconds: int = 120) -> int:
 
     recovered_run_ids: List[str] = []
     with get_connection() as (conn, is_tidb):
-        # Identify running jobs whose persisted lease and heartbeat have lapsed.
+        # Lock candidate rows so a concurrent heartbeat cannot race the recovery
+        # sweep and have a live run marked failed based on a stale read.
+        if not is_tidb:
+            conn.execute("BEGIN IMMEDIATE")
         cursor = _exec(
-            conn,
-            is_tidb,
-            """
-            SELECT j.run_id 
-            FROM research_jobs j
-            LEFT JOIN active_run_claims c ON j.run_id = c.run_id
-            WHERE j.status = 'running'
-              AND c.lease_expires_at <= ?
-              AND c.heartbeat_at <= ?
-            """,
+            conn, is_tidb,
+            "SELECT j.run_id FROM research_jobs j JOIN active_run_claims c ON j.run_id = c.run_id "
+            "WHERE j.status = 'running' AND c.lease_expires_at <= ? AND c.heartbeat_at <= ?"
+            + (" FOR UPDATE" if is_tidb else ""),
             (now_str, cutoff_str),
         )
         rows = cursor.fetchall()
-        recovered_run_ids = [str(_get_value(r, is_tidb, "run_id", 0)) for r in rows]
-        if not recovered_run_ids:
-            return 0
+        candidates = [str(_get_value(r, is_tidb, "run_id", 0)) for r in rows]
+        for run_id in candidates:
+            update = _exec(
+                conn, is_tidb,
+                "UPDATE research_jobs SET status = 'failed', error_message = ?, updated_at = ? "
+                "WHERE run_id = ? AND status = 'running' AND EXISTS ("
+                "SELECT 1 FROM active_run_claims c WHERE c.run_id = research_jobs.run_id "
+                "AND c.lease_expires_at <= ? AND c.heartbeat_at <= ?)",
+                (message, now_str, run_id, now_str, cutoff_str),
+            )
+            rowcount = getattr(update, "rowcount", 0)
+            if rowcount:
+                _exec(
+                    conn, is_tidb,
+                    "DELETE FROM active_run_claims WHERE run_id = ? AND lease_expires_at <= ? AND heartbeat_at <= ?",
+                    (run_id, now_str, cutoff_str),
+                )
+                recovered_run_ids.append(run_id)
 
-        # Mark recovered jobs as failed
-        cursor = _exec(
-            conn,
-            is_tidb,
-            "UPDATE research_jobs SET status = 'failed', error_message = ?, updated_at = ? "
-            "WHERE run_id IN (" + ",".join("?" for _ in recovered_run_ids) + ")",
-            (message, now_str, *recovered_run_ids),
-        )
-        # Release orphaned claims
-        _exec(
-            conn,
-            is_tidb,
-            "DELETE FROM active_run_claims WHERE run_id IN (" + ",".join("?" for _ in recovered_run_ids) + ")",
-            tuple(recovered_run_ids),
-        )
-        rowcount = getattr(cursor, "rowcount", None)
-        recovered_count = int(rowcount) if isinstance(rowcount, int) and rowcount >= 0 else len(recovered_run_ids)
+    recovered_count = len(recovered_run_ids)
 
     # Append terminal events *after* the status sweep committed (durable ordering).
     for run_id in recovered_run_ids:

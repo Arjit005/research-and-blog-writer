@@ -514,7 +514,7 @@ def _execute_run_worker(
         except Exception as exc:  # telemetry is best-effort; never fail a finished article
             logger.warning("Telemetry persistence failed for run %s: %s", run_id, exc)
 
-        # Atomically commit terminal status + terminal SSE event + claim cleanup together
+        # Atomically commit terminal status + terminal SSE event + claim cleanup together.
         completed_payload = {
             "status": "completed",
             "article_id": art_id,
@@ -523,16 +523,15 @@ def _execute_run_worker(
             "elapsed_sec": elapsed,
             "trace_url": trace_url,
         }
-        # In unit tests that mock append_job_event / update_research_job, this order is observed
-        try:
-            db.append_job_event(run_id, "completed", completed_payload, event_id=f"term_{run_id}_completed")
-        except TypeError:
-            db.append_job_event(run_id, "completed", completed_payload)
-        db.update_research_job(
+        db.complete_research_job_atomic(
             run_id,
             status="completed",
+            event_type="completed",
+            event_payload=completed_payload,
+            event_id=f"term_{run_id}_completed",
             result_article_id=art_id,
             trace_url=trace_url,
+            worker_id=worker_id_val,
             lease_token=lease_token_val,
             fencing_token=fencing_token_val,
         )
@@ -565,23 +564,16 @@ def _execute_run_worker(
             export_failure_to_dataset("production_failures", topic, safe_error, metadata={"run_id": run_id, "user_id": user_id})
         except Exception:
             pass
-        try:
-            db.append_job_event(
-                run_id,
-                "error",
-                {"message": safe_error, "timestamp": time.time()},
-                event_id=f"term_{run_id}_error",
-            )
-        except TypeError:
-            db.append_job_event(
-                run_id,
-                "error",
-                {"message": safe_error, "timestamp": time.time()},
-            )
-        db.update_research_job(
+        db.complete_research_job_atomic(
             run_id,
             status="failed",
+            event_type="error",
+            event_payload={"message": safe_error, "timestamp": time.time()},
+            event_id=f"term_{run_id}_error",
             error_message=safe_error,
+            worker_id=worker_id_val or None,
+            lease_token=lease_token_val or None,
+            fencing_token=fencing_token_val or None,
         )
     finally:
         heartbeat_stop.set()

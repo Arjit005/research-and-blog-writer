@@ -46,13 +46,21 @@ from backend.routes import auth, articles, revisions, telemetry, research, visua
 
 logger = logging.getLogger(__name__)
 
-# Allowed Origins for CORS / CSRF (exact origin matches and trusted patterns)
-ALLOWED_ORIGINS = [
+# Allowed Origins for CORS / CSRF. Hosted frontend origins must be configured
+# explicitly; trusting every tenant on a shared hosting domain is unsafe.
+_IS_PRODUCTION = (
+    os.getenv("ENVIRONMENT", "").strip().lower() in {"production", "prod"}
+    or bool(os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID"))
+)
+ALLOWED_ORIGINS = [] if _IS_PRODUCTION else [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:8000",
     "http://127.0.0.1:8000",
 ]
+# The Render blueprint declares this exact service name. Other Render origins
+# must come from RENDER_EXTERNAL_URL or FRONTEND_ORIGIN below.
+ALLOWED_ORIGINS.append("https://research-and-blog-studio.onrender.com")
 custom_origin = os.getenv("FRONTEND_ORIGIN")
 if custom_origin:
     for orig in custom_origin.split(","):
@@ -110,44 +118,22 @@ def _normalize_host_header(host_header: str, scheme: str) -> Optional[str]:
 
 
 def _origin_is_allowed(candidate: str, host_header: Optional[str]) -> bool:
-    """Return True when origin matches host, an allowlist entry, or a trusted deployment."""
+    """Return True only for this host or an explicitly configured exact origin."""
     normalized = _normalize_origin(candidate)
     if normalized is None:
         return False
 
-    try:
-        parts = urlsplit(candidate.strip())
-        hostname = (parts.hostname or "").lower()
-    except Exception:
-        hostname = ""
-
-    # 1. Allow Render and Vercel cloud domains
-    if hostname.endswith(".onrender.com") or hostname.endswith(".vercel.app"):
-        return True
-
-    # 2. Allow local development origins on any port
-    if hostname in ("localhost", "127.0.0.1"):
-        return True
-
-    # 3. Match Host / X-Forwarded-Host header
+    # Match the actual request Host. Do not trust an arbitrary X-Forwarded-Host
+    # supplied by the client for CSRF authorization.
     if host_header:
-        host_clean = host_header.split(":")[0].strip().lower()
-        if hostname == host_clean:
-            return True
         for scheme in ("http", "https"):
             if normalized == _normalize_host_header(host_header, scheme):
                 return True
 
-    # 4. Check explicit allowed origins list
+    # Check explicit allowlist entries using exact normalized origins.
     for allowed in ALLOWED_ORIGINS:
         if normalized == _normalize_origin(allowed):
             return True
-        try:
-            allowed_parts = urlsplit(allowed.strip())
-            if allowed_parts.hostname and hostname == allowed_parts.hostname.lower():
-                return True
-        except Exception:
-            pass
 
     return False
 
@@ -257,11 +243,14 @@ app = FastAPI(
 )
 
 # 1. CORS Configuration
-# Supports same-host, configured origins, localhost, and secure Render / Vercel cloud deployments
+# Supports same-host requests and explicitly configured origins. Localhost is
+# allowed for development; shared hosting domains are never wildcard trusted.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=r"^https?://([a-zA-Z0-9-]+\.)*(onrender\.com|vercel\.app|localhost)(:\d+)?$",
+    allow_origin_regex=(
+        None if _IS_PRODUCTION else r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -317,7 +306,7 @@ async def csrf_origin_guard(request: Request, call_next):
         origin = request.headers.get("origin")
         referer = request.headers.get("referer")
         candidate = origin or referer
-        host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+        host = request.headers.get("host")
 
         if candidate and not _origin_is_allowed(candidate, host):
             logger.warning(

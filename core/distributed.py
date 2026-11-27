@@ -12,6 +12,7 @@ import logging
 import os
 import threading
 import time
+import uuid
 from typing import Deque, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -63,10 +64,27 @@ class DistributedRateLimiter:
         if client is not None:
             try:
                 key = f"rl:{ip}"
-                count = client.incr(key)
-                if count == 1:
-                    client.expire(key, self.window_seconds)
-                return int(count) <= self.max_requests
+                now_ms = int(time.time() * 1000)
+                window_ms = self.window_seconds * 1000
+                cutoff_ms = now_ms - window_ms
+                # A Lua script makes pruning, budget check, insert, and expiry
+                # one atomic sliding-window operation across API processes.
+                script = """
+                local key = KEYS[1]
+                local cutoff = tonumber(ARGV[1])
+                local now = tonumber(ARGV[2])
+                local limit = tonumber(ARGV[3])
+                local window = tonumber(ARGV[4])
+                redis.call('ZREMRANGEBYSCORE', key, '-inf', cutoff)
+                if redis.call('ZCARD', key) >= limit then
+                    return 0
+                end
+                redis.call('ZADD', key, now, ARGV[5])
+                redis.call('PEXPIRE', key, window)
+                return 1
+                """
+                member = f"{now_ms}:{uuid.uuid4().hex}"
+                return bool(client.eval(script, 1, key, cutoff_ms, now_ms, self.max_requests, window_ms, member))
             except Exception as exc:
                 logger.debug("Redis rate-limit fallback to memory: %s", exc)
 
