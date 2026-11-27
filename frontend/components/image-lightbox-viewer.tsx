@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
+import { MermaidCanvas } from "./mermaid-canvas";
+import { D2Canvas } from "./d2-canvas";
 import {
   ZoomIn,
   ZoomOut,
@@ -14,7 +16,6 @@ import {
   Info,
   ShieldCheck,
   Sparkles,
-  FileCode,
   Layers,
 } from "lucide-react";
 import { ResearchVisual } from "@/lib/api";
@@ -142,6 +143,7 @@ export function ImageLightboxViewer({
   if (!isOpen || !currentVisual) return null;
 
   const isDiagram = currentVisual.visual_type === "diagram" || currentVisual.origin_type === "system_diagram";
+  const isD2Diagram = isDiagram && currentVisual.file_format?.toLowerCase() === "d2";
   const isAI = currentVisual.origin_type === "ai_generated";
 
   return (
@@ -162,7 +164,7 @@ export function ImageLightboxViewer({
           </h2>
           {isDiagram && (
             <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-              Mermaid Diagram
+              Diagram
             </span>
           )}
           {isAI && (
@@ -175,7 +177,7 @@ export function ImageLightboxViewer({
 
         {/* Viewport Control Tools */}
         <div className="flex items-center gap-2">
-          <div className="flex items-center bg-slate-950 rounded-xl border border-slate-800 p-0.5">
+          <div className={`flex items-center bg-slate-950 rounded-xl border border-slate-800 p-0.5 ${isDiagram && !isD2Diagram ? "hidden" : ""}`}>
             <button
               type="button"
               onClick={handleZoomIn}
@@ -288,22 +290,28 @@ export function ImageLightboxViewer({
         >
           <div
             style={{
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              transform: isDiagram && !isD2Diagram ? undefined : `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
               transformOrigin: "center center",
               transition: isDragging ? "none" : "transform 0.15s ease-out",
             }}
             className="max-w-full max-h-full flex items-center justify-center"
           >
             {isDiagram && currentVisual.media_content ? (
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl min-w-[500px]">
-                <div className="flex items-center gap-2 mb-3 pb-2 border-b border-slate-800 font-mono text-xs text-indigo-400">
-                  <FileCode className="w-4 h-4" />
-                  <span>Mermaid Architecture Spec</span>
-                </div>
-                <pre className="font-mono text-xs text-slate-300 leading-relaxed overflow-auto max-h-[500px]">
-                  <code>{currentVisual.media_content}</code>
-                </pre>
-              </div>
+              isD2Diagram ? (
+                <D2Canvas
+                  code={currentVisual.media_content}
+                  title={currentVisual.title}
+                  caption={currentVisual.caption ?? undefined}
+                  className="my-0 w-full max-w-[1200px]"
+                />
+              ) : (
+                <MermaidCanvas
+                  code={currentVisual.media_content}
+                  title={currentVisual.title}
+                  caption={currentVisual.caption ?? undefined}
+                  className="my-0 w-full max-w-[1200px]"
+                />
+              )
             ) : currentVisual.thumbnail_url || currentVisual.source_url ? (
               <img
                 src={currentVisual.thumbnail_url || currentVisual.source_url || ""}

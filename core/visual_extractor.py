@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 # Patterns for Mermaid, Charts, and Markdown Figures/Images
 MERMAID_PATTERN = re.compile(r"```mermaid\s*([\s\S]*?)```", re.IGNORECASE)
+D2_PATTERN = re.compile(r"```d2\s*([\s\S]*?)```", re.IGNORECASE)
 CHART_BLOCK_PATTERN = re.compile(r"```(?:chart|json:chart)\s*([\s\S]*?)```", re.IGNORECASE)
 IMAGE_MARKDOWN_PATTERN = re.compile(r"!\[(.*?)\]\((https?:\/\/[^\s\)]+)(?:\s+\"(.*?)\")?\)", re.IGNORECASE)
 HTML_IMAGE_PATTERN = re.compile(r'<img[^>]+src=["\'](https?:\/\/[^"\']+)["\'][^>]*alt=["\'](.*?)["\']', re.IGNORECASE)
@@ -34,9 +35,16 @@ def extract_visual_artifacts_from_markdown(
     charts: List[Dict[str, Any]] = []
     evidence_links: List[Dict[str, Any]] = []
 
-    # 1. Extract Mermaid Diagrams
-    mermaid_matches = list(MERMAID_PATTERN.finditer(content))
-    for idx, match in enumerate(mermaid_matches, start=1):
+    # 1. Extract text-based architecture diagrams
+    diagram_matches = [
+        (match.start(), "mermaid", match)
+        for match in MERMAID_PATTERN.finditer(content)
+    ] + [
+        (match.start(), "d2", match)
+        for match in D2_PATTERN.finditer(content)
+    ]
+    diagram_matches.sort(key=lambda item: item[0])
+    for idx, (_, diagram_format, match) in enumerate(diagram_matches, start=1):
         code = match.group(1).strip()
         if not code:
             continue
@@ -65,12 +73,12 @@ def extract_visual_artifacts_from_markdown(
             "origin_type": "system_diagram",
             "title": title,
             "caption": f"Figure {idx}: {title} (Synthesized by Diagram Architect)",
-            "description": f"Autonomously generated Mermaid {sub_type} illustrating core system topology.",
+            "description": f"Generated {diagram_format.upper()} {sub_type} illustrating the researched system topology.",
             "source_title": "Research Studio Architecture Engine",
-            "license_information": "CC-BY 4.0 / Generated Artifact",
-            "alt_text": f"Mermaid {sub_type} specification for {title}",
+            "license_information": "Generated artifact",
+            "alt_text": f"{diagram_format.upper()} {sub_type} specification for {title}",
             "media_content": code,
-            "file_format": "mermaid",
+            "file_format": diagram_format,
             "metadata_json": {
                 "diagram_type": sub_type,
                 "lines_count": len(code.splitlines()),

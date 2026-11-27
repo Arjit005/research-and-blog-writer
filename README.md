@@ -1,6 +1,6 @@
 # 🤖 Enterprise Multi-Agent AI Research & Visual Blog Studio
 
-> **Autonomous multi-agent research squad that conducts deep research and writes technical blog posts with native Mermaid architecture diagrams and source-tracked citations — powered by CrewAI, a multi-model failover chain (OpenRouter + Google Gemini), FastAPI, Next.js 16, and TiDB Cloud Serverless. Citation provenance checks confirm that links were visited; they do not establish that a source supports each claim.**
+> **Autonomous multi-agent research squad that conducts deep research and writes technical blog posts with native D2/Mermaid architecture diagrams and source-tracked citations — powered by CrewAI, a multi-model failover chain (OpenRouter + Google Gemini), FastAPI, Next.js 16, and TiDB Cloud Serverless. Citation provenance checks confirm that links were visited; they do not establish that a source supports each claim.**
 
 [![Python](https://img.shields.io/badge/Python-3.10%E2%80%933.13-3776AB?logo=python&logoColor=white)](https://python.org)
 [![CrewAI](https://img.shields.io/badge/CrewAI-Multi--Agent-FF6B35?logo=data:image/svg+xml;base64,&logoColor=white)](https://crewai.com)
@@ -24,7 +24,7 @@
 
 ## 📋 Project Summary
 
-Research & Blog Writer is an end-to-end autonomous editorial squad application. It takes a research topic from a user, deploys a specialized 4-agent CrewAI pipeline (Researcher $\rightarrow$ Analyst $\rightarrow$ Writer $\rightarrow$ Reviewer), searches and scrapes live documentation with SSRF defense, renders embedded Mermaid diagrams, formats citations grounded in visited sources, and provides a real-time Markdown reader with side-by-side revision rollback and AI Copilot editing.
+Research & Blog Writer is an end-to-end autonomous editorial squad application. It takes a research topic from a user, deploys a specialized 4-agent CrewAI pipeline (Researcher $\rightarrow$ Analyst $\rightarrow$ Writer $\rightarrow$ Reviewer), searches and scrapes live documentation with SSRF defense, renders embedded D2 and Mermaid diagrams, formats citations grounded in visited sources, and provides a real-time Markdown reader with side-by-side revision rollback and AI Copilot editing.
 
 ### 🛠️ Tech Stack
 
@@ -560,7 +560,7 @@ CI runs the pytest suite on **Python 3.10, 3.11, 3.12, and 3.13**, plus a fronte
 6. **Huge page DoS defense**: aborts streaming when bodies exceed the size cap.
 7. **PII & credential redaction**: masks emails, phone numbers, card sequences, and API keys.
 8. **Hallucinated citation detection**: flags unvisited URLs and enforces the diagrams-only policy.
-9. **Resilient Mermaid syntax handling**: extracts/validates diagram segments and degrades gracefully.
+9. **Resilient Mermaid/D2 syntax handling**: extracts/validates diagram segments and degrades gracefully.
 10. **Multi-tenant memory poisoning**: enforces per-preference/total length caps and non-executable delimiters.
 
 ---

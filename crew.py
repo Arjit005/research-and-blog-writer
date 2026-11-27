@@ -160,7 +160,9 @@ class ResearchAndBlogWriter:
             backstory=(
                 "You are a distinguished Diagram Architect and systems strategist. You excel at "
                 "extracting the signal from massive technical corpora, identifying non-obvious engineering "
-                "trade-offs, and formulating comparative evaluation matrices. You choose the ideal visualization "
+                "trade-offs, and formulating comparative evaluation matrices. Use D2 for system architecture and "
+                "component flow diagrams; use Mermaid for sequence, state, ER, mindmap, and timeline diagrams. "
+                "You choose the ideal visualization "
                 "modality for the topic: sequence diagrams for authentication and network handshakes, state machines "
                 "for distributed consensus and lifecycles, horizontal/vertical flowcharts for distributed dataflow, "
                 "timelines for historical causality, and mindmaps for conceptual taxonomies. You never force generic "
@@ -183,17 +185,18 @@ class ResearchAndBlogWriter:
             role="Technical Writer",
             goal=(
                 "Draft an authoritative, deeply technical blog post (2,000 - 3,500 words) on "
-                "'{topic}' with native Mermaid architecture diagrams, explanatory diagram captions, "
+                "'{topic}' with native D2 and Mermaid diagrams, explanatory diagram captions, "
                 "and structured comparison tables."
             ),
             backstory=(
                 "You are a world-class principal Technical Writer whose work is celebrated on premier "
                 "engineering publications like Google DeepMind, OpenAI Research, Stripe, and Uber Engineering. "
                 "You explain complex mechanics with rigorous clarity, avoiding fluff. You natively embed "
-                "self-created Mermaid.js diagrams (quoting labels with special characters like "
+                "self-created D2 diagrams for architecture and Mermaid.js diagrams for specialized diagram types "
+                "(quoting labels with special characters like "
                 "id[\"Label (Info)\"]) with descriptive explanations, and formal references, "
                 "to deliver a transformative, top-tier reading experience. You never invent image URLs "
-                "or fabricate external figures: diagrams are authored as Mermaid code only."
+                "or fabricate external figures: diagrams are authored as D2 or Mermaid code only."
             ),
             llm=get_fallback_llm(
                 temperature=WRITER_LLM_SETTINGS["temperature"],
@@ -268,14 +271,15 @@ class ResearchAndBlogWriter:
         return Task(
             description=(
                 "Synthesize and architect the technical findings on '{topic}'. Organize insights into "
-                "logical architectural layers. Design 1-2 native Mermaid diagrams selecting the appropriate "
-                "modality (flowchart, sequenceDiagram, stateDiagram-v2, mindmap, timeline, or erDiagram) "
+                "logical architectural layers. Design 1-2 native diagrams: use D2 for system architecture and "
+                "component flowcharts, and Mermaid for sequenceDiagram, stateDiagram-v2, mindmap, timeline, or erDiagram. "
+                "Put each in a fenced code block tagged d2 or mermaid. Select the appropriate "
                 "tailored to the domain instead of forcing standard flowcharts. Formulate comparative "
                 "matrix tables with quantitative criteria, and plan an explanatory figure note for each diagram.\n"
                 "Ground all diagram nodes in verified technical entities and preserve all citations and metrics."
             ),
             expected_output=(
-                "A comprehensive synthesis blueprint with thematic section breakdown, complete Mermaid "
+                "A comprehensive synthesis blueprint with thematic section breakdown, complete D2/Mermaid "
                 "diagram definitions ready for insertion, formatted comparative evaluation tables, and "
                 "curated citations."
             ),
@@ -292,7 +296,7 @@ class ResearchAndBlogWriter:
                 "Write an authoritative, publication-ready deep-dive technical blog post (2,000 - 3,500 words) "
                 "on '{topic}' using the analysis and diagram blueprint. Include a compelling H1 title, an Executive "
                 "Summary callout box, deep-dive H2/H3 technical sections detailing how things work under the hood, "
-                "at least 1-2 native Mermaid code blocks illustrating architectures, a short explanatory note for "
+                "at least 1-2 native D2 or Mermaid code blocks illustrating architectures and workflows, a short explanatory note for "
                 "each diagram (no external images), Markdown comparison tables, and a dedicated References & "
                 "Verified Sources section.\n\n"
                 "FACTUAL GROUNDING: Ground all claims in the Entity & Verified Source Registry from the research task. "
@@ -300,7 +304,7 @@ class ResearchAndBlogWriter:
             ),
             expected_output=(
                 "A polished, exhaustive technical blog post in Markdown format (2,000 - 3,500 words) with "
-                "deep minute details, native Mermaid diagrams with explanatory notes, comparative tables, "
+                "deep minute details, native D2/Mermaid diagrams with explanatory notes, comparative tables, "
                 "and complete verified-source references."
             ),
             agent=self.report_writer(),
@@ -315,14 +319,14 @@ class ResearchAndBlogWriter:
             description=(
                 "Perform an exhaustive technical audit of the blog post on '{topic}'. Verify all technical "
                 "assertions and quantitative metrics against the Entity & Verified Source Registry. Ensure explanations "
-                "are deeply substantive with zero vague fluff. Validate that all Mermaid diagram syntax is 100% valid. "
+                "are deeply substantive with zero vague fluff. Validate each Mermaid or D2 code block with its renderer syntax. "
                 "Ensure every diagram has a descriptive explanatory note, and check that the References section "
                 "is properly formatted with live links. Remove links that cannot be traced to a retrieved source. "
                 "Produce the finalized, publication-ready version."
             ),
             expected_output=(
                 "The finalized, publication-ready technical blog post in Markdown format, "
-                "verified for depth, diagram clarity, Mermaid syntax validity, and citation accuracy."
+                "verified for depth, diagram clarity, D2/Mermaid syntax validity, and citation accuracy."
             ),
             agent=self.quality_reviewer(),
             context=[

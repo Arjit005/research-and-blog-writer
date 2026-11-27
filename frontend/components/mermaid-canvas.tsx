@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import mermaid from "mermaid";
 import {
   ZoomIn,
   ZoomOut,
@@ -21,7 +20,10 @@ interface MermaidCanvasProps {
   code: string;
   title?: string;
   caption?: string;
+  className?: string;
 }
+
+type MermaidApi = typeof import("mermaid").default;
 
 const MERMAID_CONFIG = {
   startOnLoad: false,
@@ -44,15 +46,24 @@ const MERMAID_CONFIG = {
     titleColor: "#e2e8f0",
     edgeLabelBackground: "#0b0f19",
   },
-} satisfies Parameters<typeof mermaid.initialize>[0];
+} satisfies Parameters<MermaidApi["initialize"]>[0];
 
-let mermaidInitialized = false;
+let mermaidApiPromise: Promise<MermaidApi> | null = null;
 let mermaidRenderCounter = 0;
 
-function ensureMermaidInitialized(): void {
-  if (mermaidInitialized) return;
-  mermaid.initialize(MERMAID_CONFIG);
-  mermaidInitialized = true;
+function loadMermaid(): Promise<MermaidApi> {
+  if (!mermaidApiPromise) {
+    mermaidApiPromise = import("mermaid")
+      .then(({ default: mermaid }) => {
+        mermaid.initialize(MERMAID_CONFIG);
+        return mermaid;
+      })
+      .catch((error: unknown) => {
+        mermaidApiPromise = null;
+        throw error;
+      });
+  }
+  return mermaidApiPromise;
 }
 
 /**
@@ -92,6 +103,7 @@ export function MermaidCanvas({
   code,
   title = "Architecture & Dataflow Blueprint",
   caption,
+  className,
 }: MermaidCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const renderTokenRef = useRef(0);
@@ -109,7 +121,7 @@ export function MermaidCanvas({
 
   const renderDiagram = useCallback(async (sourceText: string, token: number) => {
     try {
-      ensureMermaidInitialized();
+      const mermaid = await loadMermaid();
       const id = `mermaid-canvas-svg-${++mermaidRenderCounter}`;
       
       // Use parse first to validate syntax if supported
@@ -243,7 +255,7 @@ export function MermaidCanvas({
 
   return (
     <div
-      className={`my-8 rounded-2xl border border-slate-800/80 bg-slate-950 shadow-2xl overflow-hidden transition-all duration-200 ${
+      className={`${className ?? "my-8"} rounded-2xl border border-slate-800/80 bg-slate-950 shadow-2xl overflow-hidden transition-all duration-200 ${
         isFullscreen
           ? "fixed inset-3 md:inset-8 z-50 flex flex-col bg-slate-950/98 border-slate-700 backdrop-blur-xl"
           : "relative"

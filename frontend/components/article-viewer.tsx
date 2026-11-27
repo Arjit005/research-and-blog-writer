@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { MermaidCanvas } from "./mermaid-canvas";
+import { D2Canvas } from "./d2-canvas";
 import { InteractiveChartExplorer } from "./interactive-chart-explorer";
 import { ResearchChart } from "@/lib/api";
 import {
@@ -235,6 +236,10 @@ export function ArticleViewer({
 
       if (isBlock && language === "mermaid") {
         return <MermaidCanvas code={codeText} />;
+      }
+
+      if (isBlock && language === "d2") {
+        return <D2Canvas code={codeText} />;
       }
 
       if (isBlock && (language === "chart" || language === "json:chart")) {
