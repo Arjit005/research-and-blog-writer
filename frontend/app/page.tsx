@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   errorMessage,
@@ -38,6 +38,19 @@ import {
   VolumeX,
   Settings,
 } from "lucide-react";
+
+function cleanArticleForDisplay(content: string): string {
+  const internal = /(?:Thought\s*:|I will now (?:provide|output|return)|I am going to (?:provide|output|return)|The complete (?:Markdown|finalized) (?:text|answer))/i.exec(content);
+  let clean = content;
+  if (internal) {
+    const tail = content.slice(internal.index + internal[0].length);
+    const title = /#{1,3}\s+[^#\n][^\n]*/.exec(tail);
+    clean = title ? tail.slice(title.index) : content.slice(0, internal.index);
+  }
+  return clean
+    .replace(/\n?\s*(?:Thought\s*:|Action\s*:|Action Input\s*:|Observation\s*:|I will now (?:provide|output|return)|The complete (?:Markdown|finalized) (?:text|answer))\b[\s\S]*$/i, "")
+    .trim();
+}
 
 const ACTIVE_RUN_STORAGE_KEY = "research-studio:active-run";
 
@@ -197,11 +210,32 @@ export default function Home() {
 
   // Responsive Drawer & Panels
   const [isLeftCollapsed, setIsLeftCollapsed] = useState(false);
-  const [isRightCollapsed, setIsRightCollapsed] = useState(false);
+  // Keep the article as the primary workspace; the squad panel is one click away.
+  const [isRightCollapsed, setIsRightCollapsed] = useState(true);
   const [mobileDrawer, setMobileDrawer] = useState<"none" | "left" | "right">("none");
+  const workspaceGridColumns = isLeftCollapsed
+    ? isRightCollapsed
+      ? "lg:grid-cols-[3.5rem_minmax(0,1fr)] xl:grid-cols-[3.5rem_minmax(0,1fr)_3.5rem]"
+      : "lg:grid-cols-[3.5rem_minmax(0,1fr)] xl:grid-cols-[3.5rem_minmax(0,1fr)_20rem]"
+    : isRightCollapsed
+      ? "lg:grid-cols-[20rem_minmax(0,1fr)] xl:grid-cols-[23rem_minmax(0,1fr)_3.5rem]"
+      : "lg:grid-cols-[20rem_minmax(0,1fr)] xl:grid-cols-[23rem_minmax(0,1fr)_20rem]";
 
   // Copilot Drawer
   const [isCopilotOpen, setIsCopilotOpen] = useState(false);
+
+  const visibleArticle = useMemo(() => {
+    if (!selectedArticle) return selectedArticle;
+    const content = cleanArticleForDisplay(selectedArticle.content);
+    return content === selectedArticle.content ? selectedArticle : { ...selectedArticle, content };
+  }, [selectedArticle]);
+
+  const hasVisibleArticle = Boolean(visibleArticle);
+
+  const visibleStreamingDraft = useMemo(
+    () => cleanArticleForDisplay(streamingDraft),
+    [streamingDraft]
+  );
 
   // System status
   const [systemStats, setSystemStats] = useState<TelemetryStats | null>(null);
@@ -719,9 +753,9 @@ export default function Home() {
       </header>
 
       {/* 2. Responsive 3-Panel Workspace */}
-      <main className="flex-1 flex w-full max-w-[1920px] mx-auto p-3 sm:p-5 md:p-6 gap-6 overflow-hidden">
+      <main className={`flex-1 grid w-full max-w-[1920px] mx-auto grid-cols-1 ${workspaceGridColumns} p-3 sm:p-5 md:p-6 gap-4 lg:gap-5 overflow-hidden`}>
         {/* Panel A: Left Sidebar (Desktop) */}
-        <div className="hidden lg:flex shrink-0">
+        <div className={`hidden lg:flex min-w-0 ${isLeftCollapsed ? "w-14" : ""}`}>
           <LeftSidebar
             topic={topic}
             setTopic={setTopic}
@@ -748,7 +782,7 @@ export default function Home() {
         </div>
 
         {/* Panel B: Center Professional Article Editor & Workspace */}
-        <div className="flex-1 min-w-0 flex flex-col gap-6 overflow-y-auto pr-1">
+        <div className="min-w-0 flex flex-col gap-5 overflow-y-auto pr-1">
           {runError && (
             <div
               role="alert"
@@ -839,25 +873,25 @@ export default function Home() {
                 onOpenEvidence={(v) => setEvidenceDrawerVisual(v)}
               />
             </div>
-          ) : selectedArticle ? (
+          ) : hasVisibleArticle && visibleArticle ? (
             <ArticleViewer
-              topic={selectedArticle.topic}
-              content={selectedArticle.content}
-              articleId={selectedArticle.id}
-              wordCount={selectedArticle.word_count}
-              generationTime={selectedArticle.generation_time_sec}
+              topic={visibleArticle.topic}
+              content={visibleArticle.content}
+              articleId={visibleArticle.id}
+              wordCount={visibleArticle.word_count}
+              generationTime={visibleArticle.generation_time_sec}
               onOpenCopilot={() => setIsCopilotOpen(true)}
               onOpenVersionHistory={() => setIsCopilotOpen(true)}
               onOpenQualityAuditor={() => setIsQualityAuditorOpen(true)}
               onOpenVisualLibrary={() => {
-                void loadVisuals(selectedArticle.id);
+                void loadVisuals(visibleArticle.id);
                 setActiveCenterTab("visuals");
               }}
             />
-          ) : activeRunId && streamingDraft.trim() ? (
+          ) : activeRunId && visibleStreamingDraft.trim() ? (
             <ArticleViewer
               topic={activeTopic}
-              content={streamingDraft}
+              content={visibleStreamingDraft}
               isStreaming={true}
             />
           ) : activeRunId ? (
@@ -945,7 +979,7 @@ export default function Home() {
         </div>
 
         {/* Panel C: Right AI Command Center (Desktop) */}
-        <div className="hidden lg:flex shrink-0">
+        <div className={`hidden xl:flex min-w-0 ${isRightCollapsed ? "w-14" : ""}`}>
           <AICommandCenter
             runId={activeRunId}
             topic={activeTopic}

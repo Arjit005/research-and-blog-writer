@@ -9,6 +9,7 @@ import uuid
 import asyncio
 import logging
 import threading
+import re
 from typing import Dict, Any, Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request, status
@@ -70,6 +71,45 @@ _TERMINAL_EVENT_TYPES = frozenset({"completed", "error", "cancelled"})
 _TERMINAL_JOB_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
 GENERIC_SECURITY_REJECTION = "Run request rejected by security policy."
+
+_INTERNAL_AGENT_LINE = re.compile(
+    r"(?im)^\s*(?:thought\s*:|action\s*:|action input\s*:|observation\s*:|"
+    r"i will now (?:provide|output|return)|i am going to (?:provide|output|return)|"
+    r"the complete (?:markdown|finalized) (?:text|answer)|(?:i have|the file is) already (?:written|saved)|"
+    r"(?:now )?provid(?:e|ing) (?:the )?(?:complete|full|final) (?:markdown|article|answer))[^\n]*\s*$"
+)
+_INTERNAL_AGENT_BLOCK = re.compile(
+    r"(?is)\n*(?:Thought\s*:|Action\s*:|Action Input\s*:|Observation\s*:|"
+    r"I will now (?:provide|output|return)|I am going to (?:provide|output|return)|"
+    r"The complete (?:Markdown|finalized) (?:text|answer))\b.*$"
+)
+_ARTICLE_HEADING = re.compile(r"(?m)#{1,3}\s+[^#\n][^\n]*")
+
+
+def sanitize_article_content(content: str) -> str:
+    """Remove common leaked agent/tool narration while retaining article prose."""
+    text = (content or "").strip()
+    internal_match = re.search(
+        r"(?i)\b(?:Thought\s*:|I will now (?:provide|output|return)|"
+        r"I am going to (?:provide|output|return)|the complete (?:Markdown|finalized) (?:text|answer))",
+        text,
+    )
+    if internal_match:
+        heading = _ARTICLE_HEADING.search(text, internal_match.end())
+        if heading:
+            text = text[heading.start():].strip()
+    text = _INTERNAL_AGENT_BLOCK.sub("", text).strip()
+    lines = text.splitlines()
+    cleaned = []
+    for line in lines:
+        if _INTERNAL_AGENT_LINE.match(line):
+            break
+        cleaned.append(line)
+    text = "\n".join(cleaned).strip()
+    # A response consisting entirely of agent chatter should never be shown as an article.
+    if not text or not re.search(r"(?m)^\s{0,3}(?:#{1,6}\s+\S|[-*+]\s+\S|\d+[.)]\s+\S)|\S", text):
+        raise ValueError("The research model returned no usable article content.")
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -413,8 +453,14 @@ def _execute_run_worker(
             if not agent_role:
                 from_agent = getattr(event, "from_agent", None)
                 agent_role = str(getattr(from_agent, "role", "") or "").lower()
-            # Stream Writer or any drafting agent tokens to live UI
-            if not agent_role or any(w in agent_role for w in ("writer", "author", "blog", "draft")):
+            # CrewAI stream events include intermediate reasoning/tool calls on some
+            # providers. Only stream when the event is explicitly final-answer text;
+            # otherwise the UI can render private process narration as article prose.
+            chunk_type = str(getattr(event, "chunk_type", "") or "").lower()
+            is_final_answer = bool(getattr(event, "is_final", False)) or chunk_type in {
+                "final", "final_answer", "answer", "output"
+            }
+            if is_final_answer and any(w in agent_role for w in ("writer", "author", "blog", "draft")):
                 broadcast_run_token(run_id, chunk_str)
 
         crewai_event_bus.register_handler(LLMStreamChunkEvent, _on_llm_chunk)
@@ -451,6 +497,7 @@ def _execute_run_worker(
 
         elapsed = round(time.time() - start_time, 2)
         raw_content = str(result.raw) if hasattr(result, "raw") else str(result)
+        raw_content = sanitize_article_content(raw_content)
         clean_content, mermaid_code = extract_mermaid(raw_content)
         # Mask PII / secrets before persisting anything user-visible.
         clean_content = mask_pii_and_secrets(clean_content)
