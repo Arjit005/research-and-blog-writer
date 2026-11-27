@@ -20,6 +20,14 @@ export function D2Canvas({
   const [error, setError] = useState<string | null>(null);
   const [showSource, setShowSource] = useState(false);
 
+  // Some model output uses `storage` as a generic shape name, which D2 does not
+  // support. Render it as the closest valid built-in shape without rewriting the
+  // preserved source shown to the user.
+  const renderableCode = code.replace(
+    /(\bshape\s*:\s*)["']?storage["']?/gi,
+    "$1cylinder"
+  );
+
   useEffect(() => {
     let disposed = false;
     let timedOut = false;
@@ -43,7 +51,7 @@ export function D2Canvas({
           void d2Instance?.dispose();
           if (!disposed) setError("Rendering took too long. Try simplifying or splitting this diagram.");
         }, 15_000);
-        const result = await d2Instance.compile(code, { layout: "tala", darkThemeID: 200 });
+        const result = await d2Instance.compile(renderableCode, { layout: "tala", darkThemeID: 200 });
         if (disposed || timedOut) return;
         const svg = await d2Instance.render(result.diagram, {
           ...result.renderOptions,

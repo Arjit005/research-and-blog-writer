@@ -107,6 +107,7 @@ export function MermaidCanvas({
 }: MermaidCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const renderTokenRef = useRef(0);
+  const fitZoomRef = useRef(1);
   const [svgContent, setSvgContent] = useState<string>("");
   const [errorDetails, setErrorDetails] = useState<string | null>(null);
   const [zoom, setZoom] = useState<number>(1);
@@ -150,10 +151,10 @@ export function MermaidCanvas({
       svg = svg.replace(/max-width:\s*[\d.]+px;?/gi, "");
       svg = svg.replace(/(<svg\b[^>]*)\bstyle="([^"]*)"/i, (match, prefix, style) => {
         const cleanedStyle = style.replace(/max-width:\s*[^;]+;?/gi, "").trim();
-        return `${prefix} style="${cleanedStyle}; width: 100%; height: auto; display: block; margin: 0 auto;"`;
+        return `${prefix} style="${cleanedStyle}; width: 100%; height: 100%; max-width: none; display: block; margin: 0 auto;"`;
       });
       if (!svg.includes('style="')) {
-        svg = svg.replace(/<svg\b/i, '<svg style="width: 100%; height: auto; display: block; margin: 0 auto;"');
+        svg = svg.replace(/<svg\b/i, '<svg style="width: 100%; height: 100%; max-width: none; display: block; margin: 0 auto;"');
       }
 
       // Compute optimal initial zoom from SVG viewBox dimensions
@@ -169,9 +170,11 @@ export function MermaidCanvas({
           const scaleW = (containerW * 0.90) / naturalWidth;
           const scaleH = (containerH * 0.85) / naturalHeight;
           const autoFitZoom = Math.min(scaleW, scaleH);
-          // Clamp zoom between 0.8 and 1.35
-          const clampedZoom = Math.max(0.8, Math.min(autoFitZoom, 1.35));
-          setZoom(Number(clampedZoom.toFixed(2)));
+          // Tall/large diagrams often need less than 80% to fit. The old lower
+          // clamp forced them outside the viewport and made Reset reproduce the crop.
+          const clampedZoom = Math.max(0.08, Math.min(autoFitZoom, 1.35));
+          fitZoomRef.current = Number(clampedZoom.toFixed(2));
+          setZoom(fitZoomRef.current);
           setPan({ x: 0, y: 0 });
         }
       }
@@ -196,6 +199,33 @@ export function MermaidCanvas({
     void renderDiagram(cleanSource, token);
   }, [cleanSource, renderDiagram]);
 
+  // Mermaid sometimes emits generous viewBoxes around a small graph. Crop the
+  // outer graph group to its actual bounds, then let SVG preserveAspectRatio fit
+  // the full diagram into the viewport. This avoids both tiny graphs and clipping.
+  useEffect(() => {
+    if (!svgContent || !containerRef.current) return;
+    const frame = window.requestAnimationFrame(() => {
+      const svg = containerRef.current?.querySelector("svg");
+      if (!svg) return;
+      try {
+        const graph = (svg.querySelector("g.root") ?? svg.querySelector("g")) as SVGGElement | null;
+        const bounds = graph?.getBBox();
+        if (!bounds || bounds.width <= 0 || bounds.height <= 0) return;
+        const pad = Math.max(24, Math.min(bounds.width, bounds.height) * 0.06);
+        svg.setAttribute(
+          "viewBox",
+          `${bounds.x - pad} ${bounds.y - pad} ${bounds.width + pad * 2} ${bounds.height + pad * 2}`
+        );
+        fitZoomRef.current = 1;
+        setZoom(1);
+        setPan({ x: 0, y: 0 });
+      } catch {
+        // Keep the original generated viewBox if the browser cannot measure it.
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [svgContent]);
+
   const handleCopyCode = () => {
     void navigator.clipboard.writeText(cleanSource).catch((err: unknown) => {
       console.error("Clipboard write failed:", err);
@@ -216,7 +246,7 @@ export function MermaidCanvas({
   };
 
   const handleFitToScreen = () => {
-    setZoom(1);
+    setZoom(fitZoomRef.current);
     setPan({ x: 0, y: 0 });
   };
 
@@ -361,7 +391,7 @@ export function MermaidCanvas({
         onPointerCancel={handlePointerUp}
         className={`relative w-full overflow-hidden flex items-center justify-center p-6 select-none touch-none ${
           isFullscreen ? "flex-1 min-h-[500px]" : "min-h-[360px] max-h-[640px]"
-        } ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
+        } ${isFullscreen ? "" : "h-[60vh]"} ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
         style={{
           backgroundImage: "radial-gradient(#1e293b 1px, transparent 1px)",
           backgroundSize: "24px 24px",
@@ -409,7 +439,7 @@ export function MermaidCanvas({
               transformOrigin: "center center",
               transition: isDragging ? "none" : "transform 0.1s ease-out",
             }}
-            className="max-w-none transition-transform pointer-events-none"
+            className="h-full w-full max-w-none transition-transform pointer-events-none"
             dangerouslySetInnerHTML={{ __html: svgContent }}
           />
         ) : (

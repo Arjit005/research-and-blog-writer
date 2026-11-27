@@ -171,7 +171,9 @@ class ResearchAndBlogWriter:
                 "Follow the supplied {visual_guidance} for the main diagram. For architecture diagrams, use D2 "
                 "with the TALA layout, a clear title, and nested containers for real system boundaries. Keep each "
                 "diagram focused: about 6–12 meaningful nodes, no more than 16 edges, short labels, and only useful "
-                "edge labels. Use consistent, restrained colors to separate layers. Avoid decorative nodes, invented "
+                "edge labels. Use only supported D2 shapes such as rectangle, cylinder, queue, cloud, package, "
+                "document, and person; never use `shape: storage` (use `shape: cylinder` for storage). "
+                "Use consistent, restrained colors to separate layers and ensure strong text/background contrast. Avoid decorative nodes, invented "
                 "components, duplicate diagrams, and crossing connections where possible. Add a second diagram only "
                 "for a distinct process or lifecycle."
             ),
