@@ -1,0 +1,206 @@
+.stage {
+  position: relative;
+  isolation: isolate;
+  width: 210px;
+  height: 190px;
+  margin: 0 auto 1.25rem;
+  perspective: 850px;
+  transform-style: preserve-3d;
+}
+
+.halo {
+  position: absolute;
+  inset: 20% 12%;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgb(72 88 255 / 25%), rgb(72 88 255 / 0%) 68%);
+  filter: blur(18px);
+  animation: breathe 5s ease-in-out infinite;
+}
+
+.orb {
+  position: absolute;
+  top: 21px;
+  left: 47px;
+  width: 116px;
+  height: 116px;
+  overflow: hidden;
+  border: 1px solid rgb(156 169 255 / 54%);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 32% 27%, rgb(213 224 255 / 88%) 0 1.2%, transparent 2.3%),
+    radial-gradient(circle at 33% 28%, rgb(110 137 255 / 65%), transparent 26%),
+    radial-gradient(circle at 68% 72%, rgb(13 22 61 / 95%), transparent 48%),
+    radial-gradient(circle at 45% 42%, #313c9d 0, #151d52 56%, #080d27 100%);
+  box-shadow:
+    inset -16px -12px 30px rgb(0 0 0 / 55%),
+    inset 8px 5px 22px rgb(159 176 255 / 22%),
+    0 0 35px rgb(86 104 255 / 30%);
+  transform-style: preserve-3d;
+  animation: orbFloat 6s ease-in-out infinite;
+}
+
+.mesh {
+  position: absolute;
+  inset: -12%;
+  border-radius: 50%;
+  opacity: 0.42;
+  background:
+    repeating-linear-gradient(0deg, transparent 0 11px, rgb(142 165 255 / 30%) 12px, transparent 13px),
+    repeating-linear-gradient(90deg, transparent 0 14px, rgb(142 165 255 / 20%) 15px, transparent 16px);
+  mask-image: radial-gradient(ellipse, #000 32%, transparent 72%);
+  transform: rotateY(34deg) rotateZ(-18deg) scale(1.12);
+}
+
+.core {
+  position: absolute;
+  top: 40%;
+  left: 42%;
+  width: 19%;
+  height: 19%;
+  border-radius: 50%;
+  background: #d7e3ff;
+  box-shadow: 0 0 8px 3px #96aaff, 0 0 25px 9px rgb(100 125 255 / 80%);
+  animation: corePulse 3s ease-in-out infinite;
+}
+
+.orbGlow {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(124deg, rgb(255 255 255 / 18%), transparent 36% 69%, rgb(117 103 248 / 13%));
+}
+
+.ring {
+  position: absolute;
+  top: 25px;
+  left: 26px;
+  width: 158px;
+  height: 105px;
+  border: 1px solid rgb(145 158 255 / 65%);
+  border-radius: 50%;
+  transform-style: preserve-3d;
+  box-shadow: 0 0 10px rgb(104 120 255 / 15%);
+}
+
+.ringOne {
+  border-color: rgb(168 180 255 / 72%);
+  animation: orbitOne 11s linear infinite;
+}
+
+.ringTwo {
+  top: 28px;
+  left: 43px;
+  width: 124px;
+  height: 142px;
+  border-color: rgb(104 223 214 / 56%);
+  animation: orbitTwo 14s linear infinite;
+}
+
+.ringThree {
+  top: 43px;
+  left: 14px;
+  width: 180px;
+  height: 75px;
+  border-color: rgb(255 255 255 / 23%);
+  animation: orbitThree 18s linear infinite;
+}
+
+.node {
+  position: absolute;
+  top: 14%;
+  left: 13%;
+  width: 7px;
+  height: 7px;
+  border: 1px solid rgb(235 240 255 / 80%);
+  border-radius: 50%;
+  background: #93a6ff;
+  box-shadow: 0 0 12px 3px rgb(117 136 255 / 80%);
+}
+
+.nodeMint {
+  top: 74%;
+  left: 86%;
+  width: 6px;
+  height: 6px;
+  background: #8cf4df;
+  box-shadow: 0 0 12px 3px rgb(94 234 212 / 75%);
+}
+
+.signal {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #c4ceff;
+  box-shadow: 0 0 9px 2px rgb(137 153 255 / 75%);
+}
+
+.signalOne {
+  top: 27px;
+  right: 36px;
+  animation: signalBlink 2.8s ease-in-out infinite;
+}
+
+.signalTwo {
+  bottom: 22px;
+  left: 34px;
+  animation: signalBlink 3.6s ease-in-out infinite reverse;
+}
+
+@keyframes orbFloat {
+  0%, 100% { transform: translateY(0) rotateX(-5deg) rotateY(-8deg); }
+  50% { transform: translateY(-7px) rotateX(4deg) rotateY(8deg); }
+}
+
+@keyframes orbitOne {
+  from { transform: rotateX(68deg) rotateY(-24deg) rotateZ(0deg); }
+  to { transform: rotateX(68deg) rotateY(-24deg) rotateZ(360deg); }
+}
+
+@keyframes orbitTwo {
+  from { transform: rotateX(22deg) rotateY(68deg) rotateZ(0deg); }
+  to { transform: rotateX(22deg) rotateY(68deg) rotateZ(-360deg); }
+}
+
+@keyframes orbitThree {
+  from { transform: rotateX(78deg) rotateY(12deg) rotateZ(0deg); }
+  to { transform: rotateX(78deg) rotateY(12deg) rotateZ(360deg); }
+}
+
+@keyframes breathe {
+  0%, 100% { opacity: 0.65; transform: scale(0.92); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+
+@keyframes corePulse {
+  0%, 100% { opacity: 0.82; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.1); }
+}
+
+@keyframes signalBlink {
+  0%, 100% { opacity: 0.35; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.7); }
+}
+
+@media (max-width: 640px) {
+  .stage {
+    width: 190px;
+    height: 170px;
+    transform: scale(0.9);
+    margin-bottom: 0.5rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .halo,
+  .orb,
+  .ringOne,
+  .ringTwo,
+  .ringThree,
+  .core,
+  .signalOne,
+  .signalTwo {
+    animation: none;
+  }
+}

@@ -21,6 +21,7 @@ import { QualityAuditorDrawer } from "@/components/quality-auditor-drawer";
 import { VisualLibraryGallery } from "@/components/visual-library-gallery";
 import { ImageLightboxViewer } from "@/components/image-lightbox-viewer";
 import { VisualEvidenceDrawer } from "@/components/visual-evidence-drawer";
+import { ResearchOrb } from "@/components/research-orb";
 import { ResearchVisual } from "@/lib/api";
 import {
   Sparkles,
@@ -572,7 +573,7 @@ export default function Home() {
   const databaseBackend = systemStats?.database.backend;
 
   return (
-    <div className="min-h-screen overflow-x-hidden bg-background text-foreground flex flex-col font-sans selection:bg-blue-500/20">
+    <div className="research-studio-scene min-h-screen overflow-x-hidden bg-background text-foreground flex flex-col font-sans selection:bg-blue-500/20">
       {/* 1. SaaS Enterprise Header */}
       <header className="sticky top-0 z-40 w-full min-w-0 border-b border-border bg-surface/90 backdrop-blur-md px-2.5 sm:px-6 py-3.5 flex items-center justify-between gap-1.5 sm:gap-2">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -906,34 +907,39 @@ export default function Home() {
               </div>
             </div>
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center p-6 sm:p-12 border border-border rounded-3xl bg-surface text-center min-h-[420px]">
-              <div className="p-4 bg-surface-raised rounded-2xl mb-4 text-accent">
-                <BookOpen className="w-8 h-8" aria-hidden="true" />
-              </div>
-              <h3 className="text-lg font-bold text-foreground mb-2">What would you like to research?</h3>
-              <p className="text-sm text-muted-foreground max-w-md mb-6">
-                Enter any technical topic below to launch a multi-agent research run and generate a
-                publication-ready blog post with Mermaid diagrams.
-              </p>
-              <form
-                onSubmit={handleStartRun}
-                className="w-full max-w-md flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5"
-              >
-                <input
-                  type="text"
-                  value={topic}
-                  onChange={(e) => setTopic(e.target.value)}
-                  placeholder="e.g. Distributed Consensus in TiDB..."
-                  aria-label="Research topic"
-                  className="flex-1 px-4 py-2.5 bg-background border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground"
-                />
-                <button
-                  type="submit"
-                  className="px-5 py-2.5 bg-accent hover:bg-accent-hover text-accent-foreground rounded-xl text-sm font-semibold transition shadow-sm shrink-0"
+            <div className="research-depth-card relative flex-1 flex flex-col items-center justify-center p-6 sm:p-12 border border-border rounded-3xl bg-surface text-center min-h-[420px] overflow-hidden">
+              <div className="pointer-events-none absolute inset-0 opacity-40 [background-image:radial-gradient(var(--border-strong)_0.7px,transparent_0.7px)] [background-size:22px_22px] [mask-image:radial-gradient(ellipse_at_center,black,transparent_76%)]" />
+              <div className="research-hero-content relative z-10 flex flex-col items-center">
+                <ResearchOrb />
+                <span className="mb-3 inline-flex items-center gap-2 rounded-full border border-accent/25 bg-accent-soft px-3 py-1 text-[10px] font-mono font-semibold uppercase tracking-[0.2em] text-accent">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_10px_#34d399]" />
+                  Four agents · one research desk
+                </span>
+                <h3 className="text-lg font-bold text-foreground mb-2">What would you like to research?</h3>
+                <p className="text-sm text-muted-foreground max-w-md mb-6">
+                  Enter any technical topic below to launch a multi-agent research run and generate a
+                  publication-ready blog post with Mermaid diagrams.
+                </p>
+                <form
+                  onSubmit={handleStartRun}
+                  className="w-full max-w-md flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5"
                 >
-                  {isSubmitting ? "Starting…" : "Start research"}
-                </button>
-              </form>
+                  <input
+                    type="text"
+                    value={topic}
+                    onChange={(e) => setTopic(e.target.value)}
+                    placeholder="e.g. Distributed Consensus in TiDB..."
+                    aria-label="Research topic"
+                    className="flex-1 px-4 py-2.5 bg-background border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground"
+                  />
+                  <button
+                    type="submit"
+                    className="px-5 py-2.5 bg-accent hover:bg-accent-hover text-accent-foreground rounded-xl text-sm font-semibold transition shadow-sm shrink-0"
+                  >
+                    {isSubmitting ? "Starting…" : "Start research"}
+                  </button>
+                </form>
+              </div>
             </div>
           )}
         </div>
