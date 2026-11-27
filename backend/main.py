@@ -171,16 +171,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Database initialization error on startup: {e}")
 
-    # 3. Recover research jobs stuck in pending/running after a restart.
+    # 3. Recover only running jobs whose lease expired. Pending jobs remain
+    #    durable and are picked up by the in-process queue when submitted; they
+    #    must not be failed merely because another API process started.
     recover_interrupted_jobs = getattr(db, "recover_interrupted_jobs", None)
     if recover_interrupted_jobs is None:
-        # TODO(data-backend): db.recover_interrupted_jobs() does not exist yet.
         logger.warning(
             "db.recover_interrupted_jobs() is unavailable; interrupted research jobs will not be recovered."
         )
     else:
         try:
-            recovered = recover_interrupted_jobs()
+            recovered = recover_interrupted_jobs(stale_after_seconds=120)
             logger.info("Recovered interrupted research jobs: %s", recovered)
         except Exception as e:
             logger.error(f"Failed to recover interrupted research jobs: {e}")

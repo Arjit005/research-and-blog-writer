@@ -2916,19 +2916,17 @@ def get_active_run_claim(run_id: str) -> Optional[Dict[str, Any]]:
         return _row_to_dict(row) if row else None
 
 
-def recover_interrupted_jobs(stale_after_seconds: int = 0) -> int:
-    """Mark jobs left in ``pending``/``running`` by a dead worker process as failed.
+def recover_interrupted_jobs(stale_after_seconds: int = 120) -> int:
+    """Mark expired running jobs left by a dead worker process as failed.
 
     Multi-Worker Safety & Lease Architecture:
     In a multi-worker cluster (e.g. 4 Gunicorn/Uvicorn workers), worker restarts must
     NEVER indiscriminately abort running jobs belonging to other live, healthy workers.
     Each active run maintains a lease in `active_run_claims` with periodic heartbeats.
 
-    A job is considered abandoned if:
-    1. Its heartbeat in `active_run_claims` or its `updated_at` in `research_jobs` is
-       older than `stale_after_seconds` (default: 0 = immediate sweep of orphaned/expired jobs).
-    2. Jobs with recent heartbeats are recognized as actively managed by other healthy
-       workers and are left untouched.
+    Only running jobs are considered. A run is stale only when its persisted
+    lease has expired and its heartbeat is older than the grace period. Pending
+    jobs are left intact because they have not started executing.
 
     Returns the number of recovered jobs.
     """
@@ -2943,7 +2941,7 @@ def recover_interrupted_jobs(stale_after_seconds: int = 0) -> int:
 
     recovered_run_ids: List[str] = []
     with get_connection() as (conn, is_tidb):
-        # Identify stale jobs whose updated_at and claim heartbeat have both lapsed
+        # Identify running jobs whose persisted lease and heartbeat have lapsed.
         cursor = _exec(
             conn,
             is_tidb,
@@ -2951,11 +2949,11 @@ def recover_interrupted_jobs(stale_after_seconds: int = 0) -> int:
             SELECT j.run_id 
             FROM research_jobs j
             LEFT JOIN active_run_claims c ON j.run_id = c.run_id
-            WHERE j.status IN ('pending', 'running')
-              AND j.updated_at <= ?
-              AND (c.heartbeat_at IS NULL OR c.heartbeat_at <= ?)
+            WHERE j.status = 'running'
+              AND c.lease_expires_at <= ?
+              AND c.heartbeat_at <= ?
             """,
-            (cutoff_str, cutoff_str),
+            (now_str, cutoff_str),
         )
         rows = cursor.fetchall()
         recovered_run_ids = [str(_get_value(r, is_tidb, "run_id", 0)) for r in rows]

@@ -177,6 +177,34 @@ def _execute_run_worker(
     cancel_event = threading.Event()
     _CANCELLATION_EVENTS[run_id] = cancel_event
 
+    active_claim = db.get_active_run_claim(run_id)
+    worker_id_val = str(active_claim.get("worker_id", "")) if active_claim else ""
+    lease_token_val = str(active_claim.get("lease_token", "")) if active_claim else ""
+    fencing_token_val = int(active_claim.get("fencing_token", 0)) if active_claim else 0
+    lease_lost = threading.Event()
+    heartbeat_stop = threading.Event()
+    heartbeat_thread = None
+    if active_claim and worker_id_val and lease_token_val and fencing_token_val:
+        def _heartbeat() -> None:
+            while not heartbeat_stop.wait(30):
+                try:
+                    renewed = db.heartbeat_active_run_claim(
+                        run_id, worker_id=worker_id_val, lease_token=lease_token_val,
+                        fencing_token=fencing_token_val, extend_seconds=120,
+                    )
+                except Exception:
+                    logger.exception("Lease heartbeat failed for run %s", run_id)
+                    renewed = False
+                if not renewed:
+                    lease_lost.set()
+                    logger.error("Worker lost lease for run %s; refusing further writes", run_id)
+                    return
+
+        heartbeat_thread = threading.Thread(
+            target=_heartbeat, name=f"lease-heartbeat-{run_id}", daemon=True
+        )
+        heartbeat_thread.start()
+
     tracer = LangSmithJobTracer(
         run_id=run_id,
         topic=topic,
@@ -236,6 +264,8 @@ def _execute_run_worker(
                     return content or "", (m.group(1).strip() if m else "")
 
         def _raise_if_cancelled() -> None:
+            if lease_lost.is_set():
+                raise InterruptedError("Research run lost its execution lease.")
             if _job_is_cancelled(run_id, cancel_event):
                 raise InterruptedError("Research run was cancelled by user.")
 
@@ -404,10 +434,9 @@ def _execute_run_worker(
             return
 
         # Fetch active lease claim to enforce mandatory fencing parameters
-        active_claim = db.get_active_run_claim(run_id)
-        worker_id_val = str(active_claim.get("worker_id", "")) if active_claim else "worker_default"
-        lease_token_val = str(active_claim.get("lease_token", "")) if active_claim else "lease_default"
-        fencing_token_val = int(active_claim.get("fencing_token", 1)) if active_claim else 1
+        _raise_if_cancelled()
+        if not active_claim:
+            raise RuntimeError("Research run has no active execution lease.")
 
         try:
             art_id, _initial_revision_num = db.save_article_with_initial_revision(
@@ -493,6 +522,9 @@ def _execute_run_worker(
         )
     except Exception as e:
         logger.exception(f"Run worker error on run {run_id}: {e}")
+        if lease_lost.is_set():
+            tracer.end_job(error="Research run lost its execution lease.")
+            return
         # If the job was cancelled concurrently, the cancel endpoint already wrote
         # the terminal event/status: never resurrect or duplicate a terminal state.
         try:
@@ -536,6 +568,9 @@ def _execute_run_worker(
             error_message=safe_error,
         )
     finally:
+        heartbeat_stop.set()
+        if heartbeat_thread is not None:
+            heartbeat_thread.join(timeout=1)
         _CANCELLATION_EVENTS.pop(run_id, None)
         cleanup_run_tokens(run_id)
 
