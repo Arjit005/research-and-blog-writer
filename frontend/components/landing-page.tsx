@@ -98,7 +98,7 @@ export function LandingPage({ onOpenAuth, onEnterGuest }: LandingPageProps) {
       <header className="sticky top-0 z-30 border-b border-border/60 bg-background/75 backdrop-blur-xl">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3.5 sm:px-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 via-indigo-500 to-emerald-500 text-white shadow-md shadow-sky-500/25 ring-1 ring-white/20">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-teal-500 via-emerald-500 to-amber-500 text-white shadow-md shadow-teal-500/25 ring-1 ring-white/20">
               <svg
                 className="h-5 w-5"
                 viewBox="0 0 24 24"
@@ -109,16 +109,17 @@ export function LandingPage({ onOpenAuth, onEnterGuest }: LandingPageProps) {
                 strokeLinejoin="round"
                 aria-hidden="true"
               >
-                <path d="M12 2L3 7l9 5 9-5-9-5z" />
-                <path d="M3 12l9 5 9-5" />
-                <path d="M3 17l9 5 9-5" />
+                <path d="M12 19l7-7 3 3-7 7-3-3z" />
+                <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
+                <path d="M2 2l7.586 7.586" />
+                <circle cx="11" cy="11" r="2" />
               </svg>
             </div>
             <div>
               <span className="text-sm font-bold tracking-tight text-foreground">
                 Research Studio
               </span>
-              <span className="ml-2 hidden rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-wider text-sky-600 dark:border-sky-400/30 dark:bg-sky-400/10 dark:text-sky-300 sm:inline-block">
+              <span className="ml-2 hidden rounded-full border border-teal-500/30 bg-teal-500/10 px-2 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-wider text-teal-600 dark:border-teal-400/30 dark:bg-teal-400/10 dark:text-teal-300 sm:inline-block">
                 AI Studio
               </span>
             </div>
@@ -186,7 +187,7 @@ export function LandingPage({ onOpenAuth, onEnterGuest }: LandingPageProps) {
 
             <h1 className="text-4xl font-extrabold tracking-tight text-foreground sm:text-5xl lg:text-[3.25rem] lg:leading-[1.08]">
               Turn any technical question into a{" "}
-              <span className="bg-gradient-to-r from-sky-600 via-indigo-600 to-emerald-600 dark:from-sky-300 dark:via-indigo-300 dark:to-emerald-300 bg-clip-text text-transparent">
+              <span className="bg-gradient-to-r from-teal-600 via-emerald-500 to-amber-500 dark:from-teal-300 dark:via-emerald-300 dark:to-amber-300 bg-clip-text text-transparent">
                 publication-ready
               </span>{" "}
               brief.
