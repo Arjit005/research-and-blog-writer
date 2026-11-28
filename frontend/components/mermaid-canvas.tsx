@@ -29,12 +29,13 @@ const MERMAID_CONFIG = {
   startOnLoad: false,
   theme: "base",
   securityLevel: "strict",
-  fontFamily: "Inter, system-ui, -apple-system, sans-serif",
+  fontFamily: "ui-sans-serif, system-ui, sans-serif",
   flowchart: {
     htmlLabels: true,
     wrappingWidth: 180,
     nodeSpacing: 40,
     rankSpacing: 50,
+    padding: 12,
     useMaxWidth: true,
   },
   themeVariables: {
@@ -144,6 +145,9 @@ export function MermaidCanvas({
         return;
       }
 
+      if (typeof document !== "undefined" && document.fonts?.ready) {
+        await document.fonts.ready;
+      }
       let { svg } = await mermaid.render(id, sourceText);
 
       if (token !== renderTokenRef.current) return;

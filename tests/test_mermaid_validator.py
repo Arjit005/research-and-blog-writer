@@ -1,4 +1,5 @@
 from core.mermaid import (
+    choose_better_diagram,
     fix_mermaid_in_markdown,
     split_markdown_and_mermaid,
     validate_mermaid_diagram,
@@ -108,3 +109,38 @@ def test_fix_mermaid_in_markdown_idempotent():
 def test_fix_mermaid_in_markdown_malformed_fence_unchanged():
     md = "```mermaid\nflowchart LR\n  A --> B"
     assert fix_mermaid_in_markdown(md) == md
+
+
+def test_choose_better_diagram_uses_retry_when_fewer_warnings():
+    bad = "flowchart LR\n  A -->|this edge label has six words| B"
+    good = "flowchart LR\n  A -->|PrRd| B"
+    chosen, warnings = choose_better_diagram(bad, lambda _c, _w: good)
+    assert chosen == good
+    assert warnings == []
+
+
+def test_choose_better_diagram_keeps_original_when_same_or_more_warnings():
+    bad = "flowchart LR\n  A -->|this edge label has six words| B"
+    worse = "flowchart LR\n  A -->|another six word edge label here| B\n  B -->|and a second six word label| C"
+    chosen, warnings = choose_better_diagram(bad, lambda _c, _w: worse)
+    assert chosen == bad
+    assert len(warnings) == 1
+
+
+def test_choose_better_diagram_keeps_original_on_exception():
+    bad = "flowchart LR\n  A -->|this edge label has six words| B"
+
+    def _boom(_c, _w):
+        raise RuntimeError("LLM timeout")
+
+    chosen, warnings = choose_better_diagram(bad, _boom)
+    assert chosen == bad
+    assert len(warnings) == 1
+
+
+def test_choose_better_diagram_keeps_original_on_truncated_retry():
+    bad = "flowchart LR\n  A -->|this edge label has six words| B"
+    truncated = "flowchart LR\n  A[Start"
+    chosen, warnings = choose_better_diagram(bad, lambda _c, _w: truncated)
+    assert chosen == bad
+    assert len(warnings) == 1

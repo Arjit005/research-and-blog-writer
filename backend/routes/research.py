@@ -9,7 +9,7 @@ import uuid
 import asyncio
 import logging
 
-from core.mermaid import fix_mermaid_in_markdown
+from core.mermaid import MERMAID_FENCE_PATTERN, choose_better_diagram, fix_mermaid_in_markdown
 from core.d2 import fix_d2_in_markdown
 import threading
 import re
@@ -576,6 +576,28 @@ def _execute_run_worker(
         elapsed = round(time.time() - start_time, 2)
         raw_content = str(result.raw) if hasattr(result, "raw") else str(result)
         raw_content = sanitize_article_content(raw_content)
+
+        def _retry_mermaid_block(diag_code: str, warnings: list[str]) -> str:
+            from llm_fallback import get_fallback_llm
+            llm = get_fallback_llm(temperature=0.2, max_tokens=1500)
+            prompt = (
+                "Fix ONLY this Mermaid diagram based on these warnings:\n"
+                + "\n".join(f"- {w}" for w in warnings)
+                + "\nRules: max 8 nodes, edge labels <= 4 words (event names only for stateDiagram), "
+                "every classDef must include fill, stroke, and color. Return ONLY valid Mermaid code, no fences.\n\n"
+                + diag_code
+            )
+            resp = llm.call([{"role": "user", "content": prompt}])
+            return str(resp).replace("```mermaid", "").replace("```", "").strip()
+
+        raw_content = MERMAID_FENCE_PATTERN.sub(
+            lambda m: m.group(0).replace(
+                m.group(1).strip(),
+                choose_better_diagram(m.group(1).strip(), _retry_mermaid_block)[0],
+                1,
+            ) if m.group(1).strip() else m.group(0),
+            raw_content,
+        )
         raw_content = fix_mermaid_in_markdown(raw_content)
         raw_content = fix_d2_in_markdown(raw_content)
         clean_content, mermaid_code = extract_mermaid(raw_content)

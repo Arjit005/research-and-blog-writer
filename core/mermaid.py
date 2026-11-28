@@ -5,7 +5,7 @@ import html
 import json
 import logging
 import uuid
-from typing import List, Tuple
+from typing import Callable, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +120,40 @@ def fix_mermaid_in_markdown(markdown: str) -> str:
         return MERMAID_FENCE_PATTERN.sub(_replace, markdown)
     except Exception:
         return markdown
+
+
+def choose_better_diagram(
+    original_code: str,
+    retry_fn: Callable[[str, list[str]], str],
+) -> tuple[str, list[str]]:
+    """Validate original_code; if warnings exist, call retry_fn once and keep whichever has fewer warnings."""
+    fixed_orig, orig_warnings = validate_mermaid_diagram(original_code)
+    if not orig_warnings:
+        return fixed_orig, []
+    try:
+        candidate = retry_fn(fixed_orig, orig_warnings)
+        if not isinstance(candidate, str) or not candidate.strip():
+            return fixed_orig, orig_warnings
+        cand_stripped = candidate.strip()
+        if not re.match(
+            r"^(?:flowchart|graph|sequenceDiagram|stateDiagram(?:-v2)?|classDiagram|erDiagram|journey|gantt|pie|gitGraph|mindmap|timeline|quadrantChart|C4Context|xychart-beta)\b",
+            cand_stripped,
+            re.IGNORECASE,
+        ):
+            return fixed_orig, orig_warnings
+        if (
+            cand_stripped.count("[") != cand_stripped.count("]")
+            or cand_stripped.count("(") != cand_stripped.count(")")
+            or cand_stripped.count("{") != cand_stripped.count("}")
+        ):
+            return fixed_orig, orig_warnings
+        fixed_retry, retry_warnings = validate_mermaid_diagram(cand_stripped)
+        if len(retry_warnings) < len(orig_warnings):
+            return fixed_retry, retry_warnings
+        return fixed_orig, orig_warnings
+    except Exception as exc:
+        logger.warning("Mermaid retry failed, keeping original: %s", exc)
+        return fixed_orig, orig_warnings
 
 
 def split_markdown_and_mermaid(content: str) -> List[Tuple[str, str]]:

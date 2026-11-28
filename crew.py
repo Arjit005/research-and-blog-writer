@@ -184,8 +184,13 @@ class ResearchAndBlogWriter:
                 "  classDef warn fill:#FAEEDA,stroke:#854F0B,color:#412402\\n"
                 "  classDef bad  fill:#FCEBEB,stroke:#A32D2D,color:#501313\\n"
                 "  classDef ok   fill:#E1F5EE,stroke:#0F6E56,color:#04342C "
-                "9) For state-machine topics (e.g. MESI cache coherence), do NOT put full condition text in edge labels; use short event names (PrRd, PrWr, BusRd, BusRdX) and add a small markdown table right below the diagram explaining each event. "
-                "10) For D2 diagrams, apply the same limits: max 8 shapes, short labels (max 4 words on connections), supported shapes only (rectangle, cylinder, queue, cloud, package, document, person; never `shape: storage`). "
+                "9) For state-machine topics (e.g. MESI cache coherence), do NOT put full condition text in edge labels; use short event names (PrRd, PrWr, BusRd, BusRdX) and add a small markdown table right below the diagram explaining each event. Reference stateDiagram-v2 pattern:\\n"
+                "stateDiagram-v2\\n"
+                "  [*] --> Invalid\\n"
+                "  Invalid --> Shared : BusRd\\n"
+                "  Shared --> Modified : PrWr\\n"
+                "  Modified --> Invalid : BusRdX "
+                "10) For D2 diagrams, apply the same limits: max 8 shapes, short labels (max 4 words on connections), use `direction: right` or `direction: down`, NEVER draw a title shape inside the diagram (the markdown caption already covers it), and use supported shapes only (rectangle, cylinder, queue, cloud, package, document, person; never `shape: storage`). "
                 "Avoid decorative nodes, invented components, duplicate diagrams, and crossing connections."
             ),
             llm=get_fallback_llm(temperature=ANALYST_LLM_SETTINGS["temperature"], max_tokens=ANALYST_LLM_SETTINGS["max_tokens"]),

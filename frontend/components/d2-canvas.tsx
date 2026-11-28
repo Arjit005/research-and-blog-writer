@@ -56,7 +56,7 @@ export function D2Canvas({
         const svg = await d2Instance.render(result.diagram, {
           ...result.renderOptions,
           center: true,
-          pad: 24,
+          pad: 12,
           themeID: 0,
           noXMLTag: true,
         });
@@ -109,7 +109,7 @@ export function D2Canvas({
       </div>
 
       <div
-        className="flex min-h-[280px] max-h-[640px] items-center justify-center overflow-auto p-2"
+        className="flex max-h-[640px] w-full items-center justify-center overflow-auto p-2"
         style={{
           backgroundColor: "#FAFAFA",
           backgroundImage: "radial-gradient(#d4d4d8 1px, transparent 1px)",

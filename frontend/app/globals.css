@@ -290,3 +290,13 @@ body {
 @media (max-width: 639px) {
   .workspace-header-actions > .optional-header-action { display: none; }
 }
+
+@media print {
+  .mermaid-card,
+  .d2-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+}
