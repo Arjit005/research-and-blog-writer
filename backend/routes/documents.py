@@ -8,6 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel, Field
 
+from core.mermaid import fix_mermaid_in_markdown
+from core.d2 import fix_d2_in_markdown
+
 import database as db
 from backend.deps import get_current_user
 from core.export_engine import (
@@ -67,7 +70,7 @@ def get_document(
     return {
         "article_id": article["id"],
         "topic": article["topic"],
-        "content": article["content"],
+        "content": fix_d2_in_markdown(fix_mermaid_in_markdown(article["content"])),
         "word_count": article["word_count"],
         "created_at": str(article.get("created_at", "")),
         "metadata": meta,

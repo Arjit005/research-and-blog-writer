@@ -27,24 +27,33 @@ type MermaidApi = typeof import("mermaid").default;
 
 const MERMAID_CONFIG = {
   startOnLoad: false,
-  theme: "dark",
+  theme: "base",
   securityLevel: "strict",
-  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+  fontFamily: "Inter, system-ui, -apple-system, sans-serif",
+  flowchart: {
+    htmlLabels: true,
+    wrappingWidth: 180,
+    nodeSpacing: 40,
+    rankSpacing: 50,
+    useMaxWidth: true,
+  },
   themeVariables: {
-    darkMode: true,
-    background: "#030712",
-    primaryColor: "#4f46e5",
-    primaryTextColor: "#f1f5f9",
-    primaryBorderColor: "#6366f1",
-    lineColor: "#94a3b8",
-    secondaryColor: "#0f172a",
-    tertiaryColor: "#1e293b",
-    mainBkg: "#0f172a",
-    nodeBorder: "#4338ca",
-    clusterBkg: "#090d16",
-    clusterBorder: "#334155",
-    titleColor: "#e2e8f0",
-    edgeLabelBackground: "#0b0f19",
+    darkMode: false,
+    background: "#FAFAFA",
+    fontSize: "16px",
+    primaryColor: "#EEEDFE",
+    primaryTextColor: "#3C3489",
+    primaryBorderColor: "#534AB7",
+    lineColor: "#6B6B6B",
+    secondaryColor: "#F7F7F5",
+    tertiaryColor: "#FFFFFF",
+    mainBkg: "#EEEDFE",
+    nodeBorder: "#534AB7",
+    textColor: "#18181B",
+    clusterBkg: "#F7F7F5",
+    clusterBorder: "#D4D4D8",
+    titleColor: "#18181B",
+    edgeLabelBackground: "#ffffff",
   },
 } satisfies Parameters<MermaidApi["initialize"]>[0];
 
@@ -389,11 +398,12 @@ export function MermaidCanvas({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
-        className={`relative w-full overflow-hidden flex items-center justify-center p-6 select-none touch-none ${
+        className={`relative w-full overflow-hidden flex items-center justify-center p-2 select-none touch-none ${
           isFullscreen ? "flex-1 min-h-[500px]" : "min-h-[360px] max-h-[640px]"
         } ${isFullscreen ? "" : "h-[60vh]"} ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
         style={{
-          backgroundImage: "radial-gradient(#1e293b 1px, transparent 1px)",
+          backgroundColor: "#FAFAFA",
+          backgroundImage: "radial-gradient(#d4d4d8 1px, transparent 1px)",
           backgroundSize: "24px 24px",
         }}
       >

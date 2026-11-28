@@ -8,6 +8,9 @@ import time
 import uuid
 import asyncio
 import logging
+
+from core.mermaid import fix_mermaid_in_markdown
+from core.d2 import fix_d2_in_markdown
 import threading
 import re
 import shutil
@@ -573,6 +576,8 @@ def _execute_run_worker(
         elapsed = round(time.time() - start_time, 2)
         raw_content = str(result.raw) if hasattr(result, "raw") else str(result)
         raw_content = sanitize_article_content(raw_content)
+        raw_content = fix_mermaid_in_markdown(raw_content)
+        raw_content = fix_d2_in_markdown(raw_content)
         clean_content, mermaid_code = extract_mermaid(raw_content)
         # Mask PII / secrets before persisting anything user-visible.
         clean_content = mask_pii_and_secrets(clean_content)

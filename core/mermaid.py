@@ -3,10 +3,123 @@ from __future__ import annotations
 import re
 import html
 import json
+import logging
 import uuid
 from typing import List, Tuple
 
+logger = logging.getLogger(__name__)
+
 MERMAID_FENCE_PATTERN = re.compile(r"```mermaid\s*([\s\S]*?)```", re.IGNORECASE)
+
+_STYLE_LINE_RE = re.compile(
+    r"^(\s*(?:classDef\s+\S+|style\s+\S+)\s+)(.+)$",
+    re.IGNORECASE,
+)
+_FILL_RE = re.compile(r"\bfill\s*:\s*([^,\s;]+)", re.IGNORECASE)
+_COLOR_RE = re.compile(r"(?:^|[,\s;])color\s*:", re.IGNORECASE)
+_HEX_RE = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+_EDGE_PIPE_RE = re.compile(r"\|([^|\n]+)\|")
+_EDGE_INLINE_RE = re.compile(r"--\s+([^-\n>]+?)\s+-->")
+_NODE_ID_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_-]*)\s*(?:\[|\(|\{|>|$)")
+
+
+def _hex_luminance(hex_color: str) -> float | None:
+    """Return relative luminance [0.0, 1.0] for #RGB or #RRGGBB, else None."""
+    m = _HEX_RE.match(hex_color.strip())
+    if not m:
+        return None
+    h = m.group(1)
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    r, g, b = int(h[0:2], 16) / 255.0, int(h[2:4], 16) / 255.0, int(h[4:6], 16) / 255.0
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def validate_mermaid_diagram(code: str) -> tuple[str, list[str]]:
+    """Validate and auto-fix contrast on a Mermaid diagram. Pure function; never raises."""
+    if not isinstance(code, str) or not code.strip():
+        return code, []
+    try:
+        warnings: list[str] = []
+        fixed_lines: list[str] = []
+        distinct_fills: set[str] = set()
+        node_ids: set[str] = set()
+
+        for line in code.splitlines():
+            stripped = line.strip()
+            sm = _STYLE_LINE_RE.match(line)
+            if sm:
+                prefix, props = sm.group(1), sm.group(2)
+                fm = _FILL_RE.search(props)
+                if fm:
+                    fill_val = fm.group(1).strip()
+                    distinct_fills.add(fill_val.lower())
+                    if not _COLOR_RE.search(props):
+                        lum = _hex_luminance(fill_val)
+                        if lum is None:
+                            warnings.append(f"Non-hex fill '{fill_val}' has no text color")
+                        else:
+                            text_color = "#1a1a1a" if lum > 0.5 else "#ffffff"
+                            sep = "" if props.rstrip().endswith(",") else ","
+                            line = f"{prefix}{props.rstrip()}{sep}color:{text_color}"
+                fixed_lines.append(line)
+                continue
+
+            # Check edge labels (> 4 words)
+            for em in _EDGE_PIPE_RE.finditer(stripped):
+                label = em.group(1).strip()
+                if len(label.split()) > 4:
+                    warnings.append(f"Edge label exceeds 4 words: '{label}'")
+            for em in _EDGE_INLINE_RE.finditer(stripped):
+                label = em.group(1).strip()
+                if len(label.split()) > 4:
+                    warnings.append(f"Edge label exceeds 4 words: '{label}'")
+
+            # Count distinct node IDs (skip directives/subgraphs/end)
+            if stripped and not re.match(
+                r"^(?:flowchart|graph|sequenceDiagram|stateDiagram|classDiagram|erDiagram|journey|gantt|pie|gitGraph|mindmap|timeline|subgraph|end|direction|%%)\b",
+                stripped,
+                re.IGNORECASE,
+            ):
+                for part in re.split(r"--+>?|==+>?|-\.+->", stripped):
+                    nm = _NODE_ID_RE.match(part.strip())
+                    if nm:
+                        node_ids.add(nm.group(1))
+
+            fixed_lines.append(line)
+
+        if len(node_ids) > 8:
+            warnings.append(f"Diagram has {len(node_ids)} nodes (max 8 recommended)")
+        if len(distinct_fills) > 3:
+            warnings.append(f"Diagram uses {len(distinct_fills)} fill colours (max 3 recommended)")
+
+        return "\n".join(fixed_lines), warnings
+    except Exception as exc:
+        return code, [f"Validator error: {exc}"]
+
+
+def fix_mermaid_in_markdown(markdown: str) -> str:
+    """Fix Mermaid blocks in-place within markdown, leaving all other text identical."""
+    if not isinstance(markdown, str) or not markdown:
+        return markdown
+    try:
+        block_idx = 0
+
+        def _replace(match: re.Match[str]) -> str:
+            nonlocal block_idx
+            raw_block = match.group(1)
+            stripped = raw_block.strip()
+            if not stripped:
+                return match.group(0)
+            fixed_code, warnings = validate_mermaid_diagram(stripped)
+            for w in warnings:
+                logger.warning("Mermaid block %d: %s", block_idx, w)
+            block_idx += 1
+            return match.group(0).replace(stripped, fixed_code, 1)
+
+        return MERMAID_FENCE_PATTERN.sub(_replace, markdown)
+    except Exception:
+        return markdown
 
 
 def split_markdown_and_mermaid(content: str) -> List[Tuple[str, str]]:
@@ -20,6 +133,7 @@ def split_markdown_and_mermaid(content: str) -> List[Tuple[str, str]]:
 
     segments: List[Tuple[str, str]] = []
     last_idx = 0
+    block_idx = 0
 
     for match in MERMAID_FENCE_PATTERN.finditer(content):
         start, end = match.span()
@@ -33,7 +147,11 @@ def split_markdown_and_mermaid(content: str) -> List[Tuple[str, str]]:
         # Extracted diagram code
         diagram_code = match.group(1).strip()
         if diagram_code:
-            segments.append(("diagram", diagram_code))
+            fixed_code, warnings = validate_mermaid_diagram(diagram_code)
+            for w in warnings:
+                logger.warning("Mermaid block %d: %s", block_idx, w)
+            block_idx += 1
+            segments.append(("diagram", fixed_code))
 
         last_idx = end
 

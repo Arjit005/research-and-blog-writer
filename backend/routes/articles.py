@@ -7,6 +7,9 @@ from typing import Dict, Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from core.mermaid import fix_mermaid_in_markdown
+from core.d2 import fix_d2_in_markdown
+
 import database as db
 from backend.deps import get_current_user
 from backend.schemas import (
@@ -97,7 +100,7 @@ def get_article(article_id: int, user: Dict[str, Any] = Depends(get_current_user
     return ArticleDetail(
         id=article["id"],
         topic=article["topic"],
-        content=article["content"],
+        content=fix_d2_in_markdown(fix_mermaid_in_markdown(article["content"])),
         word_count=article["word_count"],
         tone=article.get("tone"),
         audience=article.get("audience"),

@@ -51,13 +51,13 @@ export function D2Canvas({
           void d2Instance?.dispose();
           if (!disposed) setError("Rendering took too long. Try simplifying or splitting this diagram.");
         }, 15_000);
-        const result = await d2Instance.compile(renderableCode, { layout: "tala", darkThemeID: 200 });
+        const result = await d2Instance.compile(renderableCode, { layout: "dagre", themeID: 0 });
         if (disposed || timedOut) return;
         const svg = await d2Instance.render(result.diagram, {
           ...result.renderOptions,
           center: true,
-          pad: 32,
-          darkThemeID: 200,
+          pad: 24,
+          themeID: 0,
           noXMLTag: true,
         });
         if (disposed || timedOut) return;
@@ -108,7 +108,14 @@ export function D2Canvas({
         </div>
       </div>
 
-      <div className="flex min-h-[280px] max-h-[640px] items-center justify-center overflow-auto p-6">
+      <div
+        className="flex min-h-[280px] max-h-[640px] items-center justify-center overflow-auto p-2"
+        style={{
+          backgroundColor: "#FAFAFA",
+          backgroundImage: "radial-gradient(#d4d4d8 1px, transparent 1px)",
+          backgroundSize: "24px 24px",
+        }}
+      >
         {showSource ? (
           <pre className="max-h-[560px] w-full overflow-auto whitespace-pre-wrap rounded-xl bg-surface-raised p-4 font-mono text-xs text-foreground">
             <code>{code}</code>
