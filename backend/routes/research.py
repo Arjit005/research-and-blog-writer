@@ -10,6 +10,8 @@ import asyncio
 import logging
 import threading
 import re
+import shutil
+from pathlib import Path
 from typing import Dict, Any, Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request, status
@@ -32,6 +34,23 @@ _CANCELLATION_EVENTS: Dict[str, threading.Event] = {}
 # Mapping: run_id -> set of asyncio.Queue instances (one queue per active SSE client).
 _RUN_TOKEN_LISTENERS: Dict[str, Set[asyncio.Queue]] = {}
 _RUN_TOKEN_LOCK = threading.Lock()
+
+
+def _run_checkpoint_dir(run_id: str) -> Path:
+    """Return an isolated checkpoint directory for a durable research run."""
+    safe_run_id = re.sub(r"[^A-Za-z0-9_-]", "_", str(run_id))
+    root = Path(os.getenv("RESEARCH_CHECKPOINT_DIR", ".research_checkpoints")).expanduser()
+    return root / safe_run_id
+
+
+def _latest_crew_checkpoint(directory: Path) -> Optional[Path]:
+    """Find the newest valid CrewAI JSON checkpoint for this run."""
+    try:
+        checkpoints = [path for path in directory.rglob("*.json") if path.is_file()]
+        return max(checkpoints, key=lambda path: path.stat().st_mtime_ns) if checkpoints else None
+    except OSError:
+        logger.exception("Could not inspect CrewAI checkpoints in %s", directory)
+        return None
 
 
 def register_token_listener(run_id: str, q: asyncio.Queue) -> None:
@@ -216,6 +235,7 @@ def _execute_run_worker(
     """Background worker executing CrewAI pipeline and storing sequenced events."""
     cancel_event = threading.Event()
     _CANCELLATION_EVENTS[run_id] = cancel_event
+    checkpoint_dir: Optional[Path] = None
 
     active_claim = db.get_active_run_claim(run_id)
     worker_id_val = str(active_claim.get("worker_id", "")) if active_claim else ""
@@ -296,7 +316,20 @@ def _execute_run_worker(
         if not db.start_research_job(run_id):
             logger.info("Skipping duplicate or already-started delivery for run %s", run_id)
             return
-        db.append_job_event(run_id, "status", {"status": "running", "stage": "Initializing multi-agent squad..."})
+        checkpoint_dir = _run_checkpoint_dir(run_id)
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            checkpoint_dir.chmod(0o700)
+        except OSError:
+            pass
+        latest_checkpoint = _latest_crew_checkpoint(checkpoint_dir)
+        if latest_checkpoint:
+            db.append_job_event(run_id, "status", {
+                "status": "running",
+                "stage": "Resuming from the last completed research task...",
+            })
+        else:
+            db.append_job_event(run_id, "status", {"status": "running", "stage": "Initializing multi-agent squad..."})
 
         # Dynamic imports to avoid loading crew in pure tests if not invoked
         from crew import ResearchAndBlogWriter
@@ -326,7 +359,7 @@ def _execute_run_worker(
                 raise InterruptedError("Research run was cancelled by user.")
 
         stage_lock = threading.Lock()
-        completed_tasks_count = 0
+        completed_tasks_count = db.get_job_task_completion_count(run_id)
         stage_start_times: Dict[str, float] = {"stage_1": time.time()}
 
         def on_step(step_output: Any) -> None:
@@ -470,7 +503,19 @@ def _execute_run_worker(
                 start_time = time.time()
                 _reset_llm_usage_stats()
                 crew_instance = ResearchAndBlogWriter()
-                crew_obj = crew_instance.crew(step_callback=on_step, task_callback=on_task)
+                from crewai import CheckpointConfig
+
+                checkpoint_config = CheckpointConfig(
+                    location=str(checkpoint_dir),
+                    max_checkpoints=8,
+                )
+                crew_obj = crew_instance.crew(
+                    step_callback=on_step,
+                    task_callback=on_task,
+                    checkpoint=checkpoint_config,
+                )
+                from tools.source_registry import configure_visited_url_storage
+                configure_visited_url_storage(checkpoint_dir / "verified_sources.json")
                 from core.diagram_advisor import DiagramAdvisor
 
                 diagram_plan = DiagramAdvisor.recommend_visual_modality(safe_topic)
@@ -479,10 +524,40 @@ def _execute_run_worker(
                     f"{diagram_plan['recommended_diagram_type']} diagram. "
                     f"Reason: {diagram_plan['rationale']}"
                 )
-                result = crew_obj.kickoff(inputs={
+                kickoff_inputs = {
                     "topic": safe_topic,
                     "visual_guidance": visual_guidance,
-                })
+                }
+                if latest_checkpoint:
+                    restore_config = CheckpointConfig(
+                        location=str(checkpoint_dir),
+                        max_checkpoints=8,
+                        restore_from=str(latest_checkpoint),
+                    )
+                    restored_crew = type(crew_obj).from_checkpoint(restore_config)
+
+                    # CrewAI serializes a BaseLLM's provider configuration but
+                    # cannot reconstruct this project's custom FallbackLLM type.
+                    # Rebind every restored task/agent to the fresh configured
+                    # instances before kickoff so provider fallback and scoped
+                    # API keys remain active after recovery.
+                    llms_by_role = {agent.role: agent.llm for agent in crew_obj.agents}
+                    restored_agents = list(restored_crew.agents)
+                    restored_agents.extend(
+                        task.agent for task in restored_crew.tasks if getattr(task, "agent", None) is not None
+                    )
+                    for agent in restored_agents:
+                        fresh_llm = llms_by_role.get(agent.role)
+                        if fresh_llm is not None:
+                            agent.llm = fresh_llm
+
+                    # Runtime callbacks are process-local closures and must be
+                    # attached again after reconstructing the Crew from disk.
+                    restored_crew.step_callback = on_step
+                    restored_crew.task_callback = on_task
+                    result = restored_crew.kickoff(inputs=kickoff_inputs)
+                else:
+                    result = crew_obj.kickoff(inputs=kickoff_inputs)
                 usage_stats = _get_llm_usage_stats()
         finally:
             try:
@@ -532,6 +607,12 @@ def _execute_run_worker(
             logger.info("Article persistence aborted due to lease/cancellation fence: %s", perm_err)
             tracer.end_job(outputs={"status": "cancelled", "reason": str(perm_err)})
             return
+
+        # Token listeners are process-local, while the executor is a separate
+        # worker service. Publish the already-sanitized article in sequenced
+        # durable chunks so any API instance can resume the stream safely.
+        for offset in range(0, len(clean_content), 1200):
+            db.append_job_event(run_id, "token", {"delta": clean_content[offset:offset + 1200]})
 
         # Extract and persist visual artifacts (Mermaid diagrams, structured charts, and figures)
         try:
@@ -655,6 +736,18 @@ def _execute_run_worker(
             heartbeat_thread.join(timeout=1)
         _CANCELLATION_EVENTS.pop(run_id, None)
         cleanup_run_tokens(run_id)
+        try:
+            from tools.source_registry import disable_visited_url_storage
+            disable_visited_url_storage()
+        except Exception:
+            pass
+        if checkpoint_dir is not None:
+            try:
+                final_job = db.get_research_job(run_id)
+                if final_job and final_job.get("status") in _TERMINAL_JOB_STATUSES:
+                    shutil.rmtree(checkpoint_dir, ignore_errors=True)
+            except Exception:
+                logger.debug("Could not clean terminal run checkpoint directory for %s", run_id, exc_info=True)
 
 
 @router.post("", response_model=RunResponse)
@@ -699,20 +792,9 @@ def create_research_run(
 
     db.append_job_event(run_id, "run_start", {"run_id": run_id, "topic": topic, "timestamp": time.time()})
 
-    # 3. Spawn background thread
-    from core.task_queue import enqueue_research_run
-
-    enqueue_research_run(
-        _execute_run_worker,
-        run_id,
-        topic,
-        user["id"],
-        body.tone,
-        body.audience,
-        body.target_length,
-    )
-
-    return RunResponse(run_id=run_id, status="running", topic=topic)
+    # The database is the durable queue. A dedicated worker claims the job;
+    # API processes never execute research work in request-serving threads.
+    return RunResponse(run_id=run_id, status="queued", topic=topic)
 
 
 @router.get("/{run_id}", response_model=RunStatusResponse)

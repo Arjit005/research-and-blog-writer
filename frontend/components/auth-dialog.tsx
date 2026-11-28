@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { api, errorMessage, User } from "@/lib/api";
+import { Auth3DVisual } from "@/components/auth-3d-visual";
 import {
   Mail,
   Lock,
@@ -233,7 +234,7 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="auth-dialog-title"
-        className="relative w-full max-w-4xl bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col md:flex-row my-auto border border-slate-200/80"
+        className="relative w-full max-w-4xl bg-surface rounded-3xl shadow-2xl overflow-hidden flex flex-col md:flex-row my-auto border border-border/80"
       >
         {/* Close Button */}
         {onClose && (
@@ -241,7 +242,7 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
             type="button"
             onClick={onClose}
             aria-label="Close sign-in dialog"
-            className="absolute right-4 top-4 z-20 p-2 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors focus:outline-none focus:ring-2 focus:ring-slate-400"
+            className="absolute right-4 top-4 z-20 p-2 rounded-full text-muted-foreground hover:text-muted-foreground hover:bg-surface-raised transition-colors focus:outline-none focus:ring-2 focus:ring-border"
           >
             <X className="w-5 h-5" aria-hidden="true" />
           </button>
@@ -250,15 +251,15 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
         {/* =========================================================================
             LEFT 40% PANEL: Dark Navy, Branding, Welcome Back, Abstract Wave Graphics
            ========================================================================= */}
-        <div className="relative md:w-5/12 bg-gradient-to-br from-[#0a0f1d] via-[#0f172a] to-[#1e1b4b] text-white p-8 md:p-10 flex flex-col justify-between overflow-hidden shrink-0 min-h-[260px] md:min-h-[580px]">
+        <div className="relative md:w-5/12 bg-gradient-to-br from-[#070b14] via-[#0c1626] to-[#0f2438] text-white p-8 md:p-10 flex flex-col justify-between overflow-hidden shrink-0 min-h-[260px] md:min-h-[580px] border-r border-border/60">
           {/* Subtle Ambient Radial Lighting */}
-          <div className="absolute -top-20 -left-20 w-72 h-72 bg-indigo-500/20 rounded-full blur-3xl pointer-events-none" />
-          <div className="absolute -bottom-20 -right-20 w-80 h-80 bg-violet-600/25 rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute -top-20 -left-20 w-72 h-72 bg-sky-400/15 rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute -bottom-20 -right-20 w-80 h-80 bg-emerald-400/15 rounded-full blur-3xl pointer-events-none" />
 
           {/* Top Brand Header */}
           <div className="relative z-10">
-            <div className="inline-flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-white/10 backdrop-blur-md border border-white/15 text-indigo-200 text-xs font-medium tracking-wide">
-              <div className="w-5 h-5 rounded-lg bg-gradient-to-tr from-indigo-500 to-violet-500 flex items-center justify-center shadow-sm">
+            <div className="inline-flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-white/10 backdrop-blur-md border border-white/15 text-signal text-xs font-medium tracking-wide">
+              <div className="w-5 h-5 rounded-lg bg-gradient-to-tr from-signal to-signal flex items-center justify-center shadow-sm">
                 <Sparkles className="w-3 h-3 text-white" aria-hidden="true" />
               </div>
               <span className="font-semibold text-white tracking-tight">Research Studio</span>
@@ -269,59 +270,19 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
                 Welcome <br className="hidden md:inline" />
                 Back!
               </h2>
-              <p className="mt-3 text-sm text-slate-300/90 leading-relaxed max-w-xs">
+              <p className="mt-3 text-sm text-foreground leading-relaxed max-w-xs">
                 Empowering AI research squads, multi-source synthesis, and automated publications in one studio.
               </p>
             </div>
           </div>
 
-          {/* Abstract Wave Pattern (Geometric Curves) */}
-          <div className="relative z-0 mt-6 md:mt-auto pt-4 pointer-events-none select-none">
-            <svg
-              className="w-full h-36 md:h-48 text-indigo-400/20 overflow-visible"
-              viewBox="0 0 400 200"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-              aria-hidden="true"
-            >
-              <defs>
-                <linearGradient id="waveGradA" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#818cf8" stopOpacity="0.45" />
-                  <stop offset="50%" stopColor="#a855f7" stopOpacity="0.3" />
-                  <stop offset="100%" stopColor="#6366f1" stopOpacity="0.05" />
-                </linearGradient>
-                <linearGradient id="waveGradB" x1="0%" y1="100%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.2" />
-                  <stop offset="100%" stopColor="#818cf8" stopOpacity="0.5" />
-                </linearGradient>
-              </defs>
-              <path
-                d="M -20 160 C 80 80, 160 220, 260 120 C 340 40, 390 100, 440 60"
-                stroke="url(#waveGradA)"
-                strokeWidth="2.5"
-                fill="none"
-              />
-              <path
-                d="M -20 180 C 70 110, 150 240, 250 140 C 330 60, 390 130, 440 90"
-                stroke="url(#waveGradA)"
-                strokeWidth="2"
-                strokeDasharray="4 6"
-                fill="none"
-              />
-              <path
-                d="M -20 130 C 90 60, 170 180, 280 90 C 350 20, 400 80, 450 40"
-                stroke="url(#waveGradB)"
-                strokeWidth="1.5"
-                fill="none"
-              />
-              <circle cx="260" cy="120" r="4" fill="#a855f7" />
-              <circle cx="160" cy="220" r="3" fill="#818cf8" />
-              <circle cx="90" cy="60" r="3.5" fill="#38bdf8" />
-            </svg>
+          {/* 3D Animated Spatial Core */}
+          <div className="relative z-0 mt-4 md:mt-auto pt-2 pointer-events-none select-none">
+            <Auth3DVisual />
           </div>
 
           {/* Left Footer Badges */}
-          <div className="relative z-10 pt-4 border-t border-white/10 flex items-center justify-between text-[11px] text-slate-400">
+          <div className="relative z-10 pt-4 border-t border-white/10 flex items-center justify-between text-[11px] text-muted-foreground">
             <span>v2.4 Technical Studio</span>
             <span className="flex items-center gap-1 text-emerald-400 font-medium">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
@@ -333,14 +294,14 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
         {/* =========================================================================
             RIGHT 60% PANEL: Clean White, Centered Login Form, SaaS Hierarchy
            ========================================================================= */}
-        <div className="md:w-7/12 p-8 md:p-12 flex flex-col justify-center bg-white text-slate-900">
+        <div className="md:w-7/12 p-8 md:p-12 flex flex-col justify-center bg-surface text-foreground">
           <div className="max-w-md w-full mx-auto">
             {/* Header / Subtitle */}
             <div className="mb-6">
-              <h3 id="auth-dialog-title" className="text-2xl font-bold tracking-tight text-slate-900">
+              <h3 id="auth-dialog-title" className="text-2xl font-bold tracking-tight text-muted-foreground">
                 {authMode === "password" ? "Sign in to account" : "Email Passcode Sign-In"}
               </h3>
-              <p className="text-sm text-slate-500 mt-1">
+              <p className="text-sm text-muted-foreground mt-1">
                 {authMode === "password"
                   ? "Enter your credentials to access your research workspace"
                   : "We'll send a single-use verification code to your inbox"}
@@ -352,10 +313,10 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
               type="button"
               onClick={handleGoogleSignIn}
               disabled={loading}
-              className="w-full py-2.5 px-4 bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-700 font-medium border border-slate-300 rounded-xl transition duration-150 flex items-center justify-center gap-3 text-sm shadow-sm hover:shadow focus:outline-none focus:ring-2 focus:ring-slate-300 disabled:opacity-50 disabled:cursor-not-allowed group"
+              className="w-full py-2.5 px-4 bg-surface-raised hover:bg-surface-raised/80 active:bg-surface-raised text-foreground font-medium border border-border rounded-xl transition duration-150 flex items-center justify-center gap-3 text-sm shadow-sm hover:shadow focus:outline-none focus:ring-2 focus:ring-border disabled:opacity-50 disabled:cursor-not-allowed group"
             >
               {loading ? (
-                <Loader2 className="w-4 h-4 animate-spin text-slate-500" />
+                <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
               ) : (
                 <svg className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" viewBox="0 0 24 24" aria-hidden="true">
                   <path
@@ -381,8 +342,8 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
 
             {/* Clean Modern Divider */}
             <div className="relative flex items-center justify-center my-5">
-              <div className="border-t border-slate-200 w-full" />
-              <span className="bg-white px-3 text-xs uppercase tracking-wider text-slate-400 font-semibold absolute">
+              <div className="border-t border-border w-full" />
+              <span className="bg-surface px-3 text-xs uppercase tracking-wider text-muted-foreground font-semibold absolute">
                 or with email
               </span>
             </div>
@@ -402,11 +363,11 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
             {authMode === "password" ? (
               <form onSubmit={handlePasswordAuth} className="space-y-4">
                 <div>
-                  <label htmlFor="auth-email-input" className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1.5">
+                  <label htmlFor="auth-email-input" className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
                     Email address
                   </label>
                   <div className="relative">
-                    <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" aria-hidden="true" />
+                    <Mail className="w-4 h-4 text-muted-foreground absolute left-3.5 top-3" aria-hidden="true" />
                     <input
                       id="auth-email-input"
                       type="email"
@@ -415,14 +376,14 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
                       placeholder="name@company.com"
                       value={passwordEmail}
                       onChange={(e) => setPasswordEmail(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900 text-sm placeholder:text-slate-400 text-slate-900 transition"
+                      className="w-full pl-10 pr-4 py-2.5 bg-surface-raised border border-border rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-border focus:border-border text-sm placeholder:text-muted-foreground text-muted-foreground transition"
                     />
                   </div>
                 </div>
 
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
-                    <label htmlFor="auth-password-input" className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    <label htmlFor="auth-password-input" className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Password
                     </label>
                     <button
@@ -435,13 +396,13 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
                         setOtpStep("email");
                         setError(null);
                       }}
-                      className="text-xs font-medium text-slate-600 hover:text-slate-900 hover:underline transition"
+                      className="text-xs font-medium text-muted-foreground hover:text-muted-foreground hover:underline transition"
                     >
                       Forgot password?
                     </button>
                   </div>
                   <div className="relative">
-                    <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" aria-hidden="true" />
+                    <Lock className="w-4 h-4 text-muted-foreground absolute left-3.5 top-3" aria-hidden="true" />
                     <input
                       id="auth-password-input"
                       type={showPassword ? "text" : "password"}
@@ -450,13 +411,13 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
                       placeholder="••••••••"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="w-full pl-10 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900 text-sm placeholder:text-slate-400 text-slate-900 transition"
+                      className="w-full pl-10 pr-10 py-2.5 bg-surface-raised border border-border rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-border focus:border-border text-sm placeholder:text-muted-foreground text-muted-foreground transition"
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
                       aria-label={showPassword ? "Hide password" : "Show password"}
-                      className="absolute right-3 top-2.5 p-1 rounded-md text-slate-400 hover:text-slate-700 transition"
+                      className="absolute right-3 top-2.5 p-1 rounded-md text-muted-foreground hover:text-muted-foreground transition"
                     >
                       {showPassword ? (
                         <EyeOff className="w-4 h-4" aria-hidden="true" />
@@ -483,19 +444,19 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
                       }}
                       className={`w-4 h-4 rounded border flex items-center justify-center transition ${
                         rememberMe
-                          ? "bg-slate-900 border-slate-900 text-white"
-                          : "border-slate-300 bg-white"
+                          ? "bg-surface border-border text-white"
+                          : "border-border bg-surface-raised"
                       }`}
                     >
                       {rememberMe && <Check className="w-3 h-3 stroke-[3]" aria-hidden="true" />}
                     </div>
-                    <span className="text-xs text-slate-600 font-medium">Remember me</span>
+                    <span className="text-xs text-muted-foreground font-medium">Remember me</span>
                   </label>
 
                   <button
                     type="button"
                     onClick={() => setShowOtpField(!showOtpField)}
-                    className="text-xs text-indigo-600 hover:text-indigo-800 font-medium transition"
+                    className="text-xs text-signal hover:text-signal font-medium transition"
                   >
                     {showOtpField ? "– Hide 2FA" : "+ 2FA Code"}
                   </button>
@@ -503,28 +464,28 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
 
                 {/* Optional 2FA Input Container */}
                 {showOtpField && (
-                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2 animate-in fade-in duration-200">
+                  <div className="p-3 bg-surface-raised border border-border rounded-xl space-y-2 animate-in fade-in duration-200">
                     <div className="flex items-center justify-between text-xs">
-                      <span className="text-slate-600 font-medium">Email 2FA Passcode</span>
+                      <span className="text-muted-foreground font-medium">Email 2FA Passcode</span>
                       <button
                         type="button"
                         onClick={handleRequestPasswordOtp}
                         disabled={requestingPasswordOtp || !passwordEmail}
-                        className="text-indigo-600 hover:underline font-medium disabled:opacity-50 flex items-center gap-1"
+                        className="text-signal hover:underline font-medium disabled:opacity-50 flex items-center gap-1"
                       >
                         {requestingPasswordOtp && <Loader2 className="w-3 h-3 animate-spin" />}
                         Send code
                       </button>
                     </div>
                     <div className="relative">
-                      <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                      <KeyRound className="w-4 h-4 text-muted-foreground absolute left-3 top-2.5" />
                       <input
                         type="text"
                         maxLength={6}
                         placeholder="6-digit code"
                         value={passwordOtp}
                         onChange={(e) => setPasswordOtp(e.target.value)}
-                        className="w-full pl-9 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg font-mono text-sm tracking-wider focus:outline-none focus:ring-2 focus:ring-slate-900"
+                        className="w-full pl-9 pr-3 py-1.5 bg-surface-raised border border-border rounded-lg font-mono text-sm tracking-wider text-foreground focus:outline-none focus:ring-2 focus:ring-border"
                       />
                     </div>
                     {passwordOtpSentMsg && (
@@ -537,7 +498,7 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
                 <button
                   type="submit"
                   disabled={loading || !passwordEmail || password.length < 6}
-                  className="w-full mt-2 py-3 px-4 bg-slate-950 hover:bg-black active:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-full font-semibold transition-all duration-150 flex items-center justify-center gap-2 text-sm shadow-md hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
+                  className="w-full mt-2 py-3 px-4 bg-background hover:bg-black active:bg-surface disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-full font-semibold transition-all duration-150 flex items-center justify-center gap-2 text-sm shadow-md hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-border focus:ring-offset-2"
                 >
                   {loading ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
@@ -558,21 +519,21 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
                       setOtpStep("email");
                       setError(null);
                     }}
-                    className="w-full py-2 px-3 rounded-xl border border-slate-200 hover:border-slate-300 bg-slate-50 hover:bg-slate-100 text-xs text-slate-600 hover:text-slate-900 transition flex items-center justify-between group"
+                    className="w-full py-2 px-3 rounded-xl border border-border hover:border-border bg-surface-raised hover:bg-surface-raised text-xs text-muted-foreground hover:text-muted-foreground transition flex items-center justify-between group"
                   >
                     <span className="flex items-center gap-2 font-medium">
-                      <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" aria-hidden="true" />
+                      <ShieldCheck className="w-3.5 h-3.5 text-signal" aria-hidden="true" />
                       Sign in with email passcode instead (passwordless)
                     </span>
-                    <ChevronRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-slate-700 transition-transform group-hover:translate-x-0.5" />
+                    <ChevronRight className="w-3.5 h-3.5 text-muted-foreground group-hover:text-muted-foreground transition-transform group-hover:translate-x-0.5" />
                   </button>
                 </div>
               </form>
             ) : (
               /* Secondary Passwordless OTP Flow */
               <div className="space-y-4">
-                <div className="flex items-center justify-between pb-1 border-b border-slate-100">
-                  <span className="text-xs font-bold uppercase tracking-wider text-indigo-600 flex items-center gap-1.5">
+                <div className="flex items-center justify-between pb-1 border-b border-border">
+                  <span className="text-xs font-bold uppercase tracking-wider text-signal flex items-center gap-1.5">
                     <ShieldCheck className="w-3.5 h-3.5" aria-hidden="true" />
                     Email Passcode Flow
                   </span>
@@ -582,7 +543,7 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
                       setAuthMode("password");
                       setError(null);
                     }}
-                    className="text-xs font-medium text-slate-500 hover:text-slate-900 transition"
+                    className="text-xs font-medium text-muted-foreground hover:text-muted-foreground transition"
                   >
                     Back to Password
                   </button>
@@ -591,11 +552,11 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
                 {otpStep === "email" ? (
                   <form onSubmit={handleRequestOtp} className="space-y-4">
                     <div>
-                      <label htmlFor="otp-email-input" className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1.5">
+                      <label htmlFor="otp-email-input" className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
                         Email address
                       </label>
                       <div className="relative">
-                        <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" aria-hidden="true" />
+                        <Mail className="w-4 h-4 text-muted-foreground absolute left-3.5 top-3" aria-hidden="true" />
                         <input
                           id="otp-email-input"
                           type="email"
@@ -604,7 +565,7 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
                           placeholder="name@company.com"
                           value={otpEmail}
                           onChange={(e) => setOtpEmail(e.target.value)}
-                          className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900 text-sm placeholder:text-slate-400 text-slate-900 transition"
+                          className="w-full pl-10 pr-4 py-2.5 bg-surface-raised border border-border rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-border focus:border-border text-sm placeholder:text-muted-foreground text-muted-foreground transition"
                         />
                       </div>
                     </div>
@@ -612,7 +573,7 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
                     <button
                       type="submit"
                       disabled={loading || !otpEmail}
-                      className="w-full py-3 px-4 bg-slate-950 hover:bg-black active:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-full font-semibold transition-all duration-150 flex items-center justify-center gap-2 text-sm shadow-md hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-slate-900"
+                      className="w-full py-3 px-4 bg-background hover:bg-black active:bg-surface disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-full font-semibold transition-all duration-150 flex items-center justify-center gap-2 text-sm shadow-md hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-border"
                     >
                       {loading ? (
                         <Loader2 className="w-4 h-4 animate-spin" />
@@ -628,20 +589,20 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
                   <form onSubmit={handleVerifyOtp} className="space-y-4">
                     <div>
                       <div className="flex items-center justify-between mb-1.5">
-                        <label htmlFor="otp-code-input" className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                        <label htmlFor="otp-code-input" className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Verification Code
                         </label>
                         <button
                           type="button"
                           onClick={() => setOtpStep("email")}
-                          className="text-xs font-medium text-indigo-600 hover:underline"
+                          className="text-xs font-medium text-signal hover:underline"
                         >
                           Change Email
                         </button>
                       </div>
 
                       <div className="relative">
-                        <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" aria-hidden="true" />
+                        <KeyRound className="w-4 h-4 text-muted-foreground absolute left-3.5 top-3.5" aria-hidden="true" />
                         <input
                           id="otp-code-input"
                           type="text"
@@ -650,11 +611,11 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
                           placeholder="123456"
                           value={otpCode}
                           onChange={(e) => setOtpCode(e.target.value)}
-                          className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl tracking-widest text-center text-lg font-mono focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900 text-slate-900 transition"
+                          className="w-full pl-10 pr-4 py-2.5 bg-surface-raised border border-border rounded-xl tracking-widest text-center text-lg font-mono focus:bg-white focus:outline-none focus:ring-2 focus:ring-border text-muted-foreground transition"
                         />
                       </div>
-                      <p className="text-xs text-slate-500 mt-1.5">
-                        Passcode sent to <span className="text-slate-800 font-semibold">{otpEmail}</span>
+                      <p className="text-xs text-muted-foreground mt-1.5">
+                        Passcode sent to <span className="text-muted-foreground font-semibold">{otpEmail}</span>
                       </p>
 
                       {devCode && (
@@ -668,7 +629,7 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
                     <button
                       type="submit"
                       disabled={loading || otpCode.length < 6}
-                      className="w-full py-3 px-4 bg-slate-950 hover:bg-black active:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-full font-semibold transition-all duration-150 flex items-center justify-center gap-2 text-sm shadow-md hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-slate-900"
+                      className="w-full py-3 px-4 bg-background hover:bg-black active:bg-surface disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-full font-semibold transition-all duration-150 flex items-center justify-center gap-2 text-sm shadow-md hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-border"
                     >
                       {loading ? (
                         <Loader2 className="w-4 h-4 animate-spin" />
@@ -682,13 +643,13 @@ export function AuthDialog({ isOpen, onSuccess, onClose }: AuthDialogProps) {
             )}
 
             {/* Footer Registration Link */}
-            <div className="mt-6 pt-5 border-t border-slate-100 text-center">
-              <p className="text-xs text-slate-600">
+            <div className="mt-6 pt-5 border-t border-border text-center">
+              <p className="text-xs text-muted-foreground">
                 Don&apos;t have an account?{" "}
                 <button
                   type="button"
                   onClick={handleCreateAccountClick}
-                  className="text-slate-950 font-bold hover:underline transition underline-offset-4"
+                  className="text-muted-foreground font-bold hover:underline transition underline-offset-4"
                 >
                   Register Now
                 </button>

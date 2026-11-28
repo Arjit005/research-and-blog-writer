@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useDialogAccessibility } from "@/hooks/use-dialog-accessibility";
 import {
   X,
   User,
@@ -44,6 +45,7 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>("account");
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const dialogRef = useDialogAccessibility<HTMLDivElement>(isOpen, onClose);
 
   // Agent config state
   const [selectedModel, setSelectedModel] = useState("gemini-2.5-flash");
@@ -66,7 +68,7 @@ export function SettingsModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div role="dialog" aria-modal="true" aria-labelledby="settings-title" className="w-full h-dvh sm:h-auto sm:max-h-[85vh] max-w-4xl bg-surface border-0 sm:border border-border rounded-none sm:rounded-2xl shadow-2xl overflow-hidden flex flex-col md:flex-row">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="settings-title" className="w-full h-dvh sm:h-auto sm:max-h-[85vh] max-w-4xl bg-surface border-0 sm:border border-border rounded-none sm:rounded-2xl shadow-2xl overflow-hidden flex flex-col md:flex-row">
         {/* Left Navigation */}
         <div className="w-full md:w-64 bg-surface-raised/50 border-b md:border-b-0 md:border-r border-border p-3 sm:p-4 flex flex-col justify-between shrink-0 max-h-[42dvh] md:max-h-none overflow-y-auto">
           <div className="space-y-1">
@@ -309,7 +311,7 @@ export function SettingsModal({
                     <span className="text-xs font-medium text-foreground block">TiDB Cloud Serverless</span>
                     <span className="text-[11px] text-muted-foreground">MySQL-compatible persistent state storage</span>
                   </div>
-                  <span className="text-[10px] font-mono px-2 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-md">
+                  <span className="text-[10px] font-mono px-2 py-0.5 bg-accent/10 text-accent border border-accent/20 rounded-md">
                     Connected
                   </span>
                 </div>
@@ -400,14 +402,14 @@ export function SettingsModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="px-3.5 py-1.5 bg-surface-raised hover:bg-slate-800 text-muted-foreground hover:text-foreground text-xs rounded-xl transition border border-border"
+                className="px-3.5 py-1.5 bg-surface-raised hover:bg-surface-raised text-muted-foreground hover:text-foreground text-xs rounded-xl transition border border-border"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleSave}
-                className="px-4 py-1.5 bg-accent hover:bg-accent-strong text-white text-xs font-medium rounded-xl transition shadow-md shadow-accent/20 flex items-center gap-1.5"
+                className="px-4 py-1.5 bg-accent hover:bg-accent-strong text-accent-foreground text-xs font-medium rounded-xl transition shadow-md shadow-accent/20 flex items-center gap-1.5"
               >
                 <Save className="w-3.5 h-3.5" />
                 <span>Save Changes</span>

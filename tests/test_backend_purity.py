@@ -31,10 +31,10 @@ def test_no_static_streamlit_imports_in_core_backend():
                     if f.endswith(".py"):
                         files_to_scan.append(os.path.join(root, f))
 
-    # Also scan all auth files except ui.py (which is dedicated to Streamlit)
+    # Scan every authentication module; presentation code is kept out of auth.
     auth_dir = os.path.join(project_root, "auth")
     for f in os.listdir(auth_dir):
-        if f.endswith(".py") and f != "ui.py":
+        if f.endswith(".py"):
             files_to_scan.append(os.path.join(auth_dir, f))
 
     for file_path in files_to_scan:

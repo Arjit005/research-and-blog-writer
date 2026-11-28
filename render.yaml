@@ -18,6 +18,8 @@ services:
       # mode: Secure HttpOnly cookies with the __Host- prefix.
       - key: ENVIRONMENT
         value: production
+      - key: RESEARCH_WORKER_MODE
+        value: "true"
       - key: AUTH_DEV_MODE
         value: "false"
 
@@ -62,6 +64,54 @@ services:
         value: "true"
 
       # --- LangSmith observability (optional) ---
+      - key: LANGSMITH_API_KEY
+        sync: false
+      - key: LANGSMITH_TRACING
+        value: "true"
+      - key: LANGSMITH_PROJECT
+        value: research-and-blog-writer
+
+  # Research runs execute in a separate process. Configure the same TiDB
+  # credentials here as on the web service so both processes share durable jobs.
+  - type: worker
+    name: research-and-blog-worker
+    runtime: python
+    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
+    startCommand: "python worker.py"
+    autoDeploy: true
+    # CrewAI task checkpoints must survive worker restarts. Render persistent
+    # disks require a paid background-worker plan and keep this service single-instance.
+    disk:
+      name: research-run-checkpoints
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.9
+      - key: ENVIRONMENT
+        value: production
+      - key: RESEARCH_WORKER_MODE
+        value: "true"
+      - key: RESEARCH_CHECKPOINT_DIR
+        value: /var/data/research-checkpoints
+      - key: TIDB_HOST
+        sync: false
+      - key: TIDB_PORT
+        value: "4000"
+      - key: TIDB_USER
+        sync: false
+      - key: TIDB_PASSWORD
+        sync: false
+      - key: TIDB_DATABASE
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: BEATAPI_KEY
+        sync: false
+      - key: SERPER_API_KEY
+        sync: false
       - key: LANGSMITH_API_KEY
         sync: false
       - key: LANGSMITH_TRACING

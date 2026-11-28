@@ -21,7 +21,11 @@ import { QualityAuditorDrawer } from "@/components/quality-auditor-drawer";
 import { VisualLibraryGallery } from "@/components/visual-library-gallery";
 import { ImageLightboxViewer } from "@/components/image-lightbox-viewer";
 import { VisualEvidenceDrawer } from "@/components/visual-evidence-drawer";
-import { ResearchOrb } from "@/components/research-orb";
+import { PremiumHero } from "@/components/premium-hero";
+import { PremiumCard } from "@/components/premium-card";
+import { PremiumButton } from "@/components/premium-button";
+import { AmbientWebGLBackdrop } from "@/components/ambient-webgl-bg";
+import { LandingPage } from "@/components/landing-page";
 import { ResearchVisual } from "@/lib/api";
 import {
   Sparkles,
@@ -37,6 +41,7 @@ import {
   Volume2,
   VolumeX,
   Settings,
+  MoreHorizontal,
 } from "lucide-react";
 
 function cleanArticleForDisplay(content: string): string {
@@ -213,6 +218,58 @@ export default function Home() {
   // Keep the article as the primary workspace; the squad panel is one click away.
   const [isRightCollapsed, setIsRightCollapsed] = useState(true);
   const [mobileDrawer, setMobileDrawer] = useState<"none" | "left" | "right">("none");
+  const [isHeaderMenuOpen, setIsHeaderMenuOpen] = useState(false);
+  const headerActionsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (mobileDrawer === "none") return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    const background = [document.querySelector("header"), document.querySelector("main")].filter(Boolean) as HTMLElement[];
+    const previousInert = background.map((element) => element.inert);
+    background.forEach((element) => { element.inert = true; });
+    document.body.style.overflow = "hidden";
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"][aria-modal="true"]');
+    const focusable = () => dialog?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])');
+    const frame = requestAnimationFrame(() => focusable()?.item(0)?.focus());
+    const handleKeys = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { setMobileDrawer("none"); return; }
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      if (!items?.length) return;
+      const first = items.item(0);
+      const last = items.item(items.length - 1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", handleKeys);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", handleKeys);
+      background.forEach((element, index) => { element.inert = previousInert[index]; });
+      document.body.style.overflow = previousOverflow;
+      previousFocus?.focus();
+    };
+  }, [mobileDrawer]);
+
+  useEffect(() => {
+    if (!isHeaderMenuOpen) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!headerActionsRef.current?.contains(event.target as Node)) setIsHeaderMenuOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsHeaderMenuOpen(false);
+        headerActionsRef.current?.querySelector<HTMLButtonElement>("[data-header-menu-trigger]")?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [isHeaderMenuOpen]);
   const workspaceGridColumns = isLeftCollapsed
     ? isRightCollapsed
       ? "lg:grid-cols-[3.5rem_minmax(0,1fr)] xl:grid-cols-[3.5rem_minmax(0,1fr)_3.5rem]"
@@ -471,6 +528,15 @@ export default function Home() {
                 timestamp: Date.now() / 1000,
               },
             ]);
+          } else if (event.type === "retry") {
+            setRunLogs((prev) => [
+              ...prev,
+              {
+                type: "status",
+                detail: asString(event.data.message) || "Worker restarted; the run is queued for recovery.",
+                timestamp: asNumber(event.data.timestamp) ?? Date.now() / 1000,
+              },
+            ]);
           }
         },
         (error) => {
@@ -604,13 +670,36 @@ export default function Home() {
     setIsAuthOpen(true);
   };
 
+  const [enteredWorkspace, setEnteredWorkspace] = useState(false);
   const databaseBackend = systemStats?.database.backend;
 
+  if (!user && !enteredWorkspace) {
+    return (
+      <>
+        <LandingPage
+          onOpenAuth={() => setIsAuthOpen(true)}
+          onEnterGuest={() => setEnteredWorkspace(true)}
+        />
+        <AuthDialog
+          isOpen={isAuthOpen}
+          onSuccess={(authenticatedUser) => {
+            setUser(authenticatedUser);
+            setIsAuthOpen(false);
+            void loadArticles();
+            void loadTelemetry();
+            void restoreActiveRun();
+          }}
+          onClose={() => setIsAuthOpen(false)}
+        />
+      </>
+    );
+  }
+
   return (
-    <div className="research-studio-scene min-h-screen overflow-x-hidden bg-background text-foreground flex flex-col font-sans selection:bg-blue-500/20">
+    <div className="research-studio-scene min-h-screen overflow-x-hidden bg-background text-foreground flex flex-col font-sans selection:bg-accent/20">
       {/* 1. SaaS Enterprise Header */}
-      <header className="sticky top-0 z-40 w-full min-w-0 border-b border-border bg-surface/90 backdrop-blur-md px-2.5 sm:px-6 py-3.5 flex items-center justify-between gap-1.5 sm:gap-2">
-        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+      <header className="sticky top-0 z-40 w-full min-w-0 border-b border-border bg-surface/90 backdrop-blur-md px-3 sm:px-6 py-3 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
           {/* Mobile drawer toggle buttons */}
           <button
             type="button"
@@ -623,27 +712,28 @@ export default function Home() {
             <Menu className="w-4 h-4" />
           </button>
 
-          <div className="p-2 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-xl shadow-lg shadow-blue-500/20">
-            <Sparkles className="w-5 h-5 text-white" aria-hidden="true" />
+          <div className="brand-depth-mark" aria-hidden="true">
+            <span className="brand-sheet brand-sheet-back" />
+            <span className="brand-sheet brand-sheet-front" />
           </div>
           <div>
             <h1 className="text-sm md:text-base font-bold tracking-tight text-foreground flex items-center gap-2 whitespace-nowrap">
               Research Studio
-              <span className="hidden md:inline px-2 py-0.5 text-[10px] uppercase font-mono font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 rounded-md">
+              <span className="hidden md:inline px-2 py-0.5 text-[10px] uppercase font-mono font-bold bg-accent-soft text-accent border border-accent/25 rounded-md">
                 Workspace
               </span>
             </h1>
             <p className="text-[11px] text-muted-foreground hidden sm:block">
-              Autonomous 4-Agent Research Squad & Mermaid Visual Canvas
+              Autonomous 4-Agent Research Squad &amp; Mermaid Visual Canvas
             </p>
           </div>
         </div>
 
         {/* System telemetry & Auth badges */}
-        <div className="flex shrink-0 items-center gap-1 sm:gap-3">
+        <div ref={headerActionsRef} className="workspace-header-actions relative flex shrink-0 items-center gap-1 sm:gap-3">
           {systemStats && (
             <div className="hidden xl:flex items-center gap-2 px-3 py-1.5 bg-surface-raised border border-border rounded-xl text-xs text-foreground">
-              <Database className="w-3.5 h-3.5 text-blue-500" aria-hidden="true" />
+              <Database className="w-3.5 h-3.5 text-accent" aria-hidden="true" />
               <span>{databaseBackend ? databaseBackend.toUpperCase() : "DB"}</span>
               <span className="text-muted-foreground">|</span>
               <span className="text-muted-foreground">
@@ -656,14 +746,14 @@ export default function Home() {
           <button
             type="button"
             onClick={toggleSoundMute}
-            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border rounded-xl text-xs text-foreground transition"
+            className="optional-header-action hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised border border-border rounded-xl text-xs text-foreground transition"
             title={isSoundMuted ? "Unmute completion sound" : "Mute completion sound"}
             aria-label="Toggle Sound"
           >
             {isSoundMuted ? (
               <VolumeX className="w-3.5 h-3.5 text-muted-foreground" />
             ) : (
-              <Volume2 className="w-3.5 h-3.5 text-blue-500" />
+              <Volume2 className="w-3.5 h-3.5 text-accent" />
             )}
             <span className="hidden sm:inline">{isSoundMuted ? "Muted" : "Sound"}</span>
           </button>
@@ -672,12 +762,12 @@ export default function Home() {
           <button
             type="button"
             onClick={toggleTheme}
-            className="flex items-center gap-1 sm:gap-1.5 p-2 sm:px-3 sm:py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border rounded-xl text-xs text-foreground transition"
+            className="optional-header-action flex items-center gap-1 sm:gap-1.5 p-2 sm:px-3 sm:py-1.5 bg-surface-raised border border-border rounded-xl text-xs text-foreground transition"
             title={theme === "light" ? "Switch to Dark Mode" : "Switch to Light Mode"}
             aria-label={theme === "light" ? "Switch to dark theme" : "Switch to light theme"}
           >
             {theme === "light" ? (
-              <Moon className="w-3.5 h-3.5 text-slate-700" />
+              <Moon className="w-3.5 h-3.5 text-muted-foreground" />
             ) : (
               <Sun className="w-3.5 h-3.5 text-amber-400" />
             )}
@@ -687,7 +777,7 @@ export default function Home() {
           <button
             type="button"
             onClick={() => setIsApiKeysOpen(true)}
-            className="flex items-center gap-1 sm:gap-1.5 p-2 sm:px-3 sm:py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border rounded-xl text-xs text-foreground transition"
+            className="optional-header-action flex items-center gap-1 sm:gap-1.5 p-2 sm:px-3 sm:py-1.5 bg-surface-raised border border-border rounded-xl text-xs text-foreground transition"
             title="Configure API Keys (Gemini / OpenRouter)"
             aria-label="Configure API keys"
           >
@@ -699,11 +789,11 @@ export default function Home() {
           <button
             type="button"
             onClick={() => setIsSettingsOpen(true)}
-            className="flex items-center gap-1 sm:gap-1.5 p-2 sm:px-3 sm:py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border rounded-xl text-xs text-foreground transition"
+            className="optional-header-action flex items-center gap-1 sm:gap-1.5 p-2 sm:px-3 sm:py-1.5 bg-surface-raised border border-border rounded-xl text-xs text-foreground transition"
             title="Workspace Settings"
             aria-label="Settings"
           >
-            <Settings className="w-3.5 h-3.5 text-slate-400" />
+            <Settings className="w-3.5 h-3.5 text-muted-foreground" />
             <span className="hidden sm:inline">Settings</span>
           </button>
 
@@ -711,16 +801,39 @@ export default function Home() {
           <button
             type="button"
             onClick={() => setMobileDrawer(mobileDrawer === "right" ? "none" : "right")}
-            className="hidden sm:block lg:hidden p-2 bg-surface-raised border border-border text-foreground rounded-xl relative"
+            className="optional-header-action hidden sm:block lg:hidden p-2 bg-surface-raised border border-border text-foreground rounded-xl relative"
             title="Toggle AI Command Center"
             aria-label="Toggle AI Command Center"
             aria-expanded={mobileDrawer === "right"}
           >
-            <Cpu className="w-4 h-4 text-blue-500" />
+            <Cpu className="w-4 h-4 text-accent" />
             {activeRunId && (
               <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
             )}
           </button>
+
+          <button
+            type="button"
+            data-header-menu-trigger
+            onClick={() => setIsHeaderMenuOpen((open) => !open)}
+            className="sm:hidden p-2 bg-surface-raised border border-border text-foreground rounded-xl"
+            aria-label="More workspace actions"
+            aria-expanded={isHeaderMenuOpen}
+            aria-controls="mobile-header-actions"
+          >
+            <MoreHorizontal className="w-4 h-4" aria-hidden="true" />
+          </button>
+          {isHeaderMenuOpen && (
+            <div id="mobile-header-actions" className="sm:hidden absolute right-0 top-full mt-2 z-50 w-56 rounded-2xl border border-border bg-surface p-2 shadow-2xl" aria-label="Workspace actions">
+              <button type="button" onClick={() => { toggleTheme(); setIsHeaderMenuOpen(false); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-foreground hover:bg-surface-raised">
+                {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />} Toggle appearance
+              </button>
+              <button type="button" onClick={() => { setIsApiKeysOpen(true); setIsHeaderMenuOpen(false); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-foreground hover:bg-surface-raised"><Key className="h-4 w-4" /> API keys</button>
+              <button type="button" onClick={() => { setIsSettingsOpen(true); setIsHeaderMenuOpen(false); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-foreground hover:bg-surface-raised"><Settings className="h-4 w-4" /> Settings</button>
+              <button type="button" onClick={() => { setMobileDrawer("right"); setIsHeaderMenuOpen(false); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-foreground hover:bg-surface-raised"><Cpu className="h-4 w-4" /> Command center</button>
+              <button type="button" onClick={() => { toggleSoundMute(); setIsHeaderMenuOpen(false); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-foreground hover:bg-surface-raised">{isSoundMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />} {isSoundMuted ? "Enable sound" : "Mute sound"}</button>
+            </div>
+          )}
 
           {user ? (
             <div className="flex items-center gap-2 pl-1 sm:pl-2">
@@ -744,7 +857,7 @@ export default function Home() {
             <button
               type="button"
               onClick={() => setIsAuthOpen(true)}
-              className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold transition shadow-md shadow-blue-600/20"
+              className="px-4 py-1.5 bg-accent text-accent-foreground rounded-xl text-xs font-semibold transition shadow-md shadow-accent/20"
             >
               Sign In
             </button>
@@ -753,9 +866,9 @@ export default function Home() {
       </header>
 
       {/* 2. Responsive 3-Panel Workspace */}
-      <main className={`flex-1 grid w-full max-w-[1920px] mx-auto grid-cols-1 ${workspaceGridColumns} p-3 sm:p-5 md:p-6 gap-4 lg:gap-5 overflow-hidden`}>
+      <main className={`flex-1 grid w-full max-w-[1920px] mx-auto grid-cols-1 ${workspaceGridColumns} p-3 sm:p-5 md:p-6 gap-4 lg:gap-5 min-h-0 lg:h-[calc(100vh-4.25rem)] lg:overflow-hidden`}>
         {/* Panel A: Left Sidebar (Desktop) */}
-        <div className={`hidden lg:flex min-w-0 ${isLeftCollapsed ? "w-14" : ""}`}>
+        <div className={`hidden lg:flex min-w-0 min-h-0 ${isLeftCollapsed ? "w-14" : ""}`}>
           <LeftSidebar
             topic={topic}
             setTopic={setTopic}
@@ -782,7 +895,7 @@ export default function Home() {
         </div>
 
         {/* Panel B: Center Professional Article Editor & Workspace */}
-        <div className="min-w-0 flex flex-col gap-5 overflow-y-auto pr-1">
+        <div className="min-w-0 min-h-0 flex flex-col gap-4 overflow-y-auto pr-1">
           {runError && (
             <div
               role="alert"
@@ -805,13 +918,30 @@ export default function Home() {
 
           {/* Center Tabs: Research Report vs Visual Library */}
           <div className="flex items-center justify-between border-b border-border pb-2.5">
-            <div className="flex items-center gap-2">
+            <div
+              role="tablist"
+              aria-label="Research workspace view"
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+                event.preventDefault();
+                const nextTab = event.key === "ArrowRight" ? "visuals" : "reader";
+                setActiveCenterTab(nextTab);
+                if (nextTab === "visuals") void loadVisuals(selectedArticle?.id);
+                event.currentTarget.querySelector<HTMLElement>(`#research-${nextTab}-tab`)?.focus();
+              }}
+              className="flex items-center gap-2"
+            >
               <button
                 type="button"
                 onClick={() => setActiveCenterTab("reader")}
+                role="tab"
+                id="research-reader-tab"
+                aria-controls="research-workspace-panel"
+                aria-selected={activeCenterTab === "reader"}
+                tabIndex={activeCenterTab === "reader" ? 0 : -1}
                 className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-2 ${
                   activeCenterTab === "reader"
-                    ? "bg-blue-600 text-white shadow-sm"
+                    ? "bg-accent text-accent-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground hover:bg-surface-raised"
                 }`}
               >
@@ -824,16 +954,27 @@ export default function Home() {
                   void loadVisuals(selectedArticle?.id);
                   setActiveCenterTab("visuals");
                 }}
+                role="tab"
+                id="research-visuals-tab"
+                aria-controls="research-workspace-panel"
+                aria-selected={activeCenterTab === "visuals"}
+                tabIndex={activeCenterTab === "visuals" ? 0 : -1}
                 className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-2 ${
                   activeCenterTab === "visuals"
-                    ? "bg-blue-600 text-white shadow-sm"
+                    ? "bg-accent text-accent-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground hover:bg-surface-raised"
                 }`}
               >
                 <Sparkles className="w-3.5 h-3.5" />
                 <span>Visual Research System</span>
                 {visualsList.length > 0 && (
-                  <span className="px-1.5 py-0.2 text-[10px] rounded-full bg-blue-500/30 text-white font-mono">
+                  <span
+                    className={`px-1.5 py-0.5 text-[10px] rounded-full font-mono ${
+                      activeCenterTab === "visuals"
+                        ? "bg-accent-foreground/15 text-accent-foreground"
+                        : "bg-accent-soft text-accent"
+                    }`}
+                  >
                     {visualsList.length}
                   </span>
                 )}
@@ -841,6 +982,7 @@ export default function Home() {
             </div>
           </div>
 
+          <div role="tabpanel" id="research-workspace-panel" aria-labelledby={activeCenterTab === "visuals" ? "research-visuals-tab" : "research-reader-tab"} tabIndex={0} className="min-h-0 flex-1">
           {activeCenterTab === "visuals" ? (
             <div className="space-y-6">
               <div className="p-4 bg-surface border border-border rounded-2xl flex items-center justify-between">
@@ -895,68 +1037,57 @@ export default function Home() {
               isStreaming={true}
             />
           ) : activeRunId ? (
-            <div className="flex-1 flex flex-col items-center justify-center p-12 border border-slate-800/80 rounded-3xl bg-slate-900/30 text-center min-h-[480px]">
-              <div className="p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl mb-4 text-indigo-400 animate-pulse">
+            <div className="flex-1 flex flex-col items-center justify-center p-12 border border-border/80 rounded-3xl bg-surface/30 text-center min-h-[480px]">
+              <div className="p-4 bg-signal/10 border border-signal/20 rounded-2xl mb-4 text-signal animate-pulse">
                 <Cpu className="w-8 h-8" />
               </div>
-              <h3 className="text-base font-bold text-slate-100 mb-1">
+              <h3 className="text-base font-bold text-foreground mb-1">
                 AI Squad Pipeline in Progress
               </h3>
-              <p className="text-xs text-slate-400 max-w-md mb-5">
-                Researching <strong className="text-slate-200">&ldquo;{activeTopic}&rdquo;</strong>. Watch real-time
+              <p className="text-xs text-muted-foreground max-w-md mb-5">
+                Researching <strong className="text-foreground">&ldquo;{activeTopic}&rdquo;</strong>. Watch real-time
                 agent telemetry and diagram synthesis in the Command Center.
               </p>
 
               {/* Dynamic Stage Progress Bar */}
               <div className="w-full max-w-xs mb-4">
-                <div className="flex justify-between text-[11px] font-medium text-slate-300 mb-1.5">
-                  <span>
-                    {runStage === 1 && "Lead Researcher Investigating..."}
-                    {runStage === 2 && "Parallel Writer & Diagram Architect Drafting..."}
-                    {runStage === 3 && "Integrating Technical Visuals..."}
-                    {runStage >= 4 && "Editorial Director Refining Post..."}
-                  </span>
-                  <span className="font-mono text-indigo-400 font-bold">
-                    {runStage === 1 && "25%"}
-                    {runStage === 2 && "60%"}
-                    {runStage === 3 && "80%"}
-                    {runStage >= 4 && "95%"}
-                  </span>
+                <div className="flex justify-between text-[11px] font-medium text-foreground mb-1.5">
+                  <span>{runStage === 1 ? "Researching sources" : runStage === 2 ? "Analysis and drafting" : runStage === 3 ? "Integrating research" : "Final editorial review"}</span>
+                  <span className="font-mono text-signal font-bold">Stage {Math.min(runStage, 4)} of 4</span>
                 </div>
-                <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700/50">
+                <div role="progressbar" aria-label="Research pipeline stage" aria-valuemin={1} aria-valuemax={4} aria-valuenow={Math.min(runStage, 4)} className="w-full h-2 bg-surface-raised rounded-full overflow-hidden border border-border/50">
                   <div
-                    className="h-full bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 rounded-full transition-all duration-700 ease-out"
-                    style={{
-                      width:
-                        runStage === 1 ? "25%" : runStage === 2 ? "60%" : runStage === 3 ? "80%" : "95%",
-                    }}
+                    className="h-full bg-gradient-to-r from-accent via-signal to-purple-500 rounded-full transition-all duration-700 ease-out"
+                    style={{ width: `${Math.min(runStage, 4) * 25}%` }}
                   />
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 text-xs font-mono text-slate-500">
+              <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground">
                 <span>Stage {runStage}/4 Active</span>
                 <span>&bull;</span>
                 <span>{runLogs.length} events logged</span>
               </div>
             </div>
           ) : (
-            <div className="research-depth-card relative flex-1 flex flex-col items-center justify-center p-6 sm:p-12 border border-border rounded-3xl bg-surface text-center min-h-[420px] overflow-hidden">
-              <div className="pointer-events-none absolute inset-0 opacity-40 [background-image:radial-gradient(var(--border-strong)_0.7px,transparent_0.7px)] [background-size:22px_22px] [mask-image:radial-gradient(ellipse_at_center,black,transparent_76%)]" />
-              <div className="research-hero-content relative z-10 flex flex-col items-center">
-                <ResearchOrb />
+            <>
+              <AmbientWebGLBackdrop />
+              <PremiumCard tilt hover={false} bordered className="relative z-10 flex-1 flex flex-col items-center justify-center min-h-[460px] bg-surface/85 backdrop-blur-md">
+              <div className="w-full max-w-xl flex flex-col items-center">
+                <PremiumHero className="w-full mb-8" />
                 <span className="mb-3 inline-flex items-center gap-2 rounded-full border border-accent/25 bg-accent-soft px-3 py-1 text-[10px] font-mono font-semibold uppercase tracking-[0.2em] text-accent">
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_10px_#34d399]" />
                   Four agents · one research desk
                 </span>
-                <h3 className="text-lg font-bold text-foreground mb-2">What would you like to research?</h3>
-                <p className="text-sm text-muted-foreground max-w-md mb-6">
-                  Enter any technical topic below to launch a multi-agent research run and generate a
-                  publication-ready blog post with Mermaid diagrams.
+                <h3 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground mb-2">
+                  Begin with a question.
+                </h3>
+                <p className="text-base text-foreground/90 leading-relaxed max-w-md mb-6 text-center">
+                  Follow a technical idea from source discovery through a clear, illustrated research brief.
                 </p>
                 <form
                   onSubmit={handleStartRun}
-                  className="w-full max-w-md flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5"
+                  className="w-full max-w-lg flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5"
                 >
                   <input
                     type="text"
@@ -964,22 +1095,43 @@ export default function Home() {
                     onChange={(e) => setTopic(e.target.value)}
                     placeholder="e.g. Distributed Consensus in TiDB..."
                     aria-label="Research topic"
-                    className="flex-1 px-4 py-2.5 bg-background border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground"
+                    className="flex-1 px-4 py-2.5 bg-background border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent/45 focus:border-accent transition"
                   />
-                  <button
+                  <PremiumButton
                     type="submit"
-                    className="px-5 py-2.5 bg-accent hover:bg-accent-hover text-accent-foreground rounded-xl text-sm font-semibold transition shadow-sm shrink-0"
+                    disabled={isSubmitting || Boolean(activeRunId) || !topic.trim()}
+                    variant="accent"
+                    size="lg"
                   >
                     {isSubmitting ? "Starting…" : "Start research"}
-                  </button>
+                  </PremiumButton>
                 </form>
+                <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                  {[
+                    "Distributed Consensus in TiDB",
+                    "Zero-Knowledge Proofs in Cloud Security",
+                    "Rust vs Go Event-Driven Microservices",
+                  ].map((prompt) => (
+                    <PremiumButton
+                      key={prompt}
+                      type="button"
+                      onClick={() => setTopic(prompt)}
+                      variant="ghost"
+                      size="sm"
+                    >
+                      {prompt}
+                    </PremiumButton>
+                  ))}
+                </div>
               </div>
-            </div>
+            </PremiumCard>
+            </>
           )}
+          </div>
         </div>
 
         {/* Panel C: Right AI Command Center (Desktop) */}
-        <div className={`hidden xl:flex min-w-0 ${isRightCollapsed ? "w-14" : ""}`}>
+        <div className={`hidden xl:flex min-w-0 min-h-0 ${isRightCollapsed ? "w-14" : ""}`}>
           <AICommandCenter
             runId={activeRunId}
             topic={activeTopic}
@@ -1000,13 +1152,15 @@ export default function Home() {
       {/* 3. Mobile Drawers */}
       {mobileDrawer === "left" && (
         <div className="lg:hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex">
-          <div className="w-full max-w-xs bg-surface text-foreground p-4 border-r border-border overflow-y-auto">
+          <button type="button" aria-label="Close workspace library" onClick={() => setMobileDrawer("none")} className="absolute inset-0 h-full w-full cursor-default" />
+          <section role="dialog" aria-modal="true" aria-label="Workspace Library" className="relative z-10 w-full max-w-xs bg-surface text-foreground p-4 border-r border-border overflow-y-auto">
             <div className="flex justify-between items-center mb-4">
-              <span className="text-xs font-bold uppercase text-slate-300">Workspace Library</span>
+              <span className="text-xs font-bold uppercase text-foreground">Workspace Library</span>
               <button
                 type="button"
                 onClick={() => setMobileDrawer("none")}
-                className="p-1.5 text-slate-400 hover:text-white rounded-lg bg-slate-800"
+                aria-label="Close workspace library"
+                className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg bg-surface-raised cursor-pointer"
               >
                 ✕
               </button>
@@ -1038,21 +1192,21 @@ export default function Home() {
               isCollapsed={false}
               onToggleCollapse={() => setMobileDrawer("none")}
             />
-          </div>
-          <div className="flex-1" onClick={() => setMobileDrawer("none")} />
+          </section>
         </div>
       )}
 
       {mobileDrawer === "right" && (
         <div className="lg:hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex justify-end">
-          <div className="flex-1" onClick={() => setMobileDrawer("none")} />
-          <div className="w-full max-w-sm bg-surface text-foreground p-4 border-l border-border overflow-y-auto">
+          <button type="button" aria-label="Close command center" onClick={() => setMobileDrawer("none")} className="absolute inset-0 h-full w-full cursor-default" />
+          <section role="dialog" aria-modal="true" aria-label="Command Center" className="relative z-10 w-full max-w-sm bg-surface text-foreground p-4 border-l border-border overflow-y-auto">
             <div className="flex justify-between items-center mb-4">
-              <span className="text-xs font-bold uppercase text-slate-300">Command Center</span>
+              <span className="text-xs font-bold uppercase text-foreground">Command Center</span>
               <button
                 type="button"
                 onClick={() => setMobileDrawer("none")}
-                className="p-1.5 text-slate-400 hover:text-white rounded-lg bg-slate-800"
+                aria-label="Close command center"
+                className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg bg-surface-raised cursor-pointer"
               >
                 ✕
               </button>
@@ -1071,7 +1225,7 @@ export default function Home() {
                 generationTime: selectedArticle?.generation_time_sec,
               }}
             />
-          </div>
+          </section>
         </div>
       )}
 

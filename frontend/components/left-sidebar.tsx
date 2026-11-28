@@ -79,14 +79,15 @@ export function LeftSidebar({
 
   if (isCollapsed) {
     return (
-      <div className="hidden lg:flex flex-col items-center gap-4 p-3 bg-surface border border-border rounded-2xl text-muted-foreground hover:text-foreground transition shadow-md w-14 shrink-0">
+      <div className="hidden lg:flex flex-col items-center gap-4 p-3 bg-surface border border-border rounded-2xl text-muted-foreground hover:text-foreground transition shadow-sm w-14 shrink-0">
         <button
           type="button"
           onClick={onToggleCollapse}
-          className="p-1.5 hover:bg-surface-raised rounded-lg text-foreground transition"
+          className="p-1.5 hover:bg-surface-raised rounded-lg text-foreground transition cursor-pointer"
           title="Expand Research Workspace Sidebar"
+          aria-label="Expand Research Workspace Sidebar"
         >
-          <ChevronRight className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+          <ChevronRight className="w-5 h-5 text-accent" />
         </button>
         <span className="text-[10px] font-mono uppercase tracking-widest [writing-mode:vertical-rl] rotate-180 text-muted-foreground font-semibold">
           Articles & Controls ({articles.length})
@@ -96,19 +97,20 @@ export function LeftSidebar({
   }
 
   return (
-    <aside className="w-full lg:w-80 xl:w-92 shrink-0 flex flex-col gap-5 text-foreground">
+    <aside className="w-full lg:w-80 xl:w-88 shrink-0 flex flex-col gap-4 text-foreground lg:max-h-full lg:overflow-y-auto pr-0.5">
       {/* 1. Research Commission Box */}
-      <div className="bg-surface border border-border rounded-2xl p-4 md:p-5 shadow-sm backdrop-blur-md">
-        <div className="flex items-center justify-between mb-3 pb-2 border-b border-border">
+      <div className="bg-surface border border-border rounded-3xl p-5 md:p-6 shadow-sm premium-shadow">
+        <div className="flex items-center justify-between mb-3.5 pb-2.5 border-b border-border">
           <h2 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+            <Sparkles className="w-4 h-4 text-accent" aria-hidden="true" />
             Commission Research
           </h2>
           <button
             type="button"
             onClick={onToggleCollapse}
-            className="hidden lg:block p-1 text-muted-foreground hover:text-foreground rounded hover:bg-surface-raised transition"
+            className="hidden lg:block p-1 text-muted-foreground hover:text-foreground rounded-lg hover:bg-surface-raised transition cursor-pointer"
             title="Collapse Sidebar"
+            aria-label="Collapse Sidebar"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
@@ -126,7 +128,7 @@ export function LeftSidebar({
               placeholder="Enter research topic, architectural domain, or prompt brief…"
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
-              className="w-full p-3 bg-surface-raised border border-border rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 text-foreground resize-none placeholder:text-muted-foreground leading-relaxed"
+              className="w-full p-3 bg-surface-raised border border-border rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent text-foreground resize-none placeholder:text-muted-foreground leading-relaxed transition"
             />
           </div>
 
@@ -135,13 +137,13 @@ export function LeftSidebar({
             <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block mb-1.5 font-mono">
               Suggested Topics
             </span>
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1.5">
               {PRESET_TOPICS.map((preset, idx) => (
                 <button
                   key={idx}
                   type="button"
                   onClick={() => setTopic(preset)}
-                  className="text-left px-2.5 py-1.5 bg-surface-raised hover:bg-blue-50 dark:hover:bg-slate-800 text-foreground hover:text-blue-600 dark:hover:text-blue-400 rounded-lg text-xs truncate transition border border-border"
+                  className="text-left px-2.5 py-1.5 bg-surface-raised/70 hover:bg-accent-soft text-foreground/90 hover:text-accent rounded-lg text-xs truncate transition border border-border hover:border-accent/30 cursor-pointer"
                 >
                   {preset}
                 </button>
@@ -155,10 +157,10 @@ export function LeftSidebar({
               type="button"
               onClick={() => setShowAdvanced(!showAdvanced)}
               aria-expanded={showAdvanced}
-              className="flex items-center justify-between w-full py-1 text-xs text-muted-foreground hover:text-foreground transition"
+              className="flex items-center justify-between w-full py-1 text-xs text-muted-foreground hover:text-foreground transition cursor-pointer"
             >
               <span className="flex items-center gap-1.5 font-medium">
-                <SlidersHorizontal className="w-3 h-3 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                <SlidersHorizontal className="w-3.5 h-3.5 text-accent" aria-hidden="true" />
                 Tone & Scope Controls
               </span>
               <ChevronDown
@@ -177,7 +179,7 @@ export function LeftSidebar({
                     id="tone-select-box"
                     value={tone}
                     onChange={(e) => setTone(e.target.value)}
-                    className="w-full p-2 bg-surface-raised border border-border rounded-xl text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="w-full p-2 bg-surface-raised border border-border rounded-xl text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
                   >
                     <option>Professional & Authoritative</option>
                     <option>Engaging & Accessible</option>
@@ -194,7 +196,7 @@ export function LeftSidebar({
                     id="audience-select-box"
                     value={audience}
                     onChange={(e) => setAudience(e.target.value)}
-                    className="w-full p-2 bg-surface-raised border border-border rounded-xl text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="w-full p-2 bg-surface-raised border border-border rounded-xl text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
                   >
                     <option>Software Engineers & Developers</option>
                     <option>CTOs & Tech Leaders</option>
@@ -211,7 +213,7 @@ export function LeftSidebar({
                     id="length-select-box"
                     value={targetLength}
                     onChange={(e) => setTargetLength(e.target.value)}
-                    className="w-full p-2 bg-surface-raised border border-border rounded-xl text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="w-full p-2 bg-surface-raised border border-border rounded-xl text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
                   >
                     <option>Quick Brief (800 - 1,200 words)</option>
                     <option>Standard Blog (1,500 - 2,000 words)</option>
@@ -226,7 +228,7 @@ export function LeftSidebar({
           <button
             type="submit"
             disabled={isSubmitting || !!activeRunId || !topic.trim()}
-            className="w-full py-2.5 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 text-white font-semibold rounded-xl text-xs transition shadow-md shadow-blue-600/20 flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
+            className="w-full py-2.5 px-4 bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground font-semibold rounded-xl text-xs transition shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
           >
             <Sparkles className="w-4 h-4" aria-hidden="true" />
             <span>{isSubmitting ? "Dispatching Squad…" : "Launch Research Squad"}</span>
@@ -239,27 +241,27 @@ export function LeftSidebar({
         <button
           type="button"
           onClick={onOpenVisualLibrary}
-          className="w-full flex items-center justify-between p-3.5 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 rounded-2xl text-xs font-semibold text-indigo-400 hover:text-indigo-300 transition cursor-pointer shadow-sm"
+          className="w-full flex items-center justify-between p-3.5 bg-signal-soft border border-signal/40 rounded-3xl text-xs font-semibold text-signal transition cursor-pointer shadow-sm soft-glow-signal"
         >
           <div className="flex items-center gap-2.5">
-            <div className="p-1.5 bg-indigo-500/20 rounded-lg">
+            <div className="p-1.5 bg-signal/20 rounded-lg">
               <ImageIcon className="w-4 h-4" />
             </div>
             <span>Visual Evidence Library</span>
           </div>
-          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/20 border border-indigo-500/40">
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-signal/15 border border-signal/30">
             Explorer
           </span>
         </button>
       )}
 
       {/* 3. Articles Library with Search & Filtering */}
-      <div className="bg-surface border border-border rounded-2xl p-4 md:p-5 shadow-sm backdrop-blur-md flex-1 flex flex-col min-h-[300px]">
-        <div className="flex items-center justify-between mb-3 pb-2 border-b border-border">
+      <div className="bg-surface border border-border rounded-3xl p-5 md:p-6 shadow-sm premium-shadow flex-1 flex flex-col min-h-[280px]">
+        <div className="flex items-center justify-between mb-3 pb-2.5 border-b border-border">
           <h3 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-2">
-            <BookOpen className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+            <BookOpen className="w-3.5 h-3.5 text-accent" aria-hidden="true" />
             Articles Library
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-surface-raised text-blue-600 dark:text-blue-400 border border-border">
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-surface-raised text-accent border border-border">
               {articles.length}
             </span>
           </h3>
@@ -273,7 +275,7 @@ export function LeftSidebar({
             placeholder="Search articles & topics…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-8 pr-3 py-1.5 bg-surface-raised border border-border rounded-xl text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="w-full pl-8 pr-3 py-1.5 bg-surface-raised border border-border rounded-xl text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent transition"
           />
         </div>
 
@@ -286,8 +288,8 @@ export function LeftSidebar({
                 key={article.id}
                 className={`group flex items-center justify-between p-2.5 rounded-xl transition ${
                   isSelected
-                    ? "bg-blue-50 dark:bg-blue-950/40 border border-blue-500/40 text-blue-950 dark:text-blue-100 shadow-sm"
-                    : "hover:bg-surface-raised text-foreground border border-transparent"
+                    ? "bg-accent-soft border border-accent/60 text-foreground shadow-sm soft-glow-accent"
+                    : "hover:bg-surface-raised text-foreground border border-transparent hover:border-border"
                 }`}
               >
                 <button
@@ -295,7 +297,7 @@ export function LeftSidebar({
                   onClick={() => onSelectArticle(article.id)}
                   className="flex-1 text-left cursor-pointer overflow-hidden pr-2"
                 >
-                  <h4 className="text-xs font-semibold line-clamp-2 mb-1 leading-snug">
+                  <h4 className={`text-xs font-semibold line-clamp-2 mb-1 leading-snug ${isSelected ? "text-accent" : "text-foreground"}`}>
                     {article.topic}
                   </h4>
                   <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-mono">
@@ -312,7 +314,8 @@ export function LeftSidebar({
                       onDeleteArticle(article.id);
                     }}
                     title="Delete article (free up space)"
-                    className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-500/10 text-muted-foreground hover:text-red-500 rounded-lg transition"
+                    aria-label={`Delete article: ${article.topic}`}
+                    className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 focus-visible:opacity-100 p-1.5 hover:bg-red-500/10 text-muted-foreground hover:text-red-500 rounded-lg transition"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>

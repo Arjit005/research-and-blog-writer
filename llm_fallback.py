@@ -27,7 +27,7 @@ Runtime-scoped API keys
 -----------------------
 :func:`scoped_llm_keys` stores visitor-supplied keys in a
 :mod:`contextvars` context instead of mutating process-wide
-``os.environ``.  This lets the legacy Streamlit UI accept an optional
+``os.environ``.  This lets callers provide an optional
 user key for a single run without leaking or overriding the operator's
 server-side credentials for every other visitor.
 """
@@ -254,7 +254,7 @@ class _RunStats:
 
 # ContextVar holds the stats bucket for the current thread/async context.
 # The global fallback is used by code paths that have not called reset_usage_stats()
-# (e.g. tests, the legacy Streamlit app) so they keep working unchanged.
+# (e.g. tests and isolated run contexts) so they keep working unchanged.
 _GLOBAL_STATS = _RunStats()
 _CURRENT_RUN_STATS: contextvars.ContextVar[_RunStats] = contextvars.ContextVar(
     "current_run_stats", default=_GLOBAL_STATS

@@ -84,16 +84,16 @@ export function InteractiveChartExplorer({ chart }: InteractiveChartExplorerProp
 
   return (
     <div
-      className={`rounded-2xl border border-slate-800 bg-slate-950/90 shadow-xl overflow-hidden transition-all ${
+      className={`rounded-2xl border border-border bg-background/90 shadow-xl overflow-hidden transition-all ${
         isFullscreen
-          ? "fixed inset-4 z-50 flex flex-col bg-slate-950 border-slate-700 backdrop-blur-xl"
+          ? "fixed inset-4 z-50 flex flex-col bg-background border-border backdrop-blur-xl"
           : "my-8"
       }`}
     >
       {/* 1. Header Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 bg-slate-900/80 border-b border-slate-800">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 bg-surface/80 border-b border-border">
         <div className="flex items-center gap-2.5">
-          <div className="p-1.5 bg-indigo-500/10 text-indigo-400 rounded-lg border border-indigo-500/20">
+          <div className="p-1.5 bg-signal/10 text-signal rounded-lg border border-signal/20">
             {chartType.includes("line") ? (
               <LineChart className="w-4 h-4" />
             ) : chartType.includes("pie") ? (
@@ -103,10 +103,10 @@ export function InteractiveChartExplorer({ chart }: InteractiveChartExplorerProp
             )}
           </div>
           <div>
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-200">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-foreground">
               {chart.title}
             </h4>
-            <span className="text-[10px] text-slate-400 font-mono">
+            <span className="text-[10px] text-muted-foreground font-mono">
               Empirical Research Visual · {chart.units || "Normalized Metrics"}
             </span>
           </div>
@@ -117,7 +117,7 @@ export function InteractiveChartExplorer({ chart }: InteractiveChartExplorerProp
           <button
             type="button"
             onClick={() => setViewMode(viewMode === "visual" ? "table" : "visual")}
-            className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition cursor-pointer"
+            className="flex items-center gap-1 px-2.5 py-1.5 bg-surface-raised hover:bg-surface-raised text-foreground rounded-xl text-xs font-medium transition cursor-pointer"
             title="Toggle Visual Chart / Data Table"
           >
             {viewMode === "visual" ? <Table className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
@@ -127,7 +127,7 @@ export function InteractiveChartExplorer({ chart }: InteractiveChartExplorerProp
           <button
             type="button"
             onClick={handleExportCsv}
-            className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition cursor-pointer"
+            className="flex items-center gap-1 px-2.5 py-1.5 bg-surface-raised hover:bg-surface-raised text-foreground rounded-xl text-xs font-medium transition cursor-pointer"
             title="Export Underlying Research Data as CSV"
           >
             {copiedCsv ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <FileSpreadsheet className="w-3.5 h-3.5" />}
@@ -137,7 +137,7 @@ export function InteractiveChartExplorer({ chart }: InteractiveChartExplorerProp
           <button
             type="button"
             onClick={() => setIsFullscreen(!isFullscreen)}
-            className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-xl transition cursor-pointer"
+            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-surface-raised rounded-xl transition cursor-pointer"
             title={isFullscreen ? "Exit Fullscreen" : "Fullscreen Chart"}
           >
             {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
@@ -148,7 +148,7 @@ export function InteractiveChartExplorer({ chart }: InteractiveChartExplorerProp
       {/* 2. Main Viewport */}
       <div className={`p-6 ${isFullscreen ? "flex-1 overflow-auto" : ""}`}>
         {chart.description && (
-          <p className="text-xs text-slate-400 mb-6 leading-relaxed max-w-2xl">
+          <p className="text-xs text-muted-foreground mb-6 leading-relaxed max-w-2xl">
             {chart.description}
           </p>
         )}
@@ -165,20 +165,20 @@ export function InteractiveChartExplorer({ chart }: InteractiveChartExplorerProp
                   return (
                     <div
                       key={idx}
-                      className="p-4 bg-slate-900/60 border border-slate-800/80 rounded-2xl flex flex-col justify-between"
+                      className="p-4 bg-surface/60 border border-border/80 rounded-2xl flex flex-col justify-between"
                     >
-                      <span className="text-xs text-slate-400 font-medium truncate">{label}</span>
+                      <span className="text-xs text-muted-foreground font-medium truncate">{label}</span>
                       <div className="mt-2 flex items-baseline gap-2">
-                        <span className="text-2xl font-bold font-mono text-indigo-400">{val}</span>
-                        <span className="text-xs font-mono text-slate-500">{chart.units || "pts"}</span>
+                        <span className="text-2xl font-bold font-mono text-signal">{val}</span>
+                        <span className="text-xs font-mono text-muted-foreground">{chart.units || "pts"}</span>
                       </div>
-                      <div className="mt-3 w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                      <div className="mt-3 w-full bg-surface-raised h-1.5 rounded-full overflow-hidden">
                         <div
-                          className="bg-indigo-500 h-full rounded-full transition-all duration-500"
+                          className="bg-signal h-full rounded-full transition-all duration-500"
                           style={{ width: `${pct}%` }}
                         />
                       </div>
-                      <span className="text-[10px] text-slate-500 font-mono mt-1 text-right">{pct}% of total</span>
+                      <span className="text-[10px] text-muted-foreground font-mono mt-1 text-right">{pct}% of total</span>
                     </div>
                   );
                 })}
@@ -192,17 +192,17 @@ export function InteractiveChartExplorer({ chart }: InteractiveChartExplorerProp
                   return (
                     <div key={idx} className="group">
                       <div className="flex justify-between items-center text-xs mb-1 font-mono">
-                        <span className="text-slate-300 font-medium group-hover:text-indigo-300 transition">
+                        <span className="text-foreground font-medium group-hover:text-signal transition">
                           {label}
                         </span>
                         <div className="flex items-center gap-1.5">
-                          <span className="font-bold text-slate-100">{val.toLocaleString()}</span>
-                          <span className="text-[10px] text-slate-500">{chart.units || ""}</span>
+                          <span className="font-bold text-foreground">{val.toLocaleString()}</span>
+                          <span className="text-[10px] text-muted-foreground">{chart.units || ""}</span>
                         </div>
                       </div>
-                      <div className="w-full bg-slate-900 border border-slate-800/80 h-3.5 rounded-lg overflow-hidden p-0.5">
+                      <div className="w-full bg-surface border border-border/80 h-3.5 rounded-lg overflow-hidden p-0.5">
                         <div
-                          className="h-full rounded-md bg-gradient-to-r from-indigo-600 to-violet-500 transition-all duration-500 group-hover:from-indigo-500 group-hover:to-violet-400"
+                          className="h-full rounded-md bg-gradient-to-r from-signal to-signal transition-all duration-500 group-hover:from-signal group-hover:to-signal"
                           style={{ width: `${pct}%` }}
                         />
                       </div>
@@ -214,19 +214,19 @@ export function InteractiveChartExplorer({ chart }: InteractiveChartExplorerProp
           </div>
         ) : (
           /* Structured Data Inspection Table */
-          <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/60 font-mono text-xs">
+          <div className="overflow-x-auto rounded-xl border border-border bg-surface/60 font-mono text-xs">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-slate-900 border-b border-slate-800 text-slate-400">
+                <tr className="bg-surface border-b border-border text-muted-foreground">
                   <th className="p-3 font-semibold">Observation / Dimension</th>
                   <th className="p-3 font-semibold text-right">Magnitude ({chart.units || "Val"})</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/50">
+              <tbody className="divide-y divide-border/50">
                 {labels.map((label, idx) => (
-                  <tr key={idx} className="hover:bg-slate-800/30 text-slate-300">
+                  <tr key={idx} className="hover:bg-surface-raised/30 text-foreground">
                     <td className="p-3">{label}</td>
-                    <td className="p-3 text-right font-bold text-indigo-400">
+                    <td className="p-3 text-right font-bold text-signal">
                       {(values[idx] ?? 0).toLocaleString()}
                     </td>
                   </tr>
@@ -237,15 +237,15 @@ export function InteractiveChartExplorer({ chart }: InteractiveChartExplorerProp
         )}
 
         {/* 3. Methodology & Attribution Footer */}
-        <div className="mt-6 pt-4 border-t border-slate-800/70 flex flex-wrap items-center justify-between text-[11px] text-slate-500 font-mono gap-2">
+        <div className="mt-6 pt-4 border-t border-border/70 flex flex-wrap items-center justify-between text-[11px] text-muted-foreground font-mono gap-2">
           {chart.data_source && (
             <span>
-              <strong className="text-slate-400">Source:</strong> {chart.data_source}
+              <strong className="text-muted-foreground">Source:</strong> {chart.data_source}
             </span>
           )}
           {chart.methodology && (
             <span>
-              <strong className="text-slate-400">Method:</strong> {chart.methodology}
+              <strong className="text-muted-foreground">Method:</strong> {chart.methodology}
             </span>
           )}
         </div>

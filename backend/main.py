@@ -141,6 +141,9 @@ def _origin_is_allowed(candidate: str, host_header: Optional[str]) -> bool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Validate configuration, initialize schema, and recover interrupted jobs."""
+    if os.getenv("RESEARCH_WORKER_MODE", "false").strip().lower() in {"1", "true", "yes", "on"}:
+        if not os.getenv("TIDB_HOST"):
+            raise RuntimeError("RESEARCH_WORKER_MODE requires shared TiDB credentials on the API service.")
     # 1. Fail fast on insecure/incomplete authentication configuration instead of
     #    letting the first request crash mid-login.
     try:
@@ -157,9 +160,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Database initialization error on startup: {e}")
 
-    # 3. Fail expired running jobs, then dispatch durable pending jobs into the
-    #    bounded local pool. A pending -> running DB transition deduplicates
-    #    startup dispatch across API instances.
+    # 3. Mark expired worker leases as interrupted. Pending work remains in the
+    #    durable queue for the dedicated worker process to claim.
     recover_interrupted_jobs = getattr(db, "recover_interrupted_jobs", None)
     if recover_interrupted_jobs is None:
         logger.warning(
@@ -167,25 +169,10 @@ async def lifespan(app: FastAPI):
         )
     else:
         try:
-            recovered = recover_interrupted_jobs(stale_after_seconds=120)
+            recovered = recover_interrupted_jobs(stale_after_seconds=120, resume_checkpointed=True)
             logger.info("Recovered interrupted research jobs: %s", recovered)
         except Exception as e:
             logger.error(f"Failed to recover interrupted research jobs: {e}")
-
-    try:
-        from core.task_queue import enqueue_research_run
-
-        pending_jobs = db.get_pending_research_jobs()
-        for job in pending_jobs:
-            enqueue_research_run(
-                research._execute_run_worker,
-                job["run_id"], job["topic"], job.get("user_id") or 0,
-                job.get("tone"), job.get("audience"), job.get("target_length"),
-            )
-        if pending_jobs:
-            logger.info("Requeued durable pending research jobs: %d", len(pending_jobs))
-    except Exception as e:
-        logger.error("Failed to requeue durable pending research jobs: %s", e)
 
     yield
 

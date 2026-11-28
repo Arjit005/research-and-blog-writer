@@ -10,7 +10,7 @@ All user articles, revisions, Copilot chat sessions, author preferences (long-te
 sequenceDiagram
     autonumber
     actor User as User Browser
-    participant UI as Streamlit Gateway (auth/ui.py)
+    browser client through the FastAPI authentication routes
     participant Svc as Auth Service (auth/service.py)
     participant Rate as Rate Limiter (auth/rate_limit.py)
     participant DB as TiDB / SQLite (database.py)

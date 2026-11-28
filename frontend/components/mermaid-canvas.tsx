@@ -285,20 +285,20 @@ export function MermaidCanvas({
 
   return (
     <div
-      className={`${className ?? "my-8"} rounded-2xl border border-slate-800/80 bg-slate-950 shadow-2xl overflow-hidden transition-all duration-200 ${
+      className={`${className ?? "my-8"} rounded-2xl border border-border/80 bg-background shadow-2xl overflow-hidden transition-all duration-200 ${
         isFullscreen
-          ? "fixed inset-3 md:inset-8 z-50 flex flex-col bg-slate-950/98 border-slate-700 backdrop-blur-xl"
+          ? "fixed inset-3 md:inset-8 z-50 flex flex-col bg-background/98 border-border backdrop-blur-xl"
           : "relative"
       }`}
     >
       {/* Canvas Top Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 bg-slate-900/80 border-b border-slate-800/80 backdrop-blur-md">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 bg-surface/80 border-b border-border/80 backdrop-blur-md">
         <div className="flex items-center gap-2.5 min-w-0">
           <span className="flex h-2 w-2 relative shrink-0">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500" />
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-signal opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-signal" />
           </span>
-          <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-200 truncate font-mono">
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-foreground truncate font-mono">
             {title}
           </h4>
         </div>
@@ -311,22 +311,22 @@ export function MermaidCanvas({
             title={showSource ? "View Visual Diagram" : "View Mermaid Source"}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition ${
               showSource
-                ? "bg-indigo-600/30 text-indigo-300 border border-indigo-500/40"
-                : "bg-slate-800/60 text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-transparent"
+                ? "bg-accent/30 text-signal border border-signal/40"
+                : "bg-surface-raised/60 text-muted-foreground hover:text-foreground hover:bg-surface-raised border border-transparent"
             }`}
           >
             {showSource ? <Eye className="w-3.5 h-3.5" /> : <Code2 className="w-3.5 h-3.5" />}
             <span className="hidden sm:inline">{showSource ? "Diagram" : "Source"}</span>
           </button>
 
-          <div className="w-px h-4 bg-slate-800 mx-1" />
+          <div className="w-px h-4 bg-surface-raised mx-1" />
 
           {/* Zoom controls */}
           <button
             type="button"
             onClick={() => setZoom((z) => Math.min(z + 0.2, 3))}
             title="Zoom In"
-            className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 rounded-lg transition"
+            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-surface-raised/80 rounded-lg transition"
           >
             <ZoomIn className="w-4 h-4" />
           </button>
@@ -334,7 +334,7 @@ export function MermaidCanvas({
             type="button"
             onClick={() => setZoom((z) => Math.max(z - 0.2, 0.4))}
             title="Zoom Out"
-            className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 rounded-lg transition"
+            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-surface-raised/80 rounded-lg transition"
           >
             <ZoomOut className="w-4 h-4" />
           </button>
@@ -342,19 +342,19 @@ export function MermaidCanvas({
             type="button"
             onClick={handleFitToScreen}
             title="Fit to Screen (Reset View)"
-            className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 rounded-lg transition"
+            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-surface-raised/80 rounded-lg transition"
           >
             <RotateCcw className="w-3.5 h-3.5" />
           </button>
 
-          <div className="w-px h-4 bg-slate-800 mx-1" />
+          <div className="w-px h-4 bg-surface-raised mx-1" />
 
           {/* Copy Source */}
           <button
             type="button"
             onClick={handleCopyCode}
             title="Copy Mermaid Code"
-            className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 rounded-lg transition"
+            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-surface-raised/80 rounded-lg transition"
           >
             {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
           </button>
@@ -365,7 +365,7 @@ export function MermaidCanvas({
             onClick={handleDownloadSvg}
             disabled={!svgContent}
             title="Export as SVG"
-            className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 disabled:opacity-30 rounded-lg transition"
+            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-surface-raised/80 disabled:opacity-30 rounded-lg transition"
           >
             <Download className="w-4 h-4" />
           </button>
@@ -375,7 +375,7 @@ export function MermaidCanvas({
             type="button"
             onClick={() => setIsFullscreen(!isFullscreen)}
             title={isFullscreen ? "Exit Fullscreen" : "Fullscreen Canvas"}
-            className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 rounded-lg transition"
+            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-surface-raised/80 rounded-lg transition"
           >
             {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
@@ -399,12 +399,12 @@ export function MermaidCanvas({
       >
         {/* Source view tab */}
         {showSource ? (
-          <div className="w-full h-full max-h-[480px] overflow-auto bg-slate-950 p-4 rounded-xl border border-slate-800">
-            <div className="flex items-center justify-between text-xs text-slate-400 mb-2 font-mono">
+          <div className="w-full h-full max-h-[480px] overflow-auto bg-background p-4 rounded-xl border border-border">
+            <div className="flex items-center justify-between text-xs text-muted-foreground mb-2 font-mono">
               <span>Mermaid 12.3.0 Compatible Code</span>
-              <span className="text-slate-500">{cleanSource.split("\n").length} lines</span>
+              <span className="text-muted-foreground">{cleanSource.split("\n").length} lines</span>
             </div>
-            <pre className="font-mono text-xs text-indigo-300 leading-relaxed overflow-x-auto selection:bg-indigo-600/30">
+            <pre className="font-mono text-xs text-signal leading-relaxed overflow-x-auto selection:bg-accent/30">
               <code>{cleanSource}</code>
             </pre>
           </div>
@@ -414,19 +414,19 @@ export function MermaidCanvas({
             <div className="inline-flex p-3 bg-amber-500/10 rounded-xl text-amber-400 mb-3">
               <AlertTriangle className="w-6 h-6" />
             </div>
-            <h5 className="text-sm font-semibold text-slate-200 mb-1">
+            <h5 className="text-sm font-semibold text-foreground mb-1">
               Mermaid Diagram Rendering Issue
             </h5>
-            <p className="text-xs text-slate-400 mb-4 max-w-md mx-auto">
+            <p className="text-xs text-muted-foreground mb-4 max-w-md mx-auto">
               The diagram specification contains a syntax variation that could not be parsed by
               Mermaid 12.3. The original source has been safely preserved below.
             </p>
-            <div className="text-left bg-slate-950 border border-slate-800 p-3.5 rounded-xl font-mono text-[11px] text-amber-300/90 mb-3 max-h-32 overflow-y-auto">
-              <span className="text-slate-500 font-bold block mb-1">Parser details:</span>
+            <div className="text-left bg-background border border-border p-3.5 rounded-xl font-mono text-[11px] text-amber-300/90 mb-3 max-h-32 overflow-y-auto">
+              <span className="text-muted-foreground font-bold block mb-1">Parser details:</span>
               {errorDetails}
             </div>
-            <div className="text-left bg-slate-900/90 border border-slate-800 p-3.5 rounded-xl font-mono text-xs text-slate-300 max-h-48 overflow-auto">
-              <pre className="text-slate-400">
+            <div className="text-left bg-surface/90 border border-border p-3.5 rounded-xl font-mono text-xs text-foreground max-h-48 overflow-auto">
+              <pre className="text-muted-foreground">
                 <code>{cleanSource}</code>
               </pre>
             </div>
@@ -443,15 +443,15 @@ export function MermaidCanvas({
             dangerouslySetInnerHTML={{ __html: svgContent }}
           />
         ) : (
-          <div className="flex flex-col items-center gap-2 text-xs text-slate-500">
+          <div className="flex flex-col items-center gap-2 text-xs text-muted-foreground">
             <span className="animate-pulse">Synthesizing diagram SVG…</span>
           </div>
         )}
 
         {/* Pan helper hint */}
         {!showSource && !errorDetails && svgContent && (
-          <div className="absolute bottom-3 left-4 flex items-center gap-1.5 px-2.5 py-1 bg-slate-900/70 border border-slate-800/80 rounded-md text-[10px] text-slate-400 backdrop-blur-sm pointer-events-none">
-            <Move className="w-3 h-3 text-slate-500" />
+          <div className="absolute bottom-3 left-4 flex items-center gap-1.5 px-2.5 py-1 bg-surface/70 border border-border/80 rounded-md text-[10px] text-muted-foreground backdrop-blur-sm pointer-events-none">
+            <Move className="w-3 h-3 text-muted-foreground" />
             <span>Drag to pan · Scroll/buttons to zoom ({Math.round(zoom * 100)}%)</span>
           </div>
         )}
@@ -459,8 +459,8 @@ export function MermaidCanvas({
 
       {/* Optional Caption Footer */}
       {caption && (
-        <div className="px-5 py-2.5 bg-slate-900/60 border-t border-slate-800/60 text-xs text-slate-400 italic">
-          <span className="font-semibold text-slate-300 not-italic mr-1.5">Figure note:</span>
+        <div className="px-5 py-2.5 bg-surface/60 border-t border-border/60 text-xs text-muted-foreground italic">
+          <span className="font-semibold text-foreground not-italic mr-1.5">Figure note:</span>
           {caption}
         </div>
       )}

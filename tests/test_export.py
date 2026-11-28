@@ -1,7 +1,7 @@
 """Unit tests for Export Suite (slugification, Markdown and HTML bundle compilation)."""
 
 import pytest
-from ui.export import slugify, get_article_filename, generate_standalone_html
+from core.article_export import slugify, get_article_filename, generate_standalone_html
 
 
 def test_slugify_variations():

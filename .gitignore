@@ -61,6 +61,7 @@ pytest-of-Dell/
 # --- Local CrewAI storage (if created in workspace) ---
 crewai/
 .crewai-test-storage/
+.research_checkpoints/
 
 # --- Frontend (Next.js / Node) ---
 frontend/node_modules/

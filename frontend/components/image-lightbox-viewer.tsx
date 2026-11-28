@@ -151,19 +151,19 @@ export function ImageLightboxViewer({
       role="dialog"
       aria-modal="true"
       aria-label={`Visual Viewer: ${currentVisual.title}`}
-      className="fixed inset-0 z-50 flex flex-col bg-slate-950/95 backdrop-blur-xl text-slate-100 select-none animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 flex flex-col bg-background/95 backdrop-blur-xl text-foreground select-none animate-in fade-in duration-200"
     >
       {/* 1. Header Toolbar */}
-      <div className="flex items-center justify-between px-6 py-3.5 bg-slate-900/90 border-b border-slate-800">
+      <div className="flex items-center justify-between px-6 py-3.5 bg-surface/90 border-b border-border">
         <div className="flex items-center gap-3">
-          <span className="text-xs font-mono px-2.5 py-1 rounded-md bg-slate-800 text-slate-300 border border-slate-700">
+          <span className="text-xs font-mono px-2.5 py-1 rounded-md bg-surface-raised text-foreground border border-border">
             {index + 1} / {visuals.length}
           </span>
-          <h2 className="text-sm font-bold text-slate-200 line-clamp-1 max-w-md">
+          <h2 className="text-sm font-bold text-foreground line-clamp-1 max-w-md">
             {currentVisual.title}
           </h2>
           {isDiagram && (
-            <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+            <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-signal/20 text-signal border border-signal/30">
               Diagram
             </span>
           )}
@@ -177,23 +177,23 @@ export function ImageLightboxViewer({
 
         {/* Viewport Control Tools */}
         <div className="flex items-center gap-2">
-          <div className={`flex items-center bg-slate-950 rounded-xl border border-slate-800 p-0.5 ${isDiagram && !isD2Diagram ? "hidden" : ""}`}>
+          <div className={`flex items-center bg-background rounded-xl border border-border p-0.5 ${isDiagram && !isD2Diagram ? "hidden" : ""}`}>
             <button
               type="button"
               onClick={handleZoomIn}
-              className="p-1.5 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded-lg transition"
+              className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-surface-raised rounded-lg transition"
               title="Zoom In (+)"
               aria-label="Zoom in"
             >
               <ZoomIn className="w-4 h-4" />
             </button>
-            <span className="text-[11px] font-mono px-2 text-slate-400">
+            <span className="text-[11px] font-mono px-2 text-muted-foreground">
               {Math.round(zoom * 100)}%
             </span>
             <button
               type="button"
               onClick={handleZoomOut}
-              className="p-1.5 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded-lg transition"
+              className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-surface-raised rounded-lg transition"
               title="Zoom Out (-)"
               aria-label="Zoom out"
             >
@@ -202,7 +202,7 @@ export function ImageLightboxViewer({
             <button
               type="button"
               onClick={handleResetZoom}
-              className="p-1.5 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded-lg transition"
+              className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-surface-raised rounded-lg transition"
               title="Fit to Screen / Reset (0)"
               aria-label="Reset zoom"
             >
@@ -214,7 +214,7 @@ export function ImageLightboxViewer({
             <button
               type="button"
               onClick={handleCopyLink}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 rounded-xl text-xs font-medium transition cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-surface hover:bg-surface-raised border border-border text-foreground rounded-xl text-xs font-medium transition cursor-pointer"
               title="Copy original source link"
             >
               {copiedUrl ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -227,8 +227,8 @@ export function ImageLightboxViewer({
             onClick={() => setShowMetadata(!showMetadata)}
             className={`p-2 rounded-xl border transition ${
               showMetadata
-                ? "bg-indigo-600/20 text-indigo-300 border-indigo-500/40"
-                : "bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200"
+                ? "bg-accent/20 text-signal border-signal/40"
+                : "bg-surface text-muted-foreground border-border hover:text-foreground"
             }`}
             title="Toggle Metadata & Traceability Panel"
           >
@@ -238,7 +238,7 @@ export function ImageLightboxViewer({
           <button
             type="button"
             onClick={onClose}
-            className="p-2 bg-slate-900 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 border border-slate-800 hover:border-rose-500/30 rounded-xl transition cursor-pointer"
+            className="p-2 bg-surface hover:bg-rose-500/20 text-muted-foreground hover:text-rose-400 border border-border hover:border-rose-500/30 rounded-xl transition cursor-pointer"
             title="Close Viewer (Esc)"
             aria-label="Close viewer"
           >
@@ -254,7 +254,7 @@ export function ImageLightboxViewer({
           <button
             type="button"
             onClick={handlePrev}
-            className="absolute left-6 top-1/2 -translate-y-1/2 z-20 p-3 bg-slate-900/80 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white rounded-full backdrop-blur-md shadow-2xl transition"
+            className="absolute left-6 top-1/2 -translate-y-1/2 z-20 p-3 bg-surface/80 hover:bg-surface-raised border border-border text-foreground hover:text-white rounded-full backdrop-blur-md shadow-2xl transition"
             title="Previous Visual (Left Arrow)"
             aria-label="Previous visual"
           >
@@ -267,7 +267,7 @@ export function ImageLightboxViewer({
           <button
             type="button"
             onClick={handleNext}
-            className="absolute right-6 top-1/2 -translate-y-1/2 z-20 p-3 bg-slate-900/80 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white rounded-full backdrop-blur-md shadow-2xl transition"
+            className="absolute right-6 top-1/2 -translate-y-1/2 z-20 p-3 bg-surface/80 hover:bg-surface-raised border border-border text-foreground hover:text-white rounded-full backdrop-blur-md shadow-2xl transition"
             title="Next Visual (Right Arrow)"
             aria-label="Next visual"
           >
@@ -319,9 +319,9 @@ export function ImageLightboxViewer({
                 className="max-w-[85vw] max-h-[75vh] object-contain rounded-2xl shadow-2xl pointer-events-none"
               />
             ) : (
-              <div className="p-12 text-center bg-slate-900 border border-slate-800 rounded-2xl">
-                <Layers className="w-12 h-12 text-slate-600 mx-auto mb-3" />
-                <p className="text-sm text-slate-400 font-medium">Visual Asset Available as Metadata</p>
+              <div className="p-12 text-center bg-surface border border-border rounded-2xl">
+                <Layers className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
+                <p className="text-sm text-muted-foreground font-medium">Visual Asset Available as Metadata</p>
               </div>
             )}
           </div>
@@ -329,70 +329,70 @@ export function ImageLightboxViewer({
 
         {/* 3. Collapsible Source & Evidence Information Sidebar */}
         {showMetadata && (
-          <aside className="w-80 lg:w-96 bg-slate-900/90 border-l border-slate-800 p-6 flex flex-col gap-4 overflow-y-auto backdrop-blur-md">
+          <aside className="w-80 lg:w-96 bg-surface/90 border-l border-border p-6 flex flex-col gap-4 overflow-y-auto backdrop-blur-md">
             <div>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 font-mono">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-signal font-mono">
                 Visual Evidence Profile
               </span>
-              <h3 className="text-base font-bold text-slate-100 mt-1 leading-snug">
+              <h3 className="text-base font-bold text-foreground mt-1 leading-snug">
                 {currentVisual.title}
               </h3>
             </div>
 
             {currentVisual.caption && (
-              <div className="p-3 bg-slate-950/70 border border-slate-800/80 rounded-xl text-xs text-slate-300 italic">
+              <div className="p-3 bg-background/70 border border-border/80 rounded-xl text-xs text-foreground italic">
                 {currentVisual.caption}
               </div>
             )}
 
             {currentVisual.description && (
-              <p className="text-xs text-slate-400 leading-relaxed">
+              <p className="text-xs text-muted-foreground leading-relaxed">
                 {currentVisual.description}
               </p>
             )}
 
             {/* Traceability Grid */}
-            <div className="space-y-2.5 pt-3 border-t border-slate-800/80 font-mono text-xs">
-              <div className="flex justify-between items-center text-slate-400">
-                <span className="text-slate-500">Origin:</span>
-                <span className="text-slate-200 capitalize">{currentVisual.origin_type.replace(/_/g, " ")}</span>
+            <div className="space-y-2.5 pt-3 border-t border-border/80 font-mono text-xs">
+              <div className="flex justify-between items-center text-muted-foreground">
+                <span className="text-muted-foreground">Origin:</span>
+                <span className="text-foreground capitalize">{currentVisual.origin_type.replace(/_/g, " ")}</span>
               </div>
-              <div className="flex justify-between items-center text-slate-400">
-                <span className="text-slate-500">Visual Category:</span>
-                <span className="text-slate-200 capitalize">{currentVisual.visual_type}</span>
+              <div className="flex justify-between items-center text-muted-foreground">
+                <span className="text-muted-foreground">Visual Category:</span>
+                <span className="text-foreground capitalize">{currentVisual.visual_type}</span>
               </div>
               {currentVisual.publisher && (
-                <div className="flex justify-between items-center text-slate-400">
-                  <span className="text-slate-500">Publisher:</span>
-                  <span className="text-slate-200 truncate max-w-[180px]">{currentVisual.publisher}</span>
+                <div className="flex justify-between items-center text-muted-foreground">
+                  <span className="text-muted-foreground">Publisher:</span>
+                  <span className="text-foreground truncate max-w-[180px]">{currentVisual.publisher}</span>
                 </div>
               )}
               {currentVisual.publication_date && (
-                <div className="flex justify-between items-center text-slate-400">
-                  <span className="text-slate-500">Publication Date:</span>
-                  <span className="text-slate-200">{currentVisual.publication_date}</span>
+                <div className="flex justify-between items-center text-muted-foreground">
+                  <span className="text-muted-foreground">Publication Date:</span>
+                  <span className="text-foreground">{currentVisual.publication_date}</span>
                 </div>
               )}
-              <div className="flex justify-between items-center text-slate-400">
-                <span className="text-slate-500">Retrieved:</span>
-                <span className="text-slate-200">{currentVisual.retrieval_timestamp.split("T")[0]}</span>
+              <div className="flex justify-between items-center text-muted-foreground">
+                <span className="text-muted-foreground">Retrieved:</span>
+                <span className="text-foreground">{currentVisual.retrieval_timestamp.split("T")[0]}</span>
               </div>
               {currentVisual.license_information && (
-                <div className="flex justify-between items-center text-slate-400">
-                  <span className="text-slate-500">License:</span>
-                  <span className="text-indigo-300 truncate max-w-[180px]">{currentVisual.license_information}</span>
+                <div className="flex justify-between items-center text-muted-foreground">
+                  <span className="text-muted-foreground">License:</span>
+                  <span className="text-signal truncate max-w-[180px]">{currentVisual.license_information}</span>
                 </div>
               )}
             </div>
 
             {/* Source Link & Evidence Actions */}
-            <div className="pt-4 border-t border-slate-800/80 space-y-2">
+            <div className="pt-4 border-t border-border/80 space-y-2">
               {currentVisual.source_url && (
                 <a
                   href={currentVisual.source_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="w-full py-2 px-3 bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition"
+                  className="w-full py-2 px-3 bg-accent/20 hover:bg-accent/30 border border-signal/40 text-signal rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
                   <span>Inspect Original Web Source</span>

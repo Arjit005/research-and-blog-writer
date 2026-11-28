@@ -8,6 +8,7 @@ import rehypeKatex from "rehype-katex";
 import { MermaidCanvas } from "./mermaid-canvas";
 import { D2Canvas } from "./d2-canvas";
 import { InteractiveChartExplorer } from "./interactive-chart-explorer";
+import { PremiumButton } from "./premium-button";
 import { ResearchChart } from "@/lib/api";
 import {
   Clock,
@@ -156,7 +157,7 @@ export function ArticleViewer({
 
   const markdownComponents: Components = {
     h1: ({ children }) => (
-      <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-foreground mt-2 mb-6 pb-4 border-b border-border leading-tight">
+      <h1 className="text-4xl md:text-5xl font-extrabold tracking-tighter text-foreground mt-2 mb-6 pb-4 border-b border-border leading-tight">
         {children}
       </h1>
     ),
@@ -167,13 +168,13 @@ export function ArticleViewer({
       return (
         <h2
           id={id}
-          className={`scroll-mt-24 text-2xl font-bold mt-12 mb-4 pb-2 border-b border-border text-foreground flex items-center gap-2 group ${
-            isExecutiveSummary ? "text-blue-600 dark:text-blue-400" : ""
+          className={`scroll-mt-24 text-2xl font-bold tracking-tight text-foreground mt-12 mb-4 pb-2.5 border-b border-border flex items-center gap-2 group ${
+            isExecutiveSummary ? "text-accent" : "text-foreground"
           }`}
         >
           <a
             href={`#${id}`}
-            className="text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity"
+            className="text-muted-foreground hover:text-accent opacity-0 group-hover:opacity-100 transition-opacity"
             aria-label={`Link to ${text}`}
           >
             <Hash className="w-5 h-5" />
@@ -188,11 +189,11 @@ export function ArticleViewer({
       return (
         <h3
           id={id}
-          className="scroll-mt-24 text-lg font-semibold mt-8 mb-3 text-foreground flex items-center gap-2 group"
+          className="scroll-mt-24 text-lg font-semibold tracking-tight text-foreground mt-8 mb-3 flex items-center gap-2 group"
         >
           <a
             href={`#${id}`}
-            className="text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity"
+            className="text-muted-foreground hover:text-accent opacity-0 group-hover:opacity-100 transition-opacity"
             aria-label={`Link to ${text}`}
           >
             <Hash className="w-4 h-4" />
@@ -202,12 +203,23 @@ export function ArticleViewer({
       );
     },
     p: ({ children }) => (
-      <p className="text-foreground/90 leading-relaxed text-[15px] md:text-base my-4 tracking-normal">
+      <p className="text-base text-foreground/90 leading-relaxed my-4">
         {children}
       </p>
     ),
+    ul: ({ children }) => (
+      <ul className="my-4 pl-6 list-disc space-y-2 text-foreground/90 text-[15px] md:text-base leading-7 marker:text-accent">
+        {children}
+      </ul>
+    ),
+    ol: ({ children }) => (
+      <ol className="my-4 pl-6 list-decimal space-y-2 text-foreground/90 text-[15px] md:text-base leading-7 marker:text-accent marker:font-mono">
+        {children}
+      </ol>
+    ),
+    hr: () => <hr className="my-10 border-border" />,
     blockquote: ({ children }) => (
-      <blockquote className="my-6 pl-4 border-l-4 border-blue-600 bg-surface-raised p-4 rounded-r-2xl italic text-foreground text-sm md:text-base">
+      <blockquote className="my-6 pl-4 border-l-4 border-accent bg-surface-raised/80 p-4 rounded-r-2xl italic text-foreground text-sm md:text-base">
         {children}
       </blockquote>
     ),
@@ -224,7 +236,7 @@ export function ArticleViewer({
       </thead>
     ),
     tbody: ({ children }) => <tbody className="divide-y divide-border">{children}</tbody>,
-    th: ({ children }) => <th className="px-4 py-3 font-semibold text-blue-600 dark:text-blue-400">{children}</th>,
+    th: ({ children }) => <th className="px-4 py-3 font-semibold text-accent">{children}</th>,
     td: ({ children }) => <td className="px-4 py-3 leading-normal">{children}</td>,
     pre: ({ children }) => <>{children}</>,
     code: ({ className, children, ...props }) => {
@@ -265,15 +277,15 @@ export function ArticleViewer({
 
       if (isBlock) {
         return (
-          <div className="my-6 rounded-2xl overflow-hidden border border-border bg-slate-900 text-slate-100 shadow-sm">
-            <div className="flex items-center justify-between px-4 py-2 bg-slate-950/80 border-b border-slate-800 text-[11px] font-mono text-slate-400">
+          <div className="my-6 rounded-2xl overflow-hidden border border-border bg-surface text-foreground shadow-sm">
+            <div className="flex items-center justify-between px-4 py-2 bg-background/80 border-b border-border text-[11px] font-mono text-muted-foreground">
               <span>{language || "code"}</span>
               <button
                 type="button"
                 onClick={() => {
                   void navigator.clipboard.writeText(codeText);
                 }}
-                className="hover:text-blue-300 transition"
+                className="hover:text-accent transition"
                 title="Copy code snippet"
               >
                 Copy
@@ -288,7 +300,7 @@ export function ArticleViewer({
 
       return (
         <code
-          className="px-1.5 py-0.5 rounded-md bg-surface-raised text-blue-600 dark:text-blue-400 font-mono text-xs border border-border"
+          className="px-1.5 py-0.5 rounded-md bg-surface-raised text-accent font-mono text-xs border border-border"
           {...props}
         >
           {children}
@@ -297,8 +309,8 @@ export function ArticleViewer({
     },
     img: ({ src, alt }) => {
       return (
-        <figure className="my-8 rounded-2xl overflow-hidden border border-border bg-slate-950/60 shadow-lg">
-          <div className="relative overflow-hidden flex items-center justify-center p-2 bg-slate-950">
+        <figure className="my-8 rounded-2xl overflow-hidden border border-border bg-background/60 shadow-lg">
+          <div className="relative overflow-hidden flex items-center justify-center p-2 bg-background">
             <img
               src={src || ""}
               alt={alt || "Research visual figure"}
@@ -307,9 +319,9 @@ export function ArticleViewer({
             />
           </div>
           {alt && (
-            <figcaption className="px-4 py-2.5 bg-slate-900/80 border-t border-border text-xs text-muted-foreground italic flex items-center justify-between">
+            <figcaption className="px-4 py-2.5 bg-surface/80 border-t border-border text-xs text-muted-foreground italic flex items-center justify-between">
               <span>{alt}</span>
-              <span className="text-[10px] font-mono not-italic text-slate-500 uppercase">Fig. Evidence</span>
+              <span className="text-[10px] font-mono not-italic text-muted-foreground uppercase">Fig. Evidence</span>
             </figcaption>
           )}
         </figure>
@@ -322,7 +334,7 @@ export function ArticleViewer({
           href={href}
           target={isInternal ? undefined : "_blank"}
           rel={isInternal ? undefined : "noopener noreferrer"}
-          className="text-blue-600 dark:text-blue-400 hover:text-blue-700 underline underline-offset-4 decoration-blue-500/40 hover:decoration-blue-600 transition"
+          className="text-accent hover:text-accent-hover underline underline-offset-4 decoration-accent/40 hover:decoration-accent transition"
         >
           {children}
         </a>
@@ -332,37 +344,37 @@ export function ArticleViewer({
 
   return (
     <div
-      className={`relative w-full flex flex-col gap-6 transition-all ${
-        isFocusMode ? "max-w-5xl mx-auto" : "max-w-full"
+      className={`relative w-full flex flex-col gap-5 transition-all ${
+        isFocusMode ? "max-w-4xl mx-auto" : "max-w-full"
       }`}
     >
       {/* 1. Article Actions Bar */}
-      <div className="sticky top-16 z-30 flex flex-wrap items-center justify-between gap-3 p-3.5 bg-surface/90 border border-border rounded-2xl backdrop-blur-xl shadow-sm">
+      <div className="no-print sticky top-0 z-30 flex flex-wrap items-center justify-between gap-2.5 p-3 bg-surface/90 border border-border rounded-3xl backdrop-blur-xl shadow-sm premium-shadow">
         {/* Left Stats */}
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <span className="flex items-center gap-1.5 px-3 py-1 bg-surface-raised border border-border rounded-xl text-xs font-medium text-foreground">
-            <BookOpen className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="flex items-center gap-1.5 px-2.5 py-1 bg-surface-raised border border-border rounded-xl text-xs font-medium text-foreground">
+            <BookOpen className="w-3.5 h-3.5 text-accent" />
             <span>{calculatedWords.toLocaleString()} words</span>
           </span>
           {isStreaming ? (
-            <span className="flex items-center gap-1.5 px-3 py-1 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-500/40 rounded-xl text-xs font-medium text-emerald-700 dark:text-emerald-300 animate-pulse">
+            <span className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/35 rounded-xl text-xs font-medium text-emerald-700 dark:text-emerald-300 animate-pulse">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
               <span>Streaming Draft Live...</span>
             </span>
           ) : (
-            <span className="flex items-center gap-1.5 px-3 py-1 bg-surface-raised border border-border rounded-xl text-xs font-medium text-foreground">
+            <span className="flex items-center gap-1.5 px-2.5 py-1 bg-surface-raised border border-border rounded-xl text-xs font-medium text-foreground">
               <Clock className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
               <span>{readingTimeMin} min read</span>
             </span>
           )}
           {generationTime && (
-            <span className="hidden sm:flex items-center gap-1 px-3 py-1 bg-surface-raised border border-border rounded-xl text-xs text-muted-foreground">
-              <span>Gen: {generationTime}s</span>
+            <span className="hidden sm:flex items-center gap-1 px-2.5 py-1 bg-surface-raised border border-border rounded-xl text-xs text-muted-foreground font-mono">
+              <span>{generationTime}s</span>
             </span>
           )}
           {citations.length > 0 && (
-            <span className="hidden md:flex items-center gap-1 px-3 py-1 bg-blue-50 dark:bg-blue-950/40 border border-blue-500/30 rounded-xl text-xs text-blue-700 dark:text-blue-300">
-              <LinkIcon className="w-3 h-3 text-blue-600 dark:text-blue-400" />
+            <span className="hidden md:flex items-center gap-1.5 px-2.5 py-1 bg-accent-soft border border-accent/30 rounded-xl text-xs font-medium text-accent">
+              <LinkIcon className="w-3 h-3 text-accent" />
               <span>{citations.length} Verified Sources</span>
             </span>
           )}
@@ -374,7 +386,7 @@ export function ArticleViewer({
           <button
             type="button"
             onClick={handleCopyArticle}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border text-foreground rounded-xl text-xs font-medium transition cursor-pointer"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-raised hover:bg-surface hover:border-border-strong border border-border text-foreground rounded-xl text-xs font-medium transition cursor-pointer"
             title="Copy entire markdown article to clipboard"
           >
             {copiedArticle ? (
@@ -389,7 +401,7 @@ export function ArticleViewer({
           <button
             type="button"
             onClick={handleCopyCitations}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border text-foreground rounded-xl text-xs font-medium transition cursor-pointer"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-raised hover:bg-surface hover:border-border-strong border border-border text-foreground rounded-xl text-xs font-medium transition cursor-pointer"
             title="Copy bibliography & sources"
           >
             {copiedCitations ? (
@@ -404,7 +416,7 @@ export function ArticleViewer({
           <button
             type="button"
             onClick={handleDownloadMarkdown}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border text-foreground rounded-xl text-xs font-medium transition cursor-pointer"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-raised hover:bg-surface hover:border-border-strong border border-border text-foreground rounded-xl text-xs font-medium transition cursor-pointer"
             title="Download .md file"
           >
             <Download className="w-3.5 h-3.5 text-muted-foreground" />
@@ -415,7 +427,7 @@ export function ArticleViewer({
           <button
             type="button"
             onClick={handlePrintPdf}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border text-foreground rounded-xl text-xs font-medium transition cursor-pointer"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-raised hover:bg-surface hover:border-border-strong border border-border text-foreground rounded-xl text-xs font-medium transition cursor-pointer"
             title="Export or Print as PDF"
           >
             <Printer className="w-3.5 h-3.5 text-muted-foreground" />
@@ -427,10 +439,10 @@ export function ArticleViewer({
             <button
               type="button"
               onClick={onOpenVersionHistory}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border text-foreground rounded-xl text-xs font-medium transition cursor-pointer"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-raised hover:bg-surface hover:border-border-strong border border-border text-foreground rounded-xl text-xs font-medium transition cursor-pointer"
               title="Open Revisions Timeline"
             >
-              <Bookmark className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+              <Bookmark className="w-3.5 h-3.5 text-accent" />
               <span className="hidden lg:inline">Versions</span>
             </button>
           )}
@@ -439,8 +451,9 @@ export function ArticleViewer({
           <button
             type="button"
             onClick={() => setIsFocusMode(!isFocusMode)}
-            className="p-1.5 bg-surface-raised hover:bg-slate-200 dark:hover:bg-slate-800 border border-border text-muted-foreground hover:text-foreground rounded-xl transition cursor-pointer"
+            className="p-1.5 bg-surface-raised hover:bg-surface hover:border-border-strong border border-border text-muted-foreground hover:text-foreground rounded-xl transition cursor-pointer"
             title={isFocusMode ? "Exit Focus Mode" : "Distraction-Free Focus Mode"}
+            aria-label={isFocusMode ? "Exit Focus Mode" : "Distraction-Free Focus Mode"}
           >
             {isFocusMode ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
@@ -450,7 +463,7 @@ export function ArticleViewer({
             <button
               type="button"
               onClick={onOpenVisualLibrary}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-400 rounded-xl text-xs font-semibold transition cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-signal/10 hover:bg-signal/15 border border-signal/30 text-signal rounded-xl text-xs font-semibold transition cursor-pointer"
               title="Open Visual Research Library & Evidence Gallery"
             >
               <ImageIcon className="w-3.5 h-3.5" />
@@ -463,7 +476,7 @@ export function ArticleViewer({
             <button
               type="button"
               onClick={onOpenQualityAuditor}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 rounded-xl text-xs font-semibold transition cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/15 border border-emerald-500/30 text-emerald-700 dark:text-emerald-400 rounded-xl text-xs font-semibold transition cursor-pointer"
               title="Open Section 8 Quality Assurance & Evidence Auditor"
             >
               <ShieldCheck className="w-3.5 h-3.5" />
@@ -473,14 +486,16 @@ export function ArticleViewer({
 
           {/* AI Copilot Drawer */}
           {onOpenCopilot && (
-            <button
+            <PremiumButton
               type="button"
               onClick={onOpenCopilot}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs font-semibold shadow-md shadow-blue-600/20 transition cursor-pointer"
+              variant="accent"
+              size="sm"
+              title="Open AI Copilot"
             >
               <FileText className="w-3.5 h-3.5" />
               <span>AI Copilot</span>
-            </button>
+            </PremiumButton>
           )}
         </div>
       </div>
@@ -490,50 +505,52 @@ export function ArticleViewer({
         {/* Center Article Reader Container */}
         <article
           ref={articleRef}
-          className="w-full select-text selection:bg-blue-500/20 selection:text-blue-900 dark:selection:text-blue-100 bg-surface border border-border rounded-3xl p-6 sm:p-10 md:p-12 shadow-sm backdrop-blur-md"
+          className="w-full bg-surface border border-border rounded-3xl p-6 sm:p-10 md:p-12 shadow-sm premium-shadow"
         >
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm, remarkMath]}
-            rehypePlugins={[rehypeKatex]}
-            components={markdownComponents}
-          >
-            {content}
-          </ReactMarkdown>
+          <div className="max-w-[74ch] mx-auto">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm, remarkMath]}
+              rehypePlugins={[rehypeKatex]}
+              components={markdownComponents}
+            >
+              {content}
+            </ReactMarkdown>
 
-          {/* Live Streaming Indicator Cursor */}
-          {isStreaming && (
-            <div className="mt-4 flex items-center gap-2 text-blue-600 dark:text-blue-400 font-mono text-sm select-none">
-              <span className="inline-block w-2.5 h-5 bg-blue-600 dark:bg-blue-400 animate-pulse rounded-sm" />
-              <span className="text-xs text-muted-foreground italic">Blog Writer drafting token-by-token...</span>
-            </div>
-          )}
-
-          {/* End of article citation summary card */}
-          {citations.length > 0 && (
-            <div className="mt-14 pt-8 border-t border-border">
-              <div className="flex items-center justify-between mb-4">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-2">
-                  <LinkIcon className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                  Verified Primary References ({citations.length})
-                </h4>
-                <button
-                  type="button"
-                  onClick={handleCopyCitations}
-                  className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-700 transition cursor-pointer"
-                >
-                  {copiedCitations ? "Copied Sources" : "Copy All Sources"}
-                </button>
+            {/* Live Streaming Indicator Cursor */}
+            {isStreaming && (
+              <div className="mt-4 flex items-center gap-2 text-accent font-mono text-sm select-none">
+                <span className="inline-block w-2.5 h-5 bg-accent animate-pulse rounded-sm" />
+                <span className="text-xs text-muted-foreground italic">Blog Writer drafting token-by-token...</span>
               </div>
-              <ul className="space-y-2 text-xs text-muted-foreground font-mono bg-surface-raised p-4 rounded-2xl border border-border">
-                {citations.map((c, i) => (
-                  <li key={i} className="truncate">
-                    <span className="text-blue-600 dark:text-blue-400 mr-2">[{i + 1}]</span>
-                    {c}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+            )}
+
+            {/* End of article citation summary card */}
+            {citations.length > 0 && (
+              <div className="mt-14 pt-8 border-t border-border">
+                <div className="flex items-center justify-between mb-4">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-2">
+                    <LinkIcon className="w-3.5 h-3.5 text-accent" />
+                    Verified Primary References ({citations.length})
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={handleCopyCitations}
+                    className="text-xs font-medium text-accent hover:text-accent-hover transition cursor-pointer"
+                  >
+                    {copiedCitations ? "Copied Sources" : "Copy All Sources"}
+                  </button>
+                </div>
+                <ul className="space-y-2 text-xs text-muted-foreground font-mono bg-surface-raised p-4 rounded-2xl border border-border">
+                  {citations.map((c, i) => (
+                    <li key={i} className="truncate">
+                      <span className="text-accent mr-2">[{i + 1}]</span>
+                      {c}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
         </article>
       </div>
     </div>

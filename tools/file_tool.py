@@ -7,7 +7,7 @@ to persist the output.
 The default output path is ``report.md`` in the current working directory,
 but :meth:`SaveReportTool._run` accepts an explicit ``output_dir`` / ``filename``
 and honors the ``RESEARCH_RUN_OUTPUT_DIR`` environment variable so concurrent
-runs (backend workers, Streamlit sessions) do not overwrite each other's
+runs (backend workers and isolated sessions) do not overwrite each other's
 ``report.md``.
 """
 

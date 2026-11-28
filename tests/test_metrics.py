@@ -1,7 +1,7 @@
 """Unit tests for prose cleaning and honest metric calculations."""
 
 import pytest
-from ui.metrics import clean_article_prose, count_citations_in_references, calculate_clean_metrics
+from core.article_metrics import clean_article_prose, count_citations_in_references, calculate_clean_metrics
 
 
 def test_clean_article_prose_strips_code_and_references():

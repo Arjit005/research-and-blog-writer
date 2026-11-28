@@ -354,7 +354,7 @@ class ResearchAndBlogWriter:
     # ------------------------------------------------------------------
 
     @crew
-    def crew(self, step_callback=None, task_callback=None) -> Crew:
+    def crew(self, step_callback=None, task_callback=None, checkpoint=None) -> Crew:
         """Creates the Research_and_Blog_writer crew."""
         # Each run gets a fresh visited-source registry so citation verification
         # cannot be satisfied by URLs visited during a previous run.
@@ -367,6 +367,7 @@ class ResearchAndBlogWriter:
             memory=False,
             step_callback=step_callback,
             task_callback=task_callback,
+            checkpoint=checkpoint,
         )
 
 

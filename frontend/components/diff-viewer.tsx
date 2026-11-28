@@ -91,13 +91,13 @@ function rowClassName(kind: DiffRowKind): string {
     case "del":
       return "bg-rose-950/50 text-rose-300 border-l-2 border-rose-500 px-2 py-0.5 line-through opacity-80";
     case "chunk":
-      return "text-indigo-400 bg-indigo-950/30 px-2 py-1 my-1 rounded text-[11px]";
+      return "text-signal bg-accent/30 px-2 py-1 my-1 rounded text-[11px]";
     case "meta":
-      return "text-slate-500 px-2 py-0.5";
+      return "text-muted-foreground px-2 py-0.5";
     case "empty":
       return "text-emerald-300 bg-emerald-950/30 px-3 py-2 rounded";
     default:
-      return "text-slate-400 px-2 py-0.5";
+      return "text-muted-foreground px-2 py-0.5";
   }
 }
 
@@ -121,15 +121,15 @@ export function DiffViewer({ diffHtml, patch, stats, fromRevision, toRevision, o
   return (
     <section
       aria-label={`Revision diff from revision ${fromRevision} to revision ${toRevision}`}
-      className="bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl font-mono text-xs"
+      className="bg-background border border-border rounded-2xl overflow-hidden shadow-2xl font-mono text-xs"
     >
-      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 bg-slate-900 border-b border-slate-800">
-        <span className="text-slate-400 font-sans font-medium">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 bg-surface border-b border-border">
+        <span className="text-muted-foreground font-sans font-medium">
           Revision Diff: Rev #{fromRevision} &rarr; Rev #{toRevision}
         </span>
         <div className="flex items-center gap-2">
           {statsLabel && (
-            <span className="font-sans text-[11px] text-slate-300 bg-slate-800 px-2 py-0.5 rounded">
+            <span className="font-sans text-[11px] text-foreground bg-surface-raised px-2 py-0.5 rounded">
               {statsLabel}
             </span>
           )}
@@ -137,7 +137,7 @@ export function DiffViewer({ diffHtml, patch, stats, fromRevision, toRevision, o
             <button
               type="button"
               onClick={onClose}
-              className="text-xs text-slate-400 hover:text-slate-200 px-2 py-1 rounded bg-slate-800"
+              className="text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded bg-surface-raised"
             >
               Close
             </button>
@@ -145,7 +145,7 @@ export function DiffViewer({ diffHtml, patch, stats, fromRevision, toRevision, o
         </div>
       </div>
 
-      <div className="p-4 overflow-x-auto max-h-[500px] overflow-y-auto divide-y divide-slate-900/50">
+      <div className="p-4 overflow-x-auto max-h-[500px] overflow-y-auto divide-y divide-border/50">
         {rows.length > 0 ? (
           rows.map((row, idx) => (
             <div key={idx} className={rowClassName(row.kind)}>
@@ -153,7 +153,7 @@ export function DiffViewer({ diffHtml, patch, stats, fromRevision, toRevision, o
             </div>
           ))
         ) : (
-          <div className="text-slate-500 italic p-4 text-center">No structural changes between revisions.</div>
+          <div className="text-muted-foreground italic p-4 text-center">No structural changes between revisions.</div>
         )}
       </div>
     </section>

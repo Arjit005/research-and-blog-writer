@@ -125,9 +125,17 @@ cd frontend && npm install && cd ..
 # 2. Build frontend static export
 cd frontend && npm run build && cd ..
 
-# 3. Run FastAPI backend (serves frontend at http://localhost:8000)
+# 3. Run the API (serves frontend at http://localhost:8000)
 python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+
+# 4. In another terminal, start the durable research worker
+python worker.py
 ```
+
+The API and worker must use the same database. For local development, point
+both at the same SQLite path; for separate production services, configure the
+same TiDB credentials on each service. The API only queues jobs; the worker
+claims and executes them.
 
 ---
 
@@ -143,7 +151,7 @@ Unlike typical shallow AI generators, this system:
 4. **Survives rate limits**: transparently fails over across **7 free OpenRouter models + 3 Gemini models** when a provider returns `429`, times out, or is unavailable.
 5. **Persists state**: articles, revisions, chat sessions, user style memory, research cache, and run/job events are stored in **TiDB Cloud Serverless** (MySQL-compatible) with automatic local **SQLite** fallback.
 6. **Exposes a real editorial copilot**: the Next.js copilot drawer sends instructions to `POST /api/v1/articles/{article_id}/edit`, which creates a genuine revision — there is no client-side simulated reply.
-7. **Keeps queued runs durable**: job inputs and sequenced events live in the database. API startup requeues jobs that had not started, and `worker.py` can poll the same database queue in a separate process. The SSE stream resumes from `Last-Event-ID`/`after_seq`, and the UI persists the active run id across refreshes.
+7. **Keeps queued runs durable**: job inputs and sequenced events live in the database. A dedicated `worker.py` process claims and executes jobs; the API only accepts jobs and streams persisted events. The SSE stream resumes from `Last-Event-ID`/`after_seq`, and the UI persists the active run id across refreshes.
 
 ---
 
@@ -176,7 +184,6 @@ flowchart TD
 
     DB --> API["⚡ FastAPI Backend\n• Auth (password + OTP, HttpOnly cookies)\n• Resumable SSE run stream\n• Articles · Revisions · Diffs · Edit\n• Telemetry & health"]
     API --> Web["🖥️ Next.js 16 Static UI\n• Live 4-stage stepper\n• Mermaid canvas\n• Revision diff & restore\n• Editorial copilot (/edit)"]
-    API --> Legacy["🖥️ Legacy Streamlit UI\n(deprecated, local only)"]
 
     subgraph Resilience["⚡ Model & Search Resilience"]
         LLMFallback["🔄 FallbackLLM\n• 3 Gemini models (when GEMINI_API_KEY set)\n• 7 OpenRouter free models\n• skips OpenRouter after daily-quota errors"]
@@ -290,8 +297,6 @@ research-and-blog-writer/
 ├── reports/                    # Generated audit and verification artifacts
 ├── docs/                        # Current docs and archived reports
 ├── tests/                      # Pytest suite (API, auth, cache, red-team, revisions, ...)
-├── app.py                      # ⚠️ LEGACY Streamlit app (deprecated, not deployed)
-├── ui/                         # ⚠️ LEGACY Streamlit components (deprecated)
 ├── crew.py                     # Code-first CrewAI pipeline
 ├── database.py                 # TiDB Cloud (TLS) + SQLite fallback
 ├── llm_fallback.py             # FallbackLLM multi-provider chain
@@ -497,14 +502,7 @@ uv run uvicorn backend.main:app --port 8000
 ```
 FastAPI mounts `frontend/out` at `/` and serves the API under `/api/v1`.
 
-### Option B: Legacy Streamlit UI — ⚠️ deprecated
-`app.py` / `ui/` are the original Streamlit studio. They are **not deployed** (Render and Docker run the FastAPI + Next.js app; the Docker runtime image excludes Streamlit). The files remain for local reference only:
-
-```bash
-uv run streamlit run app.py
-```
-
-### Option C: CLI
+### CLI
 ```bash
 uv run python crew.py
 uv run python crew.py --topic "LLMOps in 2026: Architectures, Guardrails, and Observability"
@@ -567,7 +565,7 @@ CI runs the pytest suite on **Python 3.11, 3.12, and 3.13**, plus a frontend job
 
 ## 🐳 Docker
 
-The multi-stage `Dockerfile` builds the static Next.js export, installs Python dependencies with `uv sync --frozen --no-dev`, and copies only runtime code into a non-root final image (no `app.py`, `ui/`, tests, or docs).
+The multi-stage `Dockerfile` builds the static Next.js export, installs Python dependencies with `uv sync --frozen --no-dev`, and copies only runtime code into a non-root final image (excluding tests and docs).
 
 ```bash
 docker build -t research-studio .
@@ -596,18 +594,18 @@ docker run --rm -p 8000:8000 \
 
 ## ⚠️ Known Limitations
 
-- **Running jobs are not resumable**: a job still pending at restart is requeued. A process crash after it starts causes the expired lease to fail the job; the multi-agent pipeline has no durable stage checkpoints or automatic retry yet.
-- **Worker deployment is optional/manual**: the API can execute jobs in its bounded thread pool. `python worker.py` runs a separate database-polling worker, but the Render blueprint currently deploys only the web service.
-- **Live token previews are process-local**: durable job events can be replayed across instances, while in-memory token-by-token updates are visible only to SSE clients connected to the process executing that run.
+- **Crash recovery resumes completed CrewAI tasks**: the worker stores task checkpoints per run, restores the latest one after an expired lease, and retries once. A second worker crash marks the run failed. Checkpoint files are removed after terminal completion.
+- **Render checkpoint storage needs a persistent worker disk**: the blueprint attaches a 1 GB disk for checkpoints. Render persistent disks require a paid worker plan and prevent scaling that worker service to multiple instances; use shared checkpoint storage before horizontal worker scaling.
+- **Worker mode requires shared storage**: the Render blueprint includes a separate worker service, so API and worker must use the same TiDB credentials. SQLite remains for single-machine local development.
+- **Draft preview begins after generation**: the sanitized article is streamed in durable chunks after it has been saved. Agent progress is live during research, but draft text is not exposed while the model is still producing it.
 - **SQLite fallback**: when TiDB is not configured, SQLite is used locally; it is not suitable for multi-instance production deployments and Render's local filesystem should not be treated as durable storage.
 - **Rate limiting without Redis**: the fallback limiter is in-memory per process. Use Redis when one shared limit across multiple API instances is required.
 - **LangSmith tracing is stage-level**: the root job span plus per-stage spans, feedback, and failure dataset export — not a capture of every tool call.
 - **Static export caveat**: `NEXT_PUBLIC_API_BASE` is build-time; changing it requires rebuilding the frontend. Rewrites/redirects/headers are unsupported with `output: "export"`.
-- **Legacy Streamlit UI**: `app.py`/`ui/` are deprecated, untested for the new API features, and excluded from the Docker image.
 - **Copilot edits require the backend `/edit` endpoint**: the UI surfaces a clear error if the endpoint is unavailable.
 - **Email OTP needs SMTP** when `AUTH_DEV_MODE=false`; without SMTP credentials real delivery cannot work.
 
-To run a separate worker locally, configure the same database and model-provider variables as the API, then start `python worker.py` from the project root. The API and standalone worker safely compete for pending jobs through the database status transition.
+The local quickstart starts `python worker.py` beside the API. Both processes must use the same database and model-provider configuration. Local checkpoint files live under `.research_checkpoints` unless `RESEARCH_CHECKPOINT_DIR` is set elsewhere.
 
 ---
 

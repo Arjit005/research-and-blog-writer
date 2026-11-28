@@ -58,7 +58,7 @@ RUN useradd -m -u 1000 appuser
 COPY --from=python-builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Copy only the runtime application (no Streamlit app.py/ui, no tests/docs).
+# Copy only the runtime application (no tests/docs).
 COPY --chown=appuser:appuser backend ./backend
 COPY --chown=appuser:appuser auth ./auth
 COPY --chown=appuser:appuser cache ./cache

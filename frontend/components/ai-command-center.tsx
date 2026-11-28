@@ -196,17 +196,18 @@ export function AICommandCenter({
       <button
         type="button"
         onClick={onToggleCollapse}
-        className="hidden lg:flex flex-col items-center gap-4 p-3 bg-surface border border-border rounded-2xl text-muted-foreground hover:text-foreground transition shadow-md w-14 shrink-0"
+        className="hidden lg:flex flex-col items-center gap-4 p-3 bg-surface border border-border hover:border-border-strong rounded-2xl text-muted-foreground hover:text-foreground transition shadow-sm w-14 shrink-0 cursor-pointer"
         title="Expand AI Command Center"
+        aria-label="Expand AI Command Center"
       >
-        <Cpu className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+        <Cpu className="w-5 h-5 text-accent" />
         <span className="text-[10px] font-mono uppercase tracking-widest [writing-mode:vertical-rl] rotate-180 text-muted-foreground font-semibold">
           AI Command Center
         </span>
         {runId && (
           <span className="flex h-2.5 w-2.5 relative">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-600" />
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75" />
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-accent" />
           </span>
         )}
       </button>
@@ -215,14 +216,14 @@ export function AICommandCenter({
 
   return (
     <aside
-      className="w-full lg:w-80 shrink-0 flex flex-col gap-4 font-sans text-foreground"
+      className="w-full lg:w-80 shrink-0 flex flex-col gap-4 font-sans text-foreground lg:max-h-full lg:overflow-y-auto pr-0.5"
       aria-label="AI Squad Command Center"
     >
       {/* 1. Header Card: Run Status & Time */}
-      <div className="bg-surface border border-border rounded-2xl p-4 shadow-sm backdrop-blur-md">
+      <div className="bg-surface border border-border rounded-3xl p-5 shadow-sm premium-shadow">
         <div className="flex items-center justify-between pb-3 border-b border-border">
-          <div className="flex items-center gap-2">
-            <div className="p-2 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-600 dark:text-blue-400">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-accent-soft border border-accent/25 text-accent">
               <Cpu className="w-4 h-4" />
             </div>
             <div>
@@ -237,7 +238,7 @@ export function AICommandCenter({
 
           <div className="flex items-center gap-2">
             {runId && (
-              <span className="flex items-center gap-1.5 px-2.5 py-1 bg-surface-raised border border-border rounded-lg text-xs font-mono text-blue-600 dark:text-blue-400">
+              <span className="flex items-center gap-1.5 px-2.5 py-1 bg-surface-raised border border-border rounded-lg text-xs font-mono text-accent">
                 <Clock className="w-3 h-3 text-muted-foreground" />
                 <span>{elapsed}s</span>
               </span>
@@ -246,8 +247,9 @@ export function AICommandCenter({
               <button
                 type="button"
                 onClick={onToggleCollapse}
-                className="hidden lg:block p-1 hover:bg-surface-raised text-muted-foreground hover:text-foreground rounded-lg transition"
+                className="hidden lg:block p-1 hover:bg-surface-raised text-muted-foreground hover:text-foreground rounded-lg transition cursor-pointer"
                 title="Collapse Sidebar"
+                aria-label="Collapse AI Command Center"
               >
                 <XCircle className="w-4 h-4" />
               </button>
@@ -257,7 +259,7 @@ export function AICommandCenter({
 
         {/* Target Topic display */}
         {runId && topic && (
-          <div className="mt-2 text-[11px] text-foreground truncate bg-surface-raised p-2 rounded-lg border border-border">
+          <div className="mt-2.5 text-[11px] text-foreground truncate bg-surface-raised p-2 rounded-lg border border-border">
             <span className="text-muted-foreground font-mono mr-1">Target:</span>
             {topic}
           </div>
@@ -265,11 +267,11 @@ export function AICommandCenter({
 
         {/* Real Metrics Badges */}
         <div className="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-border">
-          <div className="bg-surface-raised p-2 rounded-xl border border-border">
+          <div className="bg-surface-raised p-2.5 rounded-xl border border-border">
             <span className="text-[10px] text-muted-foreground uppercase font-mono block">Sources Audited</span>
-            <span className="text-sm font-bold text-blue-600 dark:text-blue-400 font-mono">{sourcesCount}</span>
+            <span className="text-sm font-bold text-accent font-mono">{sourcesCount}</span>
           </div>
-          <div className="bg-surface-raised p-2 rounded-xl border border-border">
+          <div className="bg-surface-raised p-2.5 rounded-xl border border-border">
             <span className="text-[10px] text-muted-foreground uppercase font-mono block">Events Logged</span>
             <span className="text-sm font-bold text-foreground font-mono">{logs.length}</span>
           </div>
@@ -304,16 +306,16 @@ export function AICommandCenter({
       </div>
 
       {/* 2. Agent Squad Status Graph */}
-      <div className="bg-surface border border-border rounded-2xl p-4 shadow-sm backdrop-blur-md flex-1 flex flex-col">
-        <div className="flex items-center justify-between mb-3 pb-2 border-b border-border">
-          <div className="flex items-center gap-2">
+      <div className="bg-surface border border-border rounded-3xl p-5 shadow-sm premium-shadow flex-1 flex flex-col">
+        <div className="flex items-center justify-between mb-3 pb-2.5 border-b border-border">
+          <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={() => setActiveTab("squad")}
-              className={`text-xs font-semibold px-2 py-1 rounded-md transition cursor-pointer ${
+              className={`text-xs font-semibold px-2.5 py-1 rounded-lg transition cursor-pointer ${
                 activeTab === "squad"
-                  ? "bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20"
-                  : "text-muted-foreground hover:text-foreground"
+                  ? "bg-accent-soft text-accent border border-accent/40 soft-glow-accent"
+                  : "text-muted-foreground hover:text-foreground hover:bg-surface-raised"
               }`}
             >
               Agent Topology
@@ -321,10 +323,10 @@ export function AICommandCenter({
             <button
               type="button"
               onClick={() => setActiveTab("ledger")}
-              className={`text-xs font-semibold px-2 py-1 rounded-md transition flex items-center gap-1 cursor-pointer ${
+              className={`text-xs font-semibold px-2.5 py-1 rounded-lg transition flex items-center gap-1 cursor-pointer ${
                 activeTab === "ledger"
-                  ? "bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20"
-                  : "text-muted-foreground hover:text-foreground"
+                  ? "bg-accent-soft text-accent border border-accent/40 soft-glow-accent"
+                  : "text-muted-foreground hover:text-foreground hover:bg-surface-raised"
               }`}
             >
               <Terminal className="w-3 h-3" />
@@ -337,7 +339,7 @@ export function AICommandCenter({
         </div>
 
         {activeTab === "squad" ? (
-          <div className="space-y-3 flex-1">
+          <div className="space-y-2.5 flex-1">
             {SQUAD_AGENTS.map((agent) => {
               const Icon = agent.icon;
               const agentState = agentStatusMap[agent.key as keyof typeof agentStatusMap] || {
@@ -354,10 +356,10 @@ export function AICommandCenter({
                   key={agent.id}
                   className={`relative p-3 rounded-xl border transition-all ${
                     isRunning
-                      ? "bg-blue-50/60 dark:bg-blue-950/40 border-blue-500/60 shadow-sm ring-1 ring-blue-500/30"
+                      ? "bg-accent-soft border-accent/50 shadow-sm ring-1 ring-accent/25 soft-glow-accent"
                       : isDone
-                      ? "bg-surface-raised border-border text-foreground"
-                      : "bg-surface border-border/60 text-muted-foreground opacity-60"
+                      ? "bg-success/10 border-success/30 text-foreground soft-glow-signal"
+                      : "bg-surface border-border/70 text-muted-foreground opacity-75"
                   }`}
                 >
                   <div className="flex items-center justify-between mb-1">
@@ -365,9 +367,9 @@ export function AICommandCenter({
                       <div
                         className={`p-1.5 rounded-lg ${
                           isRunning
-                            ? "bg-blue-600 text-white"
+                            ? "bg-accent text-accent-foreground"
                             : isDone
-                            ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30"
+                            ? "bg-success text-success-foreground border border-success/30"
                             : "bg-surface-raised text-muted-foreground border border-border"
                         }`}
                       >
@@ -377,7 +379,7 @@ export function AICommandCenter({
                         <h4 className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                           {agent.name}
                           {agent.isParallelBranch && (
-                            <span className="text-[9px] px-1 py-0.2 bg-surface-raised text-muted-foreground rounded border border-border">
+                            <span className="text-[9px] px-1.5 py-0.5 bg-surface-raised text-muted-foreground rounded border border-border">
                               Parallel
                             </span>
                           )}
@@ -389,7 +391,7 @@ export function AICommandCenter({
                     {/* Status Indicator */}
                     <div className="flex items-center gap-1">
                       {isRunning && (
-                        <span className="flex items-center gap-1 text-[10px] font-mono text-blue-600 dark:text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded-full border border-blue-500/30">
+                        <span className="flex items-center gap-1 text-[10px] font-mono text-accent bg-accent-soft px-2 py-0.5 rounded-full border border-accent/30">
                           <Loader2 className="w-3 h-3 animate-spin" />
                           <span>Active</span>
                         </span>
@@ -423,11 +425,11 @@ export function AICommandCenter({
               className="flex-1 max-h-72 overflow-y-auto space-y-2 pr-1"
             >
               {logs.map((log, idx) => (
-                <div key={idx} className="p-2 bg-surface-raised border border-border rounded-lg text-foreground">
+                <div key={idx} className="p-2.5 bg-surface-raised border border-border rounded-xl text-foreground">
                   <div className="flex items-center justify-between text-[10px] mb-1">
-                    <span className="text-blue-600 dark:text-blue-400 font-bold uppercase">[{log.type}]</span>
+                    <span className="text-accent font-bold uppercase">[{log.type}]</span>
                     {log.agent && (
-                      <span className="text-cyan-600 dark:text-cyan-400 font-mono font-semibold">[{log.agent}]</span>
+                      <span className="text-signal font-mono font-semibold">[{log.agent}]</span>
                     )}
                     {log.timestamp && (
                       <span className="text-muted-foreground">

@@ -1,5 +1,4 @@
 crewai[google-genai,litellm,tools]>=1.15.21,<2.0.0
-streamlit>=1.63.0
 python-dotenv>=1.0.0
 ddgs>=9.16.0
 duckduckgo-search>=8.0.0

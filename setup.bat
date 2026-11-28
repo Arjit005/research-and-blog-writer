@@ -46,7 +46,7 @@ if %errorlevel% equ 0 (
     popd
 ) else (
     echo [4/4] Node.js not found. Skipping frontend dependencies.
-    echo       The Next.js UI requires Node.js 20.9+; the legacy Streamlit UI works without it.
+    echo       Install Node.js 20.9+ to run the Next.js UI.
 )
 
 echo.
@@ -62,7 +62,8 @@ echo     cd frontend
 echo     set NEXT_PUBLIC_API_BASE=http://localhost:8000
 echo     npm run dev
 echo.
-echo   Legacy Streamlit UI (deprecated, local only):
-echo     streamlit run app.py
+echo   Terminal 3 (Research worker):
+echo     .venv\Scripts\activate
+echo     python worker.py
 echo ============================================
 pause

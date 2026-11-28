@@ -32,7 +32,7 @@ from security.guardrails import (
     fence_untrusted_content,
     CitationGuard,
 )
-from ui.mermaid_renderer import split_markdown_and_mermaid
+from core.mermaid import split_markdown_and_mermaid
 import database as db
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")

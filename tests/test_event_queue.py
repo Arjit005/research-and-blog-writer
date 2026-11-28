@@ -4,7 +4,7 @@ import time
 import queue
 import threading
 import pytest
-from ui.stepper import init_stepper_state, reduce_stepper_event, render_stepper_html
+from core.stepper import init_stepper_state, reduce_stepper_event, render_stepper_html
 
 
 def test_init_stepper_state():

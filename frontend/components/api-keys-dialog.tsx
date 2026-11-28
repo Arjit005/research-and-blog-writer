@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { api, UserKeysInfo } from "@/lib/api";
+import { useDialogAccessibility } from "@/hooks/use-dialog-accessibility";
 
 interface ApiKeysDialogProps {
   isOpen: boolean;
@@ -10,6 +11,7 @@ interface ApiKeysDialogProps {
 }
 
 export function ApiKeysDialog({ isOpen, onClose, onKeysUpdated }: ApiKeysDialogProps) {
+  const dialogRef = useDialogAccessibility<HTMLDivElement>(isOpen, onClose);
   const [keysInfo, setKeysInfo] = useState<UserKeysInfo | null>(null);
   const [geminiKey, setGeminiKey] = useState("");
   const [openrouterKey, setOpenrouterKey] = useState("");
@@ -69,10 +71,10 @@ export function ApiKeysDialog({ isOpen, onClose, onKeysUpdated }: ApiKeysDialogP
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="relative w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl text-slate-100 animate-in fade-in zoom-in-95 duration-150">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="api-keys-title" className="relative w-full max-w-lg rounded-2xl border border-border bg-surface p-6 shadow-2xl text-foreground animate-in fade-in zoom-in-95 duration-150">
         <button
           onClick={onClose}
-          className="absolute right-4 top-4 text-slate-400 hover:text-white text-xl p-1 leading-none"
+          className="absolute right-4 top-4 text-muted-foreground hover:text-white text-xl p-1 leading-none"
           aria-label="Close"
         >
           &times;
@@ -80,9 +82,9 @@ export function ApiKeysDialog({ isOpen, onClose, onKeysUpdated }: ApiKeysDialogP
 
         <div className="flex items-center gap-3 mb-2">
           <span className="text-2xl">⚙️</span>
-          <h2 className="text-xl font-bold tracking-tight">AI Model API Keys</h2>
+          <h2 id="api-keys-title" className="text-xl font-bold tracking-tight">AI Model API Keys</h2>
         </div>
-        <p className="text-sm text-slate-400 mb-5">
+        <p className="text-sm text-muted-foreground mb-5">
           Configure your personal AI provider keys to bypass OpenRouter rate limits (50 req/day).
         </p>
 
@@ -100,9 +102,9 @@ export function ApiKeysDialog({ isOpen, onClose, onKeysUpdated }: ApiKeysDialogP
 
         <form onSubmit={handleSave} className="space-y-5">
           {/* Google Gemini Card */}
-          <div className="p-4 rounded-xl bg-slate-800/80 border border-indigo-500/30">
+          <div className="p-4 rounded-xl bg-surface-raised/80 border border-signal/30">
             <div className="flex items-center justify-between mb-1.5">
-              <label className="text-sm font-semibold text-indigo-300 flex items-center gap-2">
+              <label className="text-sm font-semibold text-signal flex items-center gap-2">
                 <span>✨ Google Gemini API Key</span>
                 <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
                   Recommended: 1,500 free req/day
@@ -114,13 +116,13 @@ export function ApiKeysDialog({ isOpen, onClose, onKeysUpdated }: ApiKeysDialogP
                 </span>
               )}
             </div>
-            <p className="text-xs text-slate-400 mb-2">
+            <p className="text-xs text-muted-foreground mb-2">
               Free 1,500 requests per day via Google AI Studio with zero credit card required.{" "}
               <a
                 href="https://aistudio.google.com/app/apikey"
                 target="_blank"
                 rel="noreferrer"
-                className="text-indigo-400 hover:text-indigo-300 underline font-medium"
+                className="text-signal hover:text-signal underline font-medium"
               >
                 Get your free Gemini Key here &rarr;
               </a>
@@ -130,33 +132,33 @@ export function ApiKeysDialog({ isOpen, onClose, onKeysUpdated }: ApiKeysDialogP
               placeholder={keysInfo?.has_gemini ? "Enter new key to update..." : "AIzaSy..."}
               value={geminiKey}
               onChange={(e) => setGeminiKey(e.target.value)}
-              className="w-full px-3.5 py-2 text-sm rounded-lg bg-slate-950 border border-slate-700 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              className="w-full px-3.5 py-2 text-sm rounded-lg bg-background border border-border text-foreground placeholder-slate-500 focus:outline-none focus:border-signal"
               autoComplete="off"
             />
           </div>
 
           {/* OpenRouter Card */}
-          <div className="p-4 rounded-xl bg-slate-800/50 border border-slate-700">
+          <div className="p-4 rounded-xl bg-surface-raised/50 border border-border">
             <div className="flex items-center justify-between mb-1.5">
-              <label className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+              <label className="text-sm font-semibold text-foreground flex items-center gap-2">
                 <span>🌐 OpenRouter API Key</span>
-                <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-slate-700 text-slate-300">
+                <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-surface-raised text-foreground">
                   Optional
                 </span>
               </label>
               {keysInfo?.has_openrouter && (
-                <span className="text-xs text-slate-400 font-mono">
+                <span className="text-xs text-muted-foreground font-mono">
                   {keysInfo.openrouter_masked || "Configured"}
                 </span>
               )}
             </div>
-            <p className="text-xs text-slate-400 mb-2">
+            <p className="text-xs text-muted-foreground mb-2">
               Used as fallback or custom models.{" "}
               <a
                 href="https://openrouter.ai/keys"
                 target="_blank"
                 rel="noreferrer"
-                className="text-indigo-400 hover:text-indigo-300 underline font-medium"
+                className="text-signal hover:text-signal underline font-medium"
               >
                 Get OpenRouter Key &rarr;
               </a>
@@ -166,33 +168,33 @@ export function ApiKeysDialog({ isOpen, onClose, onKeysUpdated }: ApiKeysDialogP
               placeholder={keysInfo?.has_openrouter ? "Enter new key to update..." : "sk-or-v1-..."}
               value={openrouterKey}
               onChange={(e) => setOpenrouterKey(e.target.value)}
-              className="w-full px-3.5 py-2 text-sm rounded-lg bg-slate-950 border border-slate-700 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              className="w-full px-3.5 py-2 text-sm rounded-lg bg-background border border-border text-foreground placeholder-slate-500 focus:outline-none focus:border-signal"
               autoComplete="off"
             />
           </div>
 
           {/* BeatAPI Card */}
-          <div className="p-4 rounded-xl bg-slate-800/50 border border-slate-700">
+          <div className="p-4 rounded-xl bg-surface-raised/50 border border-border">
             <div className="flex items-center justify-between mb-1.5">
-              <label className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+              <label className="text-sm font-semibold text-foreground flex items-center gap-2">
                 <span>⚡ BeatAPI Key</span>
-                <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-slate-700 text-slate-300">
+                <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-surface-raised text-foreground">
                   Free models: GLM 5.3, DeepSeek V4.1, Hunyuan
                 </span>
               </label>
               {keysInfo?.has_beatapi && (
-                <span className="text-xs text-slate-400 font-mono">
+                <span className="text-xs text-muted-foreground font-mono">
                   {keysInfo.beatapi_masked || "Configured"}
                 </span>
               )}
             </div>
-            <p className="text-xs text-slate-400 mb-2">
+            <p className="text-xs text-muted-foreground mb-2">
               Free fallback models from BeatAPI.{" "}
               <a
                 href="https://beatapi.io"
                 target="_blank"
                 rel="noreferrer"
-                className="text-indigo-400 hover:text-indigo-300 underline font-medium"
+                className="text-signal hover:text-signal underline font-medium"
               >
                 Get BeatAPI Key &rarr;
               </a>
@@ -202,7 +204,7 @@ export function ApiKeysDialog({ isOpen, onClose, onKeysUpdated }: ApiKeysDialogP
               placeholder={keysInfo?.has_beatapi ? "Enter new key to update..." : "beat-..."}
               value={beatapiKey}
               onChange={(e) => setBeatapiKey(e.target.value)}
-              className="w-full px-3.5 py-2 text-sm rounded-lg bg-slate-950 border border-slate-700 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              className="w-full px-3.5 py-2 text-sm rounded-lg bg-background border border-border text-foreground placeholder-slate-500 focus:outline-none focus:border-signal"
               autoComplete="off"
             />
           </div>
@@ -212,14 +214,14 @@ export function ApiKeysDialog({ isOpen, onClose, onKeysUpdated }: ApiKeysDialogP
               type="button"
               onClick={onClose}
               disabled={saving}
-              className="px-4 py-2 text-sm rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium transition"
+              className="px-4 py-2 text-sm rounded-lg bg-surface-raised hover:bg-surface-raised text-foreground font-medium transition"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={saving || (!geminiKey && !openrouterKey && !beatapiKey)}
-              className="px-5 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-indigo-600/30"
+              className="px-5 py-2 text-sm rounded-lg bg-accent hover:bg-accent-hover text-accent-foreground font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-accent/20"
             >
               {saving ? "Saving..." : "Save Keys"}
             </button>

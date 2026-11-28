@@ -2,66 +2,99 @@
 
 /*
  * Design tokens — single source of truth for Research Studio.
- * Default: Clean Light Mode with vibrant Professional Blue accents.
- * Dark Mode: Activated via [data-theme="dark"] or .dark class.
+ * Premium obsidian dark with sky-blue brand and violet research signals.
+ * Light mode carries the same identity on a warm stone canvas.
  */
 
 :root {
   color-scheme: dark;
-  --background: #080B16;          /* Deepest enterprise obsidian */
-  --foreground: #F1F4FC;          /* Clean crisp primary text */
-  --surface: #0D1425;             /* Linear-style panel navy */
-  --surface-raised: #111B30;      /* Card background */
-  --border: #202B42;              /* Muted crisp border */
-  --border-strong: #2D3B59;       /* Active card border */
-  --muted-foreground: #929DB4;    /* Subtle readable secondary text */
-  --accent: #7567F8;              /* Signature Linear Indigo/Purple accent */
-  --accent-strong: #6454F5;       /* Hover purple */
-  --accent-hover: #8678FA;        /* Bright active purple */
-  --accent-foreground: #ffffff;
-  --accent-soft: rgba(117, 103, 248, 0.12);
-  --danger: #F05B72;              /* Crisp crimson */
-  --warning: #F59E0B;             /* Amber */
-  --success: #22C58B;             /* Crisp emerald */
+  --background: #0a0b0c;
+  --foreground: #f2f4f8;
+  --surface: #14161a;
+  --surface-raised: #1c1f25;
+  --border: #262a32;
+  --border-strong: #3a414c;
+  --muted-foreground: #8b93a1;
+  --accent: #7dd3fc;
+  --accent-strong: #38bdf8;
+  --accent-hover: #bfdbfe;
+  --accent-foreground: #0b1120;
+  --accent-soft: rgb(125 211 252 / 10%);
+  --signal: #a78bfa;
+  --signal-soft: rgb(167 139 250 / 12%);
+  --glass: rgb(255 255 255 / 4%);
+  --glass-border: rgb(255 255 255 / 8%);
+  --danger: #fb7185;
+  --warning: #fbbf24;
+  --success: #4ade80;
+
+  /* Typographic scale */
+  --text-xs: 0.75rem;
+  --text-xs-lh: 1rem;
+  --text-sm: 0.875rem;
+  --text-sm-lh: 1.25rem;
+  --text-base: 1rem;
+  --text-base-lh: 1.5rem;
+  --text-lg: 1.125rem;
+  --text-lg-lh: 1.75rem;
+  --text-xl: 1.25rem;
+  --text-xl-lh: 1.75rem;
+  --text-2xl: 1.5rem;
+  --text-2xl-lh: 2rem;
+  --text-3xl: 1.875rem;
+  --text-3xl-lh: 2.25rem;
+  --text-4xl: 2.25rem;
+  --text-4xl-lh: 2.5rem;
+  --tracking-tighter: -0.04em;
+  --tracking-tight: -0.02em;
+  --tracking-normal: 0em;
 }
 
 [data-theme="dark"],
 .dark {
   color-scheme: dark;
-  --background: #080B16;
-  --foreground: #F1F4FC;
-  --surface: #0D1425;
-  --surface-raised: #111B30;
-  --border: #202B42;
-  --border-strong: #2D3B59;
-  --muted-foreground: #929DB4;
-  --accent: #7567F8;
-  --accent-strong: #6454F5;
-  --accent-hover: #8678FA;
-  --accent-foreground: #ffffff;
-  --accent-soft: rgba(117, 103, 248, 0.12);
-  --danger: #F05B72;
-  --warning: #F59E0B;
-  --success: #22C58B;
+  --background: #0a0b0c;
+  --foreground: #f2f4f8;
+  --surface: #14161a;
+  --surface-raised: #1c1f25;
+  --border: #262a32;
+  --border-strong: #3a414c;
+  --muted-foreground: #8b93a1;
+  --accent: #7dd3fc;
+  --accent-strong: #38bdf8;
+  --accent-hover: #bfdbfe;
+  --accent-foreground: #0b1120;
+  --accent-soft: rgb(125 211 252 / 10%);
+  --signal: #a78bfa;
+  --signal-soft: rgb(167 139 250 / 12%);
+  --glass: rgb(255 255 255 / 4%);
+  --glass-border: rgb(255 255 255 / 8%);
+  --danger: #fb7185;
+  --warning: #fbbf24;
+  --success: #4ade80;
 }
 
 [data-theme="light"] {
   color-scheme: light;
-  --background: #F8FAFC;
-  --foreground: #0F172A;
-  --surface: #FFFFFF;
-  --surface-raised: #F1F5F9;
-  --border: #E2E8F0;
-  --border-strong: #CBD5E1;
-  --muted-foreground: #64748B;
-  --accent: #6366F1;
-  --accent-strong: #4F46E5;
-  --accent-hover: #4338CA;
+  --background: #fafafa;
+  --foreground: #111827;
+  --surface: #ffffff;
+  --surface-raised: #f3f4f6;
+  --border: #e5e7eb;
+  --border-strong: #d1d5db;
+  --muted-foreground: #6b7280;
+  --accent: #2563eb;
+  --accent-strong: #1d4ed8;
+  --accent-hover: #dbeafe;
   --accent-foreground: #ffffff;
-  --accent-soft: rgba(99, 102, 241, 0.08);
-  --danger: #EF4444;
-  --warning: #F59E0B;
-  --success: #10B981;
+  --accent-soft: rgb(37 99 235 / 10%);
+  --signal: #7c3aed;
+  --signal-soft: rgb(124 58 237 / 12%);
+  --glass: rgb(0 0 0 / 3%);
+  --glass-border: rgb(0 0 0 / 6%);
+  --danger: #b42336;
+  --warning: #8b5300;
+  --success: #426518;
 }
 
 @theme inline {
@@ -77,10 +110,15 @@
   --color-accent-hover: var(--accent-hover);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent-soft: var(--accent-soft);
+  --color-signal: var(--signal);
+  --color-signal-soft: var(--signal-soft);
+  --color-glass: var(--glass);
+  --color-glass-border: var(--glass-border);
   --color-danger: var(--danger);
   --color-warning: var(--warning);
   --color-success: var(--success);
-  --font-sans: ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 body {
@@ -116,41 +154,29 @@ body {
   color: var(--foreground);
 }
 
-/* Legacy slate utilities remain in feature panels; map them to light tokens. */
-[data-theme="light"] [class*="bg-slate-950"],
-[data-theme="light"] [class*="bg-slate-900"] {
-  background-color: var(--surface) !important;
-}
-
-[data-theme="light"] [class*="bg-slate-800"],
-[data-theme="light"] [class*="bg-slate-700"] {
-  background-color: var(--surface-raised) !important;
-}
-
-[data-theme="light"] [class*="border-slate-900"],
-[data-theme="light"] [class*="border-slate-800"],
-[data-theme="light"] [class*="border-slate-700"],
-[data-theme="light"] [class*="divide-slate-900"],
-[data-theme="light"] [class*="divide-slate-800"] {
-  border-color: var(--border) !important;
-}
-
-[data-theme="light"] [class*="text-slate-100"],
-[data-theme="light"] [class*="text-slate-200"],
-[data-theme="light"] [class*="text-slate-300"] {
-  color: var(--foreground) !important;
-}
-
-[data-theme="light"] [class*="text-slate-400"],
-[data-theme="light"] [class*="text-slate-500"],
-[data-theme="light"] [class*="text-slate-600"] {
-  color: var(--muted-foreground) !important;
-}
-
 /* Consistent keyboard focus indicator */
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* Premium utility classes */
+.glass {
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  backdrop-blur: md;
+}
+
+.premium-shadow {
+  box-shadow: 0 20px 40px -10px rgb(0 0 0 / 0.35);
+}
+
+.soft-glow-accent {
+  box-shadow: 0 0 40px rgb(125 211 252 / 15%);
+}
+
+.soft-glow-signal {
+  box-shadow: 0 0 40px rgb(167 139 250 / 15%);
 }
 
 .research-depth-card {
@@ -170,15 +196,52 @@ body {
   pointer-events: none;
   content: "";
   background:
-    radial-gradient(ellipse at 8% 12%, rgb(77 91 235 / 12%), transparent 33%),
-    radial-gradient(ellipse at 88% 24%, rgb(36 147 166 / 8%), transparent 30%),
-    radial-gradient(ellipse at 55% 100%, rgb(110 74 220 / 9%), transparent 38%);
+    radial-gradient(ellipse at 8% 12%, rgb(125 211 252 / 4%), transparent 33%),
+    radial-gradient(ellipse at 88% 24%, rgb(167 139 250 / 3%), transparent 30%),
+    radial-gradient(ellipse at 55% 100%, rgb(92 130 86 / 3%), transparent 38%);
   background-size: 135% 135%;
-  animation: studioLightDrift 24s ease-in-out infinite alternate;
+  animation: studioLightDrift 40s ease-in-out infinite alternate;
 }
 
 .research-hero-content {
   transform: translateZ(16px);
+}
+
+.brand-depth-mark {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  perspective: 180px;
+  border-radius: 12px;
+  background: linear-gradient(145deg, var(--surface-raised), var(--surface));
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 5px 16px rgb(0 0 0 / 18%);
+}
+
+.brand-sheet {
+  position: absolute;
+  inset: 9px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  transform: rotate(-12deg) skewY(-5deg);
+}
+
+.brand-sheet-back {
+  transform: translate(3px, -2px) rotate(10deg);
+  border-color: var(--signal);
+  opacity: .78;
+}
+
+.brand-sheet-front {
+  background: linear-gradient(145deg, var(--accent-soft), var(--surface));
+  box-shadow: 0 0 12px var(--accent-soft);
+}
+
+.optional-header-action:hover,
+.workspace-header-actions > button:hover {
+  background-color: var(--surface);
+  border-color: var(--border-strong);
 }
 
 @keyframes studioLightDrift {
@@ -188,8 +251,27 @@ body {
 
 @media (hover: hover) and (prefers-reduced-motion: no-preference) {
   .research-depth-card:hover {
-    transform: perspective(1400px) rotateX(0.65deg) rotateY(-0.75deg) translateY(-2px);
-    box-shadow: 0 24px 70px rgb(51 65 180 / 12%);
+    border-color: var(--border-strong);
+    box-shadow: 0 20px 56px rgb(0 0 0 / 16%);
+  }
+}
+
+@media print {
+  header,
+  aside,
+  [role="tablist"],
+  .no-print {
+    display: none !important;
+  }
+
+  body,
+  main,
+  article {
+    background: #ffffff !important;
+    color: #111827 !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
   }
 }
 
@@ -203,4 +285,8 @@ body {
   .research-studio-scene::before {
     animation: none;
   }
+}
+
+@media (max-width: 639px) {
+  .workspace-header-actions > .optional-header-action { display: none; }
 }

@@ -4,7 +4,7 @@ import pytest
 import html
 import json
 import re
-from ui.mermaid_renderer import (
+from core.mermaid import (
     split_markdown_and_mermaid,
     estimate_mermaid_height,
     generate_mermaid_html,
@@ -131,18 +131,3 @@ def test_template_literal_injection_neutralized():
     assert html_output.count("</script>") == 1
     # The visible fallback is still HTML-escaped.
     assert "&lt;script&gt;" in html_output
-
-
-def test_mermaid_renderer_prose_not_rendered_as_raw_html(monkeypatch):
-    """LLM/scraped prose must be rendered without unsafe_allow_html."""
-    import ui.mermaid_renderer as renderer
-
-    calls = []
-
-    def fake_markdown(text, *args, **kwargs):
-        calls.append((text, kwargs.get("unsafe_allow_html", False)))
-
-    monkeypatch.setattr(renderer.st, "markdown", fake_markdown)
-    renderer.render_article_markdown("# Title\n\nSome **bold** prose with <script>x</script>.")
-    assert calls
-    assert all(unsafe is False for _, unsafe in calls)

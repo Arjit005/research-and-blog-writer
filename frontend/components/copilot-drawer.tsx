@@ -43,20 +43,20 @@ const INITIAL_MESSAGE =
 
 const previewComponents = {
   h1: ({ children }: { children?: React.ReactNode }) => (
-    <h3 className="text-sm font-bold text-slate-100 mt-3 mb-1">{children}</h3>
+    <h3 className="text-sm font-bold text-foreground mt-3 mb-1">{children}</h3>
   ),
   h2: ({ children }: { children?: React.ReactNode }) => (
-    <h3 className="text-sm font-bold text-slate-100 mt-3 mb-1">{children}</h3>
+    <h3 className="text-sm font-bold text-foreground mt-3 mb-1">{children}</h3>
   ),
   h3: ({ children }: { children?: React.ReactNode }) => (
-    <h4 className="text-xs font-semibold text-slate-200 mt-2 mb-1">{children}</h4>
+    <h4 className="text-xs font-semibold text-foreground mt-2 mb-1">{children}</h4>
   ),
   p: ({ children }: { children?: React.ReactNode }) => <p className="mb-2">{children}</p>,
   ul: ({ children }: { children?: React.ReactNode }) => <ul className="list-disc pl-4 mb-2">{children}</ul>,
   ol: ({ children }: { children?: React.ReactNode }) => <ol className="list-decimal pl-4 mb-2">{children}</ol>,
   li: ({ children }: { children?: React.ReactNode }) => <li className="mb-0.5">{children}</li>,
   a: ({ children, href }: { children?: React.ReactNode; href?: string }) => (
-    <a href={href} className="text-indigo-400 underline" target="_blank" rel="noopener noreferrer">
+    <a href={href} className="text-signal underline" target="_blank" rel="noopener noreferrer">
       {children}
     </a>
   ),
@@ -177,10 +177,10 @@ export function CopilotDrawer({
     <aside
       role="dialog"
       aria-label="Revision history and AI editorial copilot"
-      className="fixed inset-y-0 right-0 z-50 w-full max-w-lg bg-slate-900 border-l border-slate-800 shadow-2xl flex flex-col text-slate-100"
+      className="fixed inset-y-0 right-0 z-50 w-full max-w-lg bg-surface border-l border-border shadow-2xl flex flex-col text-foreground"
     >
       {/* Drawer Header */}
-      <div className="flex items-center justify-between p-4 border-b border-slate-800">
+      <div className="flex items-center justify-between p-4 border-b border-border">
         <div className="flex items-center gap-2" role="tablist" aria-label="Copilot panels">
           <button
             type="button"
@@ -192,7 +192,7 @@ export function CopilotDrawer({
               setActiveDiff(null);
             }}
             className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
-              tab === "history" ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-slate-200"
+              tab === "history" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground"
             }`}
           >
             <History className="w-3.5 h-3.5" aria-hidden="true" />
@@ -205,7 +205,7 @@ export function CopilotDrawer({
             aria-controls="copilot-chat-panel"
             onClick={() => setTab("chat")}
             className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
-              tab === "chat" ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-slate-200"
+              tab === "chat" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground"
             }`}
           >
             <MessageSquare className="w-3.5 h-3.5" aria-hidden="true" />
@@ -217,7 +217,7 @@ export function CopilotDrawer({
           type="button"
           onClick={onClose}
           aria-label="Close revision and copilot panel"
-          className="p-1.5 text-slate-400 hover:text-slate-200 rounded-lg hover:bg-slate-800 transition"
+          className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg hover:bg-surface-raised transition"
         >
           <X className="w-5 h-5" aria-hidden="true" />
         </button>
@@ -247,41 +247,41 @@ export function CopilotDrawer({
               />
             ) : (
               <div className="space-y-3">
-                <p className="text-xs text-slate-400 mb-2">
+                <p className="text-xs text-muted-foreground mb-2">
                   Track version history, inspect saved diffs, or restore any checkpoint. Restore targets the
                   revision number, not the database row id.
                 </p>
 
                 {loading && (
-                  <div className="flex items-center justify-center p-8 text-slate-500">
+                  <div className="flex items-center justify-center p-8 text-muted-foreground">
                     <Loader2 className="w-6 h-6 animate-spin" aria-label="Loading revisions" />
                   </div>
                 )}
 
                 {!loading && revisions.length === 0 && (
-                  <p className="p-4 text-center text-xs text-slate-500 italic">No revisions recorded yet.</p>
+                  <p className="p-4 text-center text-xs text-muted-foreground italic">No revisions recorded yet.</p>
                 )}
 
                 {revisions.map((rev, idx) => (
                   <div
                     key={rev.id}
-                    className="p-3.5 rounded-xl border border-slate-800 bg-slate-950/60 hover:border-slate-700 transition"
+                    className="p-3.5 rounded-xl border border-border bg-background/60 hover:border-border transition"
                   >
                     <div className="flex items-center justify-between mb-1.5">
-                      <span className="px-2 py-0.5 text-[11px] font-mono font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded">
+                      <span className="px-2 py-0.5 text-[11px] font-mono font-bold bg-signal/10 text-signal border border-signal/20 rounded">
                         Rev #{rev.revision_num}
                       </span>
-                      <span className="text-[11px] text-slate-500">{rev.created_at}</span>
+                      <span className="text-[11px] text-muted-foreground">{rev.created_at}</span>
                     </div>
 
-                    <p className="text-xs text-slate-200 font-medium mb-3">{rev.summary}</p>
+                    <p className="text-xs text-foreground font-medium mb-3">{rev.summary}</p>
 
                     <div className="flex items-center gap-2">
                       {idx < revisions.length - 1 && (
                         <button
                           type="button"
                           onClick={() => void handleCompare(revisions[idx + 1].revision_num, rev.revision_num)}
-                          className="flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[11px] font-medium transition"
+                          className="flex items-center gap-1 px-2.5 py-1 bg-surface-raised hover:bg-surface-raised text-foreground rounded text-[11px] font-medium transition"
                         >
                           <GitCompare className="w-3 h-3" aria-hidden="true" />
                           Compare Prev
@@ -293,7 +293,7 @@ export function CopilotDrawer({
                         onClick={() => void handleRestore(rev.revision_num)}
                         disabled={restoring === rev.revision_num}
                         aria-label={`Restore revision ${rev.revision_num}`}
-                        className="flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 rounded text-[11px] font-medium transition"
+                        className="flex items-center gap-1 px-2.5 py-1 bg-surface-raised hover:bg-surface-raised disabled:opacity-50 text-foreground rounded text-[11px] font-medium transition"
                       >
                         {restoring === rev.revision_num ? (
                           <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" />
@@ -322,8 +322,8 @@ export function CopilotDrawer({
                   key={idx}
                   className={`p-3 rounded-2xl text-xs max-w-[85%] ${
                     message.role === "user"
-                      ? "ml-auto bg-indigo-600 text-white"
-                      : "bg-slate-800/80 border border-slate-700/60 text-slate-200"
+                      ? "ml-auto bg-accent text-white"
+                      : "bg-surface-raised/80 border border-border/60 text-foreground"
                   }`}
                 >
                   {message.content}
@@ -331,7 +331,7 @@ export function CopilotDrawer({
               ))}
 
               {sending && (
-                <div className="flex items-center gap-2 p-3 text-xs text-slate-400">
+                <div className="flex items-center gap-2 p-3 text-xs text-muted-foreground">
                   <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
                   Applying your instruction…
                 </div>
@@ -348,10 +348,10 @@ export function CopilotDrawer({
                   <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
                   Applied — Rev #{editResult.revisionNum}
                 </div>
-                <p className="text-[11px] text-slate-400 mb-2 break-words">
-                  Instruction: <span className="text-slate-300">{editResult.instruction}</span>
+                <p className="text-[11px] text-muted-foreground mb-2 break-words">
+                  Instruction: <span className="text-foreground">{editResult.instruction}</span>
                 </p>
-                <div className="max-h-64 overflow-y-auto rounded-xl bg-slate-950/70 border border-slate-800 p-3 text-xs text-slate-300 leading-relaxed">
+                <div className="max-h-64 overflow-y-auto rounded-xl bg-background/70 border border-border p-3 text-xs text-foreground leading-relaxed">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
                     rehypePlugins={[rehypeSanitize]}
@@ -375,13 +375,13 @@ export function CopilotDrawer({
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 disabled={sending}
-                className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+                className="flex-1 px-3 py-2 bg-surface-raised border border-border rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-signal disabled:opacity-60"
               />
               <button
                 type="submit"
                 disabled={!input.trim() || sending}
                 aria-label="Send instruction to the editorial copilot"
-                className="p-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl transition"
+                className="p-2 bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-xl transition"
               >
                 {sending ? (
                   <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
@@ -390,7 +390,7 @@ export function CopilotDrawer({
                 )}
               </button>
             </form>
-            <p className="mt-2 flex items-center gap-1 text-[10px] text-slate-500">
+            <p className="mt-2 flex items-center gap-1 text-[10px] text-muted-foreground">
               <Sparkles className="w-3 h-3" aria-hidden="true" />
               Creates a real revision via the backend edit endpoint.
             </p>

@@ -15,6 +15,7 @@
     "@types/diff": "^7.0.2",
     "diff": "^9.0.0",
     "firebase": "^13.2.0",
+    "gsap": "^3.15.1",
     "katex": "^0.19.1",
     "lucide-react": "^1.68.0",
     "mermaid": "^12.3.0",
@@ -25,7 +26,8 @@
     "rehype-katex": "^7.0.1",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
-    "remark-math": "^6.0.0"
+    "remark-math": "^6.0.0",
+    "three": "^0.187.0"
   },
   "overrides": {
     "@grpc/grpc-js": "^1.13.6",
@@ -37,6 +39,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/three": "^0.187.0",
     "eslint": "^9",
     "eslint-config-next": "16.4.5",
     "tailwindcss": "^4",

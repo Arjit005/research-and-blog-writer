@@ -2814,6 +2814,53 @@ def create_research_job(
         raise ValueError(f"User {user_id} already has an active research job in progress.")
 
 
+def _refresh_recovered_run_claim(conn: Any, is_tidb: bool, run_id: str, user_id: Optional[int]) -> None:
+    """Give a requeued job a fresh fenced lease before workers can claim it."""
+    if user_id is None:
+        return
+    now = datetime.now(timezone.utc)
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    expires_str = (now + timedelta(seconds=120)).strftime("%Y-%m-%d %H:%M:%S")
+    worker_id = f"recovery_worker_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    lease_token = f"lease_{uuid.uuid4().hex}"
+
+    if is_tidb:
+        _exec(
+            conn, is_tidb,
+            "INSERT INTO user_lease_sequences (user_id, current_fencing) VALUES (?, 1) "
+            "ON DUPLICATE KEY UPDATE current_fencing = current_fencing + 1",
+            (user_id,),
+        )
+        seq = _exec(conn, is_tidb, "SELECT current_fencing FROM user_lease_sequences WHERE user_id = ?", (user_id,)).fetchone()
+        fencing_token = int(_get_value(seq, is_tidb, "current_fencing", 0) or 1)
+    else:
+        _exec(
+            conn, is_tidb,
+            "INSERT INTO user_lease_sequences (user_id, current_fencing) VALUES (?, 1) "
+            "ON CONFLICT(user_id) DO UPDATE SET current_fencing = current_fencing + 1",
+            (user_id,),
+        )
+        seq = _exec(conn, is_tidb, "SELECT current_fencing FROM user_lease_sequences WHERE user_id = ?", (user_id,)).fetchone()
+        fencing_token = int(_get_value(seq, is_tidb, "current_fencing", 0) or 1)
+
+    existing = _exec(conn, is_tidb, "SELECT run_id FROM active_run_claims WHERE run_id = ?", (run_id,)).fetchone()
+    if existing:
+        _exec(
+            conn, is_tidb,
+            "UPDATE active_run_claims SET worker_id = ?, lease_token = ?, fencing_token = ?, "
+            "claimed_at = ?, heartbeat_at = ?, lease_expires_at = ? WHERE run_id = ?",
+            (worker_id, lease_token, fencing_token, now_str, now_str, expires_str, run_id),
+        )
+    else:
+        _exec(
+            conn, is_tidb,
+            "INSERT INTO active_run_claims "
+            "(user_id, run_id, worker_id, lease_token, fencing_token, claimed_at, heartbeat_at, lease_expires_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, run_id, worker_id, lease_token, fencing_token, now_str, now_str, expires_str),
+        )
+
+
 def complete_research_job_atomic(
     run_id: str,
     status: str,
@@ -2857,11 +2904,12 @@ def complete_research_job_atomic(
                 if is_tidb:
                     cursor = conn.cursor()
                     # 1. Lock job row and check status
-                    cursor.execute("SELECT status FROM research_jobs WHERE run_id = %s FOR UPDATE", (run_id,))
+                    cursor.execute("SELECT status, user_id FROM research_jobs WHERE run_id = %s FOR UPDATE", (run_id,))
                     job_row = cursor.fetchone()
                     if not job_row:
                         return False, None
                     curr_status = job_row["status"] if isinstance(job_row, dict) else job_row[0]
+                    job_user_id = _get_value(job_row, is_tidb, "user_id", 1)
                     if curr_status in _TERMINAL_JOB_STATUSES:
                         existing_seq = None
                         if event_id:
@@ -2943,16 +2991,21 @@ def complete_research_job_atomic(
                         (status, result_article_id, error_message, trace_url, run_id),
                     )
 
-                    # 5. Claim release
-                    _exec(conn, is_tidb, "DELETE FROM active_run_claims WHERE run_id = ?", (run_id,))
+                    # A recoverable pending run keeps its per-user active slot,
+                    # but replaces the dead worker's lease with a fresh fence.
+                    if status == "pending" and recovery_cutoff is not None:
+                        _refresh_recovered_run_claim(conn, is_tidb, run_id, job_user_id)
+                    else:
+                        _exec(conn, is_tidb, "DELETE FROM active_run_claims WHERE run_id = ?", (run_id,))
                     return True, next_seq
                 else:
                     # SQLite atomic single-transaction block
-                    cur = _exec(conn, is_tidb, "SELECT status FROM research_jobs WHERE run_id = ?", (run_id,))
+                    cur = _exec(conn, is_tidb, "SELECT status, user_id FROM research_jobs WHERE run_id = ?", (run_id,))
                     job_row = cur.fetchone()
                     if not job_row:
                         return False, None
                     curr_status = job_row[0]
+                    job_user_id = _get_value(job_row, is_tidb, "user_id", 1)
                     if curr_status in _TERMINAL_JOB_STATUSES:
                         existing_seq = None
                         if event_id:
@@ -3026,7 +3079,10 @@ def complete_research_job_atomic(
                         (status, result_article_id, error_message, trace_url, now_str, run_id),
                     )
 
-                    _exec(conn, is_tidb, "DELETE FROM active_run_claims WHERE run_id = ?", (run_id,))
+                    if status == "pending" and recovery_cutoff is not None:
+                        _refresh_recovered_run_claim(conn, is_tidb, run_id, job_user_id)
+                    else:
+                        _exec(conn, is_tidb, "DELETE FROM active_run_claims WHERE run_id = ?", (run_id,))
                     return True, next_seq
         except Exception as exc:
             last_error = exc
@@ -3179,8 +3235,8 @@ def get_active_run_claim(run_id: str) -> Optional[Dict[str, Any]]:
         return _row_to_dict(row) if row else None
 
 
-def recover_interrupted_jobs(stale_after_seconds: int = 120) -> int:
-    """Mark expired running jobs left by a dead worker process as failed.
+def recover_interrupted_jobs(stale_after_seconds: int = 120, resume_checkpointed: bool = False) -> int:
+    """Recover expired running jobs left by a dead worker process.
 
     Multi-Worker Safety & Lease Architecture:
     In a multi-worker cluster (e.g. 4 Gunicorn/Uvicorn workers), worker restarts must
@@ -3191,7 +3247,11 @@ def recover_interrupted_jobs(stale_after_seconds: int = 120) -> int:
     lease has expired and its heartbeat is older than the grace period. Pending
     jobs are left intact because they have not started executing.
 
-    Returns the number of recovered jobs.
+    When ``resume_checkpointed`` is enabled, requeue a stale run once so its
+    worker can restore the latest CrewAI checkpoint. A second crash fails it.
+    The default preserves the legacy fail-fast behavior.
+
+    Returns the number of jobs requeued or failed.
     """
     try:
         stale_after = max(0, int(stale_after_seconds))
@@ -3200,7 +3260,6 @@ def recover_interrupted_jobs(stale_after_seconds: int = 120) -> int:
     now = datetime.now(timezone.utc)
     cutoff_str = (now - timedelta(seconds=stale_after)).strftime("%Y-%m-%d %H:%M:%S")
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
-    message = "interrupted by server restart"
 
     candidate_run_ids: List[str] = []
     with get_connection() as (conn, is_tidb):
@@ -3219,19 +3278,51 @@ def recover_interrupted_jobs(stale_after_seconds: int = 120) -> int:
     # terminal status, event, and claim release for each candidate.
     for run_id in candidate_run_ids:
         try:
+            retry_count = get_research_job_retry_count(run_id) if resume_checkpointed else 0
+            should_retry = resume_checkpointed and retry_count < 1
+            recovery_message = "interrupted by server restart"
             updated, _ = complete_research_job_atomic(
                 run_id=run_id,
-                status="failed",
-                event_type="error",
-                event_payload={"message": message, "timestamp": time.time()},
-                event_id=f"term_{run_id}_recovered",
-                error_message=message,
+                status="pending" if should_retry else "failed",
+                event_type="retry" if should_retry else "error",
+                event_payload={
+                    "status": "queued" if should_retry else "failed",
+                    "message": recovery_message,
+                    "attempt": retry_count + 1,
+                    "timestamp": time.time(),
+                },
+                event_id=f"recovery_{run_id}_{retry_count + 1}" if should_retry else f"term_{run_id}_recovered",
+                error_message=None if should_retry else recovery_message,
                 recovery_cutoff=cutoff_str,
             )
             recovered_count += int(updated)
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("Could not atomically recover run %s: %s", run_id, exc)
     return recovered_count
+
+
+def get_research_job_retry_count(run_id: str) -> int:
+    """Count durable crash-recovery retries already issued for a run."""
+    with get_connection() as (conn, is_tidb):
+        cursor = _exec(
+            conn, is_tidb,
+            "SELECT COUNT(*) AS retry_count FROM job_events WHERE run_id = ? AND event_type = 'retry'",
+            (run_id,),
+        )
+        row = cursor.fetchone()
+        return int(_get_value(row, is_tidb, "retry_count", 0) or 0) if row else 0
+
+
+def get_job_task_completion_count(run_id: str) -> int:
+    """Count task completion events already persisted for a resumed job."""
+    with get_connection() as (conn, is_tidb):
+        cursor = _exec(
+            conn, is_tidb,
+            "SELECT COUNT(*) AS task_count FROM job_events WHERE run_id = ? AND event_type = 'task_done'",
+            (run_id,),
+        )
+        row = cursor.fetchone()
+        return int(_get_value(row, is_tidb, "task_count", 0) or 0) if row else 0
 
 
 def append_job_event(run_id: str, event_type: str, payload: Any, event_id: Optional[str] = None) -> int:
@@ -3711,7 +3802,7 @@ def get_document_metadata(article_id: int, user_id: int) -> Optional[Dict[str, A
 # init_db() is called explicitly by:
 #   - backend/main.py lifespan (production FastAPI startup)
 #   - tests/conftest.py isolated_database fixture (per-test reset)
-#   - crew.py / app.py entry points via their own startup paths
+#   - crew.py entry points via their own startup paths
 # It is intentionally NOT called here at module level so that:
 #   1. Tests can set RESEARCH_STUDIO_DB_PATH in conftest before the first
 #      connection is opened, without racing module-level execution.
