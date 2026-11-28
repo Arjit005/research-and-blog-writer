@@ -43,6 +43,7 @@ export function D2Canvas({
     .trim()
     .replace(/^```d2\s*/i, "")
     .replace(/```\s*$/, "")
+    .replace(/\bshape\s*:\s*storage\b/gi, "shape: cylinder")
     .trim();
 
   useEffect(() => {

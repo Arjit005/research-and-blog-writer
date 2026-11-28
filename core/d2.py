@@ -28,7 +28,7 @@ def validate_d2_diagram(code: str) -> tuple[str, list[str]]:
         # Track brace-delimited blocks for style.fill without style.font-color
         i = 0
         while i < len(lines):
-            line = lines[i]
+            line = re.sub(r"\bshape\s*:\s*storage\b", "shape: cylinder", lines[i], flags=re.IGNORECASE)
             stripped = line.strip()
 
             # Connection label check (> 4 words)
