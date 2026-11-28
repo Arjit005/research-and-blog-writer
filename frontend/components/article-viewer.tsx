@@ -5,6 +5,8 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
+import rehypeHighlight from "rehype-highlight";
+import "highlight.js/styles/github.css";
 import { MermaidCanvas } from "./mermaid-canvas";
 import { D2Canvas } from "./d2-canvas";
 import { InteractiveChartExplorer } from "./interactive-chart-explorer";
@@ -510,7 +512,7 @@ export function ArticleViewer({
           <div className="max-w-[74ch] mx-auto">
             <ReactMarkdown
               remarkPlugins={[remarkGfm, remarkMath]}
-              rehypePlugins={[rehypeKatex]}
+              rehypePlugins={[rehypeKatex, [rehypeHighlight, { detect: false, ignoreMissing: true }]]}
               components={markdownComponents}
             >
               {content}

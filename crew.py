@@ -190,7 +190,7 @@ class ResearchAndBlogWriter:
                 "  Invalid --> Shared : BusRd\\n"
                 "  Shared --> Modified : PrWr\\n"
                 "  Modified --> Invalid : BusRdX "
-                "10) For D2 diagrams, apply the same limits: max 8 shapes, short labels (max 4 words on connections), use `direction: right` or `direction: down`, NEVER draw a title shape inside the diagram (the markdown caption already covers it), and use supported shapes only (rectangle, cylinder, queue, cloud, package, document, person; never `shape: storage`). "
+                "10) For D2 diagrams, apply the same limits: max 8 shapes, short labels (max 4 words on connections), use `direction: down` when a diagram has more than 4 nodes in a chain (use `direction: right` only for 4 or fewer), NEVER draw a title shape inside the diagram (the markdown caption already covers it), and use supported shapes only (rectangle, cylinder, queue, cloud, package, document, person; never `shape: storage`). "
                 "Avoid decorative nodes, invented components, duplicate diagrams, and crossing connections."
             ),
             llm=get_fallback_llm(temperature=ANALYST_LLM_SETTINGS["temperature"], max_tokens=ANALYST_LLM_SETTINGS["max_tokens"]),

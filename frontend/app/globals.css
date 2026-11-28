@@ -299,4 +299,23 @@ body {
     print-color-adjust: exact;
     -webkit-print-color-adjust: exact;
   }
+
+  .mermaid-card > div,
+  .d2-card > div {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  .mermaid-card div[style*="transform"],
+  .d2-card div[style*="transform"] {
+    transform: none !important;
+  }
+
+  pre,
+  code,
+  .hljs {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
 }
