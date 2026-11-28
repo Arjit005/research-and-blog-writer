@@ -117,20 +117,18 @@ export function LeftSidebar({
         </div>
 
         <form onSubmit={onSubmit} className="space-y-3.5">
-          <div>
-            <label htmlFor="research-topic-input" className="sr-only">
-              Research Topic
-            </label>
-            <textarea
-              id="research-topic-input"
-              required
-              rows={3}
-              placeholder="Enter research topic, architectural domain, or prompt brief…"
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-              className="w-full p-3 bg-surface-raised border border-border rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent text-foreground resize-none placeholder:text-muted-foreground leading-relaxed transition"
-            />
-          </div>
+          <button
+            type="button"
+            onClick={() => {
+              const el = document.querySelector<HTMLInputElement>('input[aria-label="Research topic"]');
+              el?.focus();
+              el?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }}
+            className="w-full py-2.5 px-3 bg-surface-raised hover:bg-surface border border-border hover:border-accent/50 rounded-xl text-xs font-medium text-foreground transition flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-accent" />
+            <span>New Research Topic</span>
+          </button>
 
           {/* Preset Topics */}
           <div>

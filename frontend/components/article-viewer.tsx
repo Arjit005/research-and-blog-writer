@@ -17,6 +17,7 @@ import {
   BookOpen,
   Download,
   Copy,
+  ChevronDown,
   Check,
   FileText,
   Printer,
@@ -88,6 +89,7 @@ export function ArticleViewer({
 }: ArticleViewerProps) {
   const [copiedArticle, setCopiedArticle] = useState(false);
   const [copiedCitations, setCopiedCitations] = useState(false);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [isFocusMode, setIsFocusMode] = useState(false);
   const articleRef = useRef<HTMLDivElement>(null);
 
@@ -383,58 +385,73 @@ export function ArticleViewer({
         </div>
 
         {/* Right Supported Toolbar Actions */}
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {/* Copy Article */}
-          <button
-            type="button"
-            onClick={handleCopyArticle}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-raised hover:bg-surface hover:border-border-strong border border-border text-foreground rounded-xl text-xs font-medium transition cursor-pointer"
-            title="Copy entire markdown article to clipboard"
-          >
-            {copiedArticle ? (
-              <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-            ) : (
-              <Copy className="w-3.5 h-3.5 text-muted-foreground" />
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Unified Export Dropdown */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setExportMenuOpen((prev) => !prev)}
+              className="flex items-center gap-2 px-3.5 py-2 bg-surface-raised hover:bg-surface hover:border-border-strong border border-border text-foreground rounded-xl text-sm font-medium transition-all duration-150 active:scale-[0.98] cursor-pointer shadow-sm"
+              title="Export or copy article"
+              aria-expanded={exportMenuOpen}
+            >
+              <Download className="w-4 h-4 text-accent" />
+              <span>Export</span>
+              <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground transition-transform duration-150 ${exportMenuOpen ? "rotate-180" : ""}`} />
+            </button>
+
+            {exportMenuOpen && (
+              <div
+                onMouseLeave={() => setExportMenuOpen(false)}
+                className="absolute right-0 mt-2 w-52 rounded-2xl border border-border bg-surface/95 backdrop-blur-xl shadow-2xl p-1.5 z-50"
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    handlePrintPdf();
+                    setExportMenuOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium text-foreground hover:bg-surface-raised transition cursor-pointer"
+                >
+                  <Printer className="w-4 h-4 text-sky-400" />
+                  <span>Export PDF</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleDownloadMarkdown();
+                    setExportMenuOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium text-foreground hover:bg-surface-raised transition cursor-pointer"
+                >
+                  <Download className="w-4 h-4 text-emerald-400" />
+                  <span>Download .md</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleCopyArticle();
+                    setExportMenuOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium text-foreground hover:bg-surface-raised transition cursor-pointer"
+                >
+                  {copiedArticle ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4 text-muted-foreground" />}
+                  <span>{copiedArticle ? "Copied!" : "Copy Article"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleCopyCitations();
+                    setExportMenuOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium text-foreground hover:bg-surface-raised transition cursor-pointer"
+                >
+                  {copiedCitations ? <Check className="w-4 h-4 text-emerald-400" /> : <Quote className="w-4 h-4 text-muted-foreground" />}
+                  <span>{copiedCitations ? "Copied!" : "Copy Citations"}</span>
+                </button>
+              </div>
             )}
-            <span className="hidden md:inline">{copiedArticle ? "Copied" : "Copy Article"}</span>
-          </button>
-
-          {/* Copy Citations */}
-          <button
-            type="button"
-            onClick={handleCopyCitations}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-raised hover:bg-surface hover:border-border-strong border border-border text-foreground rounded-xl text-xs font-medium transition cursor-pointer"
-            title="Copy bibliography & sources"
-          >
-            {copiedCitations ? (
-              <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-            ) : (
-              <Quote className="w-3.5 h-3.5 text-muted-foreground" />
-            )}
-            <span className="hidden md:inline">{copiedCitations ? "Copied" : "Copy Citations"}</span>
-          </button>
-
-          {/* Export Markdown */}
-          <button
-            type="button"
-            onClick={handleDownloadMarkdown}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-raised hover:bg-surface hover:border-border-strong border border-border text-foreground rounded-xl text-xs font-medium transition cursor-pointer"
-            title="Download .md file"
-          >
-            <Download className="w-3.5 h-3.5 text-muted-foreground" />
-            <span className="hidden sm:inline">Export .md</span>
-          </button>
-
-          {/* Export PDF */}
-          <button
-            type="button"
-            onClick={handlePrintPdf}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-raised hover:bg-surface hover:border-border-strong border border-border text-foreground rounded-xl text-xs font-medium transition cursor-pointer"
-            title="Export or Print as PDF"
-          >
-            <Printer className="w-3.5 h-3.5 text-muted-foreground" />
-            <span className="hidden sm:inline">Export PDF</span>
-          </button>
+          </div>
 
           {/* Version History */}
           {onOpenVersionHistory && (

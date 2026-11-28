@@ -1110,7 +1110,6 @@ export default function Home() {
                   {[
                     "Distributed Consensus in TiDB",
                     "Zero-Knowledge Proofs in Cloud Security",
-                    "Rust vs Go Event-Driven Microservices",
                   ].map((prompt) => (
                     <PremiumButton
                       key={prompt}
