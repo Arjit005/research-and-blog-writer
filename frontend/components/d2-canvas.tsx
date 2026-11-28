@@ -223,7 +223,7 @@ export function D2Canvas({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
-        className={`flex max-h-[640px] w-full items-center justify-center overflow-auto p-2 select-none touch-none ${
+        className={`flex min-h-[280px] max-h-[640px] w-full items-center justify-center overflow-auto p-2 select-none touch-none ${
           isFullscreen ? "flex-1 min-h-[500px]" : ""
         } ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
         style={{
@@ -249,7 +249,7 @@ export function D2Canvas({
               transition: isDragging ? "none" : "transform 0.1s ease-out",
             }}
           >
-            <img src={svgUrl} alt={title} className="max-w-none h-auto" />
+            <img src={svgUrl} alt={title} className="max-w-full max-h-[580px] h-auto object-contain" />
           </div>
         ) : (
           <div className="flex items-center gap-2 text-xs text-muted-foreground py-12">
