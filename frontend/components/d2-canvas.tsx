@@ -144,7 +144,7 @@ export function D2Canvas({
 
   return (
     <div
-      className={`d2-card rounded-2xl border border-border bg-surface/90 overflow-hidden shadow-2xl transition-all duration-300 ${
+      className={`d2-card rounded-2xl border border-border/80 bg-surface/95 overflow-hidden shadow-lg shadow-black/5 dark:shadow-black/30 transition-all duration-300 ${
         isFullscreen ? "fixed inset-3 md:inset-8 z-50 flex flex-col bg-background/98 backdrop-blur-xl" : "relative"
       } ${className}`}
     >
